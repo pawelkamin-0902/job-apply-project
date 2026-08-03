@@ -1,0 +1,57 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+
+# Secrets & local env (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secret.token
+**/secret.token
+
+# Companion local state (Playwright browser profiles, etc.)
+companion-service/.portal-browser-profile/
+companion-service/.chatgpt-browser-profile/
+
+# User data lives outside the repo under ~/.job-apply-project/ — ignore if someone
+# ever copies it into the tree by mistake
+.job-apply-project/
+
+# Live "Save Sample" captures: large HTML dumps that can contain personal form data
+extension/test-forms/captured/*
+!extension/test-forms/captured/.gitkeep
+
+# OS / editors
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Logs / build / temp
+*.log
+*.tmp
+*.temp
+.cache/
+dist/
+build/
+out/

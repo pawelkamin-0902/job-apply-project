@@ -1,0 +1,302 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Auto Job Apply - Settings</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body class="options">
+  <nav class="app-nav">
+    <div class="app-nav-title">Auto Job Apply</div>
+    <button type="button" class="nav-item active" data-section="profile">Profile</button>
+    <button type="button" class="nav-item" data-section="resumes">Resumes</button>
+    <button type="button" class="nav-item" data-section="templates">Templates</button>
+    <button type="button" class="nav-item" data-section="qa">Q&amp;A</button>
+    <button type="button" class="nav-item" data-section="connection">Connection</button>
+    <button type="button" class="nav-item" data-section="generation">Generation</button>
+    <button type="button" class="nav-item" data-section="portal">Portal</button>
+  </nav>
+
+  <main class="app-content">
+
+    <section id="section-profile" class="panel active">
+      <div class="panel-header">
+        <h1>Profile</h1>
+        <span id="profileBadge" class="badge saved">Saved</span>
+      </div>
+      <p class="hint">
+        Applying on behalf of more than one person? Each named profile has its own contact info, work
+        history, learned Q&amp;A answers, and uploaded resumes - completely separate from any other
+        profile. The choice below is saved to THIS browser only, so if you have this extension
+        installed in more than one browser (or browser profile), each one stays pinned to whichever
+        person you pick here, independent of the others - even though they all talk to the same
+        companion service.
+      </p>
+      <label for="personSelect">This browser's profile</label>
+      <select id="personSelect"></select>
+      <div class="button-row">
+        <button id="newPersonBtn" type="button">+ New profile</button>
+        <button id="deletePersonBtn" type="button" class="btn-danger">Delete this profile</button>
+      </div>
+      <div id="personStatus" class="status-line"></div>
+
+      <div class="contact-grid">
+        <div>
+          <label for="name">Name</label>
+          <input id="name" type="text" />
+        </div>
+        <div>
+          <label for="email">Email</label>
+          <input id="email" type="text" />
+        </div>
+        <div>
+          <label for="phone">Phone</label>
+          <input id="phone" type="text" />
+        </div>
+        <div>
+          <label for="location">Location</label>
+          <input id="location" type="text" />
+        </div>
+        <div>
+          <label for="linkedin">LinkedIn</label>
+          <input id="linkedin" type="text" />
+        </div>
+        <div>
+          <label for="website">Website</label>
+          <input id="website" type="text" />
+        </div>
+        <div>
+          <label for="streetAddress">Street address</label>
+          <input id="streetAddress" type="text" placeholder="e.g. ul. Śląska 27" />
+        </div>
+        <div>
+          <label for="city">City</label>
+          <input id="city" type="text" placeholder="e.g. Warsaw" />
+        </div>
+        <div>
+          <label for="postalCode">Postal code</label>
+          <input id="postalCode" type="text" />
+        </div>
+        <div>
+          <label for="state">State / region (optional)</label>
+          <input id="state" type="text" placeholder="e.g. Masovian" />
+        </div>
+        <div>
+          <label for="country">Country</label>
+          <input id="country" type="text" placeholder="e.g. Poland" />
+        </div>
+      </div>
+      <p class="hint">
+        "Location" above is the combined display string used on your resume (e.g. "Warsaw,
+        Poland (Remote)") - these are separate because some application forms ask for street
+        address, city, postal code, state, and country as distinct fields rather than one
+        combined location. "State" isn't auto-filled from here on purpose - those questions
+        often carry form-specific conditions (e.g. "N/A unless you live in the US"), so it's
+        left to the Q&amp;A tab instead, which captures the correct answer per form.
+      </p>
+
+      <label for="summary">Summary</label>
+      <textarea id="summary" rows="3"></textarea>
+
+      <h2>Experience</h2>
+      <p class="hint">Add one entry per real role, most recent first.</p>
+      <div id="experienceList"></div>
+      <button id="addExperience" type="button" class="link">+ Add experience</button>
+
+      <h2>Education</h2>
+      <div id="educationList"></div>
+      <button id="addEducation" type="button" class="link">+ Add education</button>
+
+      <label for="skills">Skills (comma-separated)</label>
+      <input id="skills" type="text" />
+
+      <div class="button-row">
+        <button id="saveProfile" type="button" class="btn-primary" disabled>Save profile</button>
+      </div>
+      <div id="profileStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-resumes" class="panel">
+      <h1>Resumes</h1>
+      <p class="hint">
+        Upload one or more resume files, each tagged with a stack/focus you choose (e.g. "Java", "Node",
+        "Data Engineering"). Used when Tailor mode is off, and to suggest a resume based on a job's description.
+      </p>
+      <div id="resumeList"></div>
+      <label for="resumeStack">Stack label</label>
+      <input id="resumeStack" type="text" placeholder="e.g. Java" />
+      <label for="resumeFile">Resume file</label>
+      <input id="resumeFile" type="file" accept=".pdf,.doc,.docx" />
+      <div class="button-row">
+        <button id="uploadResumeBtn" type="button" class="btn-primary">Upload resume</button>
+      </div>
+      <div id="resumeStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-templates" class="panel">
+      <h1>Templates</h1>
+      <p class="hint">
+        Pick the visual style used when generating "This browser's profile"'s resume PDF/DOCX
+        (set on the Profile tab) - each profile can use a different one. Selecting a template
+        saves immediately. You can also switch quickly from the side panel while working.
+      </p>
+      <div id="templateGrid" class="template-grid"></div>
+      <div id="templateStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-qa" class="panel">
+      <div class="panel-header">
+        <h1>Q&amp;A</h1>
+        <span id="qaBadge" class="badge saved">Saved</span>
+      </div>
+      <p class="hint">
+        Answers Auto Fill reuses for questions it recognizes on future applications, matched
+        by wording against each form's question — never generated by AI, so this is the one
+        place these answers actually come from. "Learn this page" (in the side panel) adds to
+        this list automatically from whatever you've already filled in on a page; you can also
+        add, edit, or remove entries directly here.
+      </p>
+      <label for="qaSearch">Search</label>
+      <input id="qaSearch" type="text" placeholder="Search questions or answers..." />
+      <div id="qaList"></div>
+      <div class="button-row">
+        <button id="qaPrevBtn" type="button">&larr; Previous</button>
+        <span id="qaPageInfo" class="hint"></span>
+        <button id="qaNextBtn" type="button">Next &rarr;</button>
+      </div>
+      <div class="button-row">
+        <button id="addQaBtn" type="button" class="link">+ Add answer</button>
+        <button id="addDefaultQaBtn" type="button" class="link">+ Add common defaults</button>
+      </div>
+      <div class="button-row">
+        <button id="saveQaBtn" type="button" class="btn-primary" disabled>Save Q&amp;A</button>
+      </div>
+      <div id="qaStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-connection" class="panel">
+      <div class="panel-header">
+        <h1>Connection</h1>
+        <span id="connectionBadge" class="badge saved">Saved</span>
+      </div>
+      <p class="hint">
+        Paste the token from <code>~/.job-apply-project/secret.token</code>
+        (on your host, that's usually <code>C:\Users\&lt;you&gt;\.job-apply-project\secret.token</code>) on the machine
+        running the companion service.
+      </p>
+      <label for="baseUrl">Companion service URL</label>
+      <input id="baseUrl" type="text" placeholder="http://127.0.0.1:3939" />
+      <label for="token">API Token</label>
+      <input id="token" type="text" />
+      <div class="button-row">
+        <button id="saveConnection" type="button" class="btn-primary" disabled>Save connection</button>
+      </div>
+      <div id="connStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-generation" class="panel">
+      <div class="panel-header">
+        <h1>Generation</h1>
+        <span id="generationBadge" class="badge saved">Saved</span>
+      </div>
+
+      <p class="hint">
+        Mode (tailor per job or use an uploaded resume) and both provider choices (resume
+        generation, Auto Fill answers) now live in the side panel, right where you'd actually
+        change them mid-session. This page is just the deeper, rarely-touched config below:
+        model names, connection details, and prompt instructions - plus a way to test each
+        provider without leaving Settings.
+      </p>
+
+      <p class="hint">
+        <strong>Resume generation</strong> is the highest-stakes task - a fabricated employer,
+        role, or date is the worst-case failure, which is why Claude is the default there (the
+        only provider that's held up to the truth-grounding requirements in testing).
+        <strong>Auto Fill answers</strong> are lower-stakes by design (consequential fields and
+        anything needing a discrete pick are never sent to any provider regardless), so a fast
+        local Ollama model is a reasonable default for that narrower job.
+      </p>
+      <div class="button-row">
+        <button id="testProviderBtn" type="button">Test resume-generation provider</button>
+        <button id="testAnswerProviderBtn" type="button">Test answer-generation provider</button>
+      </div>
+      <div id="providerTestStatus" class="status-line"></div>
+      <div id="answerProviderTestStatus" class="status-line"></div>
+
+      <div id="claudeFields">
+        <label for="claudeModel">Claude model (blank = CLI default)</label>
+        <input id="claudeModel" type="text" />
+      </div>
+
+      <div id="ollamaFields" style="display: none">
+        <label for="ollamaModel">Ollama model (must already be pulled)</label>
+        <input id="ollamaModel" type="text" placeholder="e.g. qwen2.5:3b-instruct" />
+        <label for="ollamaBaseUrl">Ollama base URL</label>
+        <input id="ollamaBaseUrl" type="text" placeholder="http://localhost:11434" />
+      </div>
+
+      <div id="gptHint" class="hint" style="display: none">
+        No connection needed. In the job-apply panel, use "Copy prompt for GPT" to copy the
+        system prompt + your data to the clipboard, paste it into ChatGPT yourself, then paste
+        ChatGPT's JSON reply back into the Resume JSON box.
+      </div>
+
+      <div id="gptAutoHint" class="hint" style="display: none">
+        "Delete ChatGPT conversation after generating" now lives in the job-apply panel, right
+        next to the provider dropdowns - same reasoning as Mode and both providers above.
+      </div>
+
+      <div id="gptAutoHeadlessHint" class="hint" style="display: none">
+        Experimental: runs via a headless, out-of-band browser (companion-service) instead of a
+        visible tab - requires a one-time manual login first (run login_chatgpt.py once), since
+        it never logs in automatically itself. Confirmed live: chatgpt.com's own bot-detection
+        (Cloudflare) and/or Google's own OAuth sign-in protection may block this outright - if
+        so, use "GPT (auto via ChatGPT tab)" instead, which reuses your own real browser session.
+      </div>
+
+      <label for="promptInstructions">Prompt instructions</label>
+      <p class="hint">
+        Specific to "This browser's profile" (set on the Profile tab) - everything else on
+        this page is shared across all profiles, but each person can have their own tailoring
+        instructions here.
+      </p>
+      <textarea id="promptInstructions" rows="10"></textarea>
+      <label for="applyRoot">Apply root folder (on the machine running the service)</label>
+      <input id="applyRoot" type="text" />
+      <input id="timeoutSeconds" type="hidden" value="120" />
+
+      <div class="button-row">
+        <button id="saveSettings" type="button" class="btn-primary" disabled>Save settings</button>
+      </div>
+      <div id="settingsStatus" class="status-line"></div>
+    </section>
+
+    <section id="section-portal" class="panel">
+      <div class="panel-header">
+        <h1>Portal</h1>
+        <span id="portalBadge" class="badge saved">Saved</span>
+      </div>
+      <p class="hint">
+        Your company-internal bid-tracking system - used by "Save &amp; Sync to Portal" in the
+        job-apply panel to push logged applications into it directly (it has no API and no CSV
+        import). Pushed via an out-of-band browser (companion-service), never touching any tab
+        you can see - the "show the browser window" checkbox right next to that button in the
+        job-apply panel lets you watch it directly if a sync ever fails.
+      </p>
+      <label for="portalBaseUrl">Portal IP/host (just the host - "/mgr/..." paths are added automatically)</label>
+      <input id="portalBaseUrl" type="text" placeholder="e.g. http://172.20.1.135" />
+      <label for="portalUsername">Portal username (used to log the automation's own browser session in)</label>
+      <input id="portalUsername" type="text" autocomplete="off" />
+      <label for="portalPassword">Portal password (used to log the automation's own browser session in)</label>
+      <input id="portalPassword" type="password" autocomplete="off" />
+      <div class="button-row">
+        <button id="savePortalSettings" type="button" class="btn-primary" disabled>Save Portal settings</button>
+      </div>
+      <div id="portalSettingsStatus" class="status-line"></div>
+    </section>
+
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

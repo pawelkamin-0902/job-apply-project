@@ -1,0 +1,304 @@
+<!-- Source: https://jobs.jobvite.com/ziffdavis/job/otUuAfwb/apply
+     Verbatim paste, unedited, EXCEPT that this is exactly what came through before a chat
+     message size limit cut the original paste off mid-way through the Country/Zip/Phone
+     fields (see the last field below). Nothing here was rewritten or condensed by Claude —
+     this is the raw truncated text as received. -->
+<form name="scopeData.applyForm" ng-submit="submitApplication()" novalidate="" ng-class="{ 'jv-form-submitted': applyForm.submitted }" aria-live="polite" class="ng-pristine ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength">
+    <!-- ngIf: showStep(1) --><div ng-form="scopeData.step1" ng-if="showStep(1)" class="jv-apply-step ng-pristine ng-scope ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength">
+    <div ng-show="showInvalidField(errors.resume)">
+    <h3 class="jv-step-header" id="jv-resume-header">
+        Add Resume*
+    </h3>
+        <div ng-controller="JVApplyWith" class="jv-apply-with jv-apply-section ng-scope" id="attachResume">
+            <div ng-show="!resumeName" ng-class="{ 'jv-invalid-field': errors.resume }">
+                <button jv-add-attachment="{ social: true }" on-success="sendResume(type, res)" attachment-label="Resume" pasted-label="Pasted Resume" class="jv-button ng-isolate-scope" type="button" aria-haspopup="true" aria-labelledby="jv-resume-header" aria-expanded="false" jv-focus-on="resumeDeleted" aria-required="true">
+Select <i class="icon icon-arrow-down jv-text-icon"></i>
+                </button>
+                <!-- ngIf: errors.resume && !applyWithErrors.resumeUpload -->
+            </div>
+            <div jv-edit-resume="" resume-content="resumeContent" visible="showEditResume" on-success="saveContent(resumeContent)" class="ng-isolate-scope">
+        <div class="jv-add-attachment jv-add-attachment-paste jv-paste-visible jv-tooltip-top ng-hide" ng-show="visible" aria-hidden="true">
+        <label for="jv-edit-resume-textarea0" class="jv-visually-hidden">Type or paste your Resume here</label>
+            <textarea id="jv-edit-resume-textarea0" ng-model="resumeContent" class="needsclick ng-pristine ng-untouched ng-valid ng-empty"></textarea>
+            <div class="jv-add-attachment-paste-buttons">
+                <button class="jv-button" type="button" ng-click="hide()">Cancel</button>
+                <button class="jv-button jv-button-primary" type="button" ng-click="saveContent()" ng-disabled="!resumeContent" disabled="disabled">Save</button>
+            </div>
+        </div>
+    </div>
+            <ul class="jv-file-list">
+                <!-- ngIf: resumeName -->
+            </ul>
+            <!-- ngIf: applyWithErrors.resumeUpload -->
+        </div>
+    </div>
+    <div ng-show="showInvalidField(!step1.validOnSubmit)" class="jv-apply-section">
+    <h3 class="jv-step-header" id="">
+        Personal Information
+    </h3>
+        <!-- ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yHx91fw8" class="jv-form-field-label ng-binding ng-scope">
+                    First Name<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yHx91fw8" name="input-yHx91fw8" autocomplete="given-name" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="true" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" required="required"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yAx91fw1" class="jv-form-field-label ng-binding ng-scope">
+                    Last Name<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yAx91fw1" name="input-yAx91fw1" autocomplete="family-name" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="true" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" required="required"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-valid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yGx91fw7" class="jv-form-field-label ng-binding ng-scope">
+                    Preferred First Name/Nickname<!-- ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yGx91fw7" name="input-yGx91fw7" autocomplete="on" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="false" type="text" maxlength="" jv-clear="" class="ng-pristine ng-untouched ng-valid ng-scope ng-empty ng-valid-required ng-valid-pattern ng-valid-maxlength"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-valid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yvx91fwW" class="jv-form-field-label ng-binding ng-scope">
+                    Pronouns<!-- ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yvx91fwW" name="input-yvx91fwW" autocomplete="on" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="false" type="text" maxlength="" jv-clear="" class="ng-pristine ng-untouched ng-valid ng-scope ng-empty ng-valid-required ng-valid-pattern ng-valid-maxlength"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_EMAIL ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yBx91fw2" class="jv-form-field-label ng-binding ng-scope">
+                    Email<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yBx91fw2" name="input-yBx91fw2" autocomplete="email" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="true" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" required="required"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-valid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yyx91fwZ" class="jv-form-field-label ng-binding ng-scope">
+                    Address<!-- ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yyx91fwZ" name="input-yyx91fwZ" autocomplete="address-line1" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="false" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-valid ng-scope ng-empty ng-valid-required ng-valid-pattern ng-valid-maxlength"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yJx91fwa" class="jv-form-field-label ng-binding ng-scope">
+                    City<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yJx91fwa" name="input-yJx91fwa" autocomplete="address-level2" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="true" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" required="required"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-select JVA_DROPDOWN ng-invalid ng-invalid-required" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yCx91fw3" class="jv-form-field-label ng-binding ng-scope">
+                    Country<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control jv-form-field-appearance" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select --><div ng-switch-when="select" class="jv-select-group ng-scope" ng-class="{ 'jv-select-group-has-label': field.mobileLabel }">
+                    <!-- ngIf: !field.multiSelect && supportsAppearance --><i ng-if="!field.multiSelect &amp;&amp; supportsAppearance" class="jv-select-icon icon icon-arrow-down ng-scope"></i><!-- end ngIf: !field.multiSelect && supportsAppearance -->
+                    <!-- ngIf: !field.multiSelect --><select ng-if="!field.multiSelect" id="jv-field-yCx91fw3" name="input-yCx91fw3" autocomplete="country-name" ng-model="ngModel[field.viewFieldEId]" ng-options="o.key as o.value  for o in field.values" ng-required="field.required" aria-required="true" ng-change="changeCountry(field,ngModel[field.viewFieldEId])" ng-class="{ 'jv-empty-select': !ngModel[field.viewFieldEId] }" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required jv-empty-select" required="required"><option value="" class="" selected="selected">Select an option...</option><option label="United States" value="string:United States">United States</option><option label="Canada" value="string:Canada">Canada</option><option label="United Kingdom" value="string:United Kingdom">United Kingdom</option><option label="Aland Islands" value="string:Aland Islands">Aland Islands</option><option label="Afghanistan" value="string:Afghanistan">Afghanistan</option><option label="Albania" value="string:Albania">Albania</option><option label="Algeria" value="string:Algeria">Algeria</option><option label="American Samoa" value="string:American Samoa">American Samoa</option><option label="Andorra" value="string:Andorra">Andorra</option><option label="Angola" value="string:Angola">Angola</option><option label="Anguilla" value="string:Anguilla">Anguilla</option><option label="Antarctica" value="string:Antarctica">Antarctica</option><option label="Antigua And Barbuda" value="string:Antigua And Barbuda">Antigua And Barbuda</option><option label="Argentina" value="string:Argentina">Argentina</option><option label="Armenia" value="string:Armenia">Armenia</option><option label="Aruba" value="string:Aruba">Aruba</option><option label="Australia" value="string:Australia">Australia</option><option label="Austria" value="string:Austria">Austria</option><option label="Azerbaijan" value="string:Azerbaijan">Azerbaijan</option><option label="Bahamas" value="string:Bahamas">Bahamas</option><option label="Bahrain" value="string:Bahrain">Bahrain</option><option label="Bangladesh" value="string:Bangladesh">Bangladesh</option><option label="Barbados" value="string:Barbados">Barbados</option><option label="Belarus" value="string:Belarus">Belarus</option><option label="Belgium" value="string:Belgium">Belgium</option><option label="Belize" value="string:Belize">Belize</option><option label="Benin" value="string:Benin">Benin</option><option label="Bermuda" value="string:Bermuda">Bermuda</option><option label="Bhutan" value="string:Bhutan">Bhutan</option><option label="Bolivia (Plurinational State of)" value="string:Bolivia (Plurinational State of)">Bolivia (Plurinational State of)</option><option label="Bonaire, Sint Eustatius and Saba" value="string:Bonaire, Sint Eustatius and Saba">Bonaire, Sint Eustatius and Saba</option><option label="Bosnia and Herzegovina" value="string:Bosnia and Herzegovina">Bosnia and Herzegovina</option><option label="Botswana" value="string:Botswana">Botswana</option><option label="Bouvet Island" value="string:Bouvet Island">Bouvet Island</option><option label="Brazil" value="string:Brazil">Brazil</option><option label="British Indian Ocean Territory" value="string:British Indian Ocean Territory">British Indian Ocean Territory</option><option label="Brunei Darussalam" value="string:Brunei Darussalam">Brunei Darussalam</option><option label="Bulgaria" value="string:Bulgaria">Bulgaria</option><option label="Burkina Faso" value="string:Burkina Faso">Burkina Faso</option><option label="Burundi" value="string:Burundi">Burundi</option><option label="Cambodia" value="string:Cambodia">Cambodia</option><option label="Cameroon" value="string:Cameroon">Cameroon</option><option label="Cabo Verde" value="string:Cabo Verde">Cabo Verde</option><option label="Cayman Islands" value="string:Cayman Islands">Cayman Islands</option><option label="Central African Republic" value="string:Central African Republic">Central African Republic</option><option label="Chad" value="string:Chad">Chad</option><option label="Chile" value="string:Chile">Chile</option><option label="China" value="string:China">China</option><option label="Christmas Island" value="string:Christmas Island">Christmas Island</option><option label="Cocos (Keeling) Islands" value="string:Cocos (Keeling) Islands">Cocos (Keeling) Islands</option><option label="Colombia" value="string:Colombia">Colombia</option><option label="Comoros" value="string:Comoros">Comoros</option><option label="Congo (the Democratic Republic of)" value="string:Congo (the Democratic Republic of)">Congo (the Democratic Republic of)</option><option label="Congo" value="string:Congo">Congo</option><option label="Cook Islands" value="string:Cook Islands">Cook Islands</option><option label="Costa Rica" value="string:Costa Rica">Costa Rica</option><option label="Cote D'ivoire" value="string:Cote D'ivoire">Cote D'ivoire</option><option label="Croatia" value="string:Croatia">Croatia</option><option label="Cuba" value="string:Cuba">Cuba</option><option label="Curacao" value="string:Curacao">Curacao</option><option label="Cyprus" value="string:Cyprus">Cyprus</option><option label="Czechia" value="string:Czechia">Czechia</option><option label="Denmark" value="string:Denmark">Denmark</option><option label="Djibouti" value="string:Djibouti">Djibouti</option><option label="Dominica" value="string:Dominica">Dominica</option><option label="Dominican Republic" value="string:Dominican Republic">Dominican Republic</option><option label="Ecuador" value="string:Ecuador">Ecuador</option><option label="Egypt" value="string:Egypt">Egypt</option><option label="El Salvador" value="string:El Salvador">El Salvador</option><option label="Equatorial Guinea" value="string:Equatorial Guinea">Equatorial Guinea</option><option label="Eritrea" value="string:Eritrea">Eritrea</option><option label="Estonia" value="string:Estonia">Estonia</option><option label="Ethiopia" value="string:Ethiopia">Ethiopia</option><option label="Falkland Islands (Malvinas)" value="string:Falkland Islands (Malvinas)">Falkland Islands (Malvinas)</option><option label="Faroe Islands" value="string:Faroe Islands">Faroe Islands</option><option label="Fiji" value="string:Fiji">Fiji</option><option label="Finland" value="string:Finland">Finland</option><option label="France" value="string:France">France</option><option label="French Guiana" value="string:French Guiana">French Guiana</option><option label="French Polynesia" value="string:French Polynesia">French Polynesia</option><option label="French Southern Territories" value="string:French Southern Territories">French Southern Territories</option><option label="Gabon" value="string:Gabon">Gabon</option><option label="Gambia" value="string:Gambia">Gambia</option><option label="Georgia" value="string:Georgia">Georgia</option><option label="Germany" value="string:Germany">Germany</option><option label="Ghana" value="string:Ghana">Ghana</option><option label="Gibraltar" value="string:Gibraltar">Gibraltar</option><option label="Greece" value="string:Greece">Greece</option><option label="Greenland" value="string:Greenland">Greenland</option><option label="Grenada" value="string:Grenada">Grenada</option><option label="Guadeloupe" value="string:Guadeloupe">Guadeloupe</option><option label="Guam" value="string:Guam">Guam</option><option label="Guatemala" value="string:Guatemala">Guatemala</option><option label="Guernsey" value="string:Guernsey">Guernsey</option><option label="Guinea" value="string:Guinea">Guinea</option><option label="Guinea-Bissau" value="string:Guinea-Bissau">Guinea-Bissau</option><option label="Guyana" value="string:Guyana">Guyana</option><option label="Haiti" value="string:Haiti">Haiti</option><option label="Heard Island and McDonald Islands" value="string:Heard Island and McDonald Islands">Heard Island and McDonald Islands</option><option label="Honduras" value="string:Honduras">Honduras</option><option label="Hong Kong" value="string:Hong Kong">Hong Kong</option><option label="Hungary" value="string:Hungary">Hungary</option><option label="Iceland" value="string:Iceland">Iceland</option><option label="India" value="string:India">India</option><option label="Indonesia" value="string:Indonesia">Indonesia</option><option label="Iran (Islamic Republic Of)" value="string:Iran (Islamic Republic Of)">Iran (Islamic Republic Of)</option><option label="Iraq" value="string:Iraq">Iraq</option><option label="Ireland" value="string:Ireland">Ireland</option><option label="Isle of Man" value="string:Isle of Man">Isle of Man</option><option label="Israel" value="string:Israel">Israel</option><option label="Italy" value="string:Italy">Italy</option><option label="Jamaica" value="string:Jamaica">Jamaica</option><option label="Japan" value="string:Japan">Japan</option><option label="Jersey" value="string:Jersey">Jersey</option><option label="Jordan" value="string:Jordan">Jordan</option><option label="Kazakhstan" value="string:Kazakhstan">Kazakhstan</option><option label="Kenya" value="string:Kenya">Kenya</option><option label="Kiribati" value="string:Kiribati">Kiribati</option><option label="Korea (the Democratic People's Republic of)" value="string:Korea (the Democratic People's Republic of)">Korea (the Democratic People's Republic of)</option><option label="Korea (the Republic of)" value="string:Korea (the Republic of)">Korea (the Republic of)</option><option label="Kuwait" value="string:Kuwait">Kuwait</option><option label="Kyrgyzstan" value="string:Kyrgyzstan">Kyrgyzstan</option><option label="Lao People's Democratic Republic" value="string:Lao People's Democratic Republic">Lao People's Democratic Republic</option><option label="Latvia" value="string:Latvia">Latvia</option><option label="Lebanon" value="string:Lebanon">Lebanon</option><option label="Lesotho" value="string:Lesotho">Lesotho</option><option label="Liberia" value="string:Liberia">Liberia</option><option label="Libya" value="string:Libya">Libya</option><option label="Liechtenstein" value="string:Liechtenstein">Liechtenstein</option><option label="Lithuania" value="string:Lithuania">Lithuania</option><option label="Luxembourg" value="string:Luxembourg">Luxembourg</option><option label="Macao" value="string:Macao">Macao</option><option label="North Macedonia" value="string:North Macedonia">North Macedonia</option><option label="Madagascar" value="string:Madagascar">Madagascar</option><option label="Malawi" value="string:Malawi">Malawi</option><option label="Malaysia" value="string:Malaysia">Malaysia</option><option label="Maldives" value="string:Maldives">Maldives</option><option label="Mali" value="string:Mali">Mali</option><option label="Malta" value="string:Malta">Malta</option><option label="Marshall Islands" value="string:Marshall Islands">Marshall Islands</option><option label="Martinique" value="string:Martinique">Martinique</option><option label="Mauritania" value="string:Mauritania">Mauritania</option><option label="Mauritius" value="string:Mauritius">Mauritius</option><option label="Mayotte" value="string:Mayotte">Mayotte</option><option label="Mexico" value="string:Mexico">Mexico</option><option label="Micronesia (Federated States of)" value="string:Micronesia (Federated States of)">Micronesia (Federated States of)</option><option label="Moldova (the Republic of)" value="string:Moldova (the Republic of)">Moldova (the Republic of)</option><option label="Monaco" value="string:Monaco">Monaco</option><option label="Mongolia" value="string:Mongolia">Mongolia</option><option label="Montenegro" value="string:Montenegro">Montenegro</option><option label="Montserrat" value="string:Montserrat">Montserrat</option><option label="Morocco" value="string:Morocco">Morocco</option><option label="Mozambique" value="string:Mozambique">Mozambique</option><option label="Myanmar" value="string:Myanmar">Myanmar</option><option label="Namibia" value="string:Namibia">Namibia</option><option label="Nauru" value="string:Nauru">Nauru</option><option label="Nepal" value="string:Nepal">Nepal</option><option label="Netherlands" value="string:Netherlands">Netherlands</option><option label="New Caledonia" value="string:New Caledonia">New Caledonia</option><option label="New Zealand" value="string:New Zealand">New Zealand</option><option label="Nicaragua" value="string:Nicaragua">Nicaragua</option><option label="Niger" value="string:Niger">Niger</option><option label="Nigeria" value="string:Nigeria">Nigeria</option><option label="Niue" value="string:Niue">Niue</option><option label="Norfolk Island" value="string:Norfolk Island">Norfolk Island</option><option label="Northern Mariana Islands" value="string:Northern Mariana Islands">Northern Mariana Islands</option><option label="Norway" value="string:Norway">Norway</option><option label="Oman" value="string:Oman">Oman</option><option label="Pakistan" value="string:Pakistan">Pakistan</option><option label="Palau" value="string:Palau">Palau</option><option label="Palestine, State of" value="string:Palestine, State of">Palestine, State of</option><option label="Panama" value="string:Panama">Panama</option><option label="Papua New Guinea" value="string:Papua New Guinea">Papua New Guinea</option><option label="Paraguay" value="string:Paraguay">Paraguay</option><option label="Peru" value="string:Peru">Peru</option><option label="Philippines" value="string:Philippines">Philippines</option><option label="Pitcairn" value="string:Pitcairn">Pitcairn</option><option label="Poland" value="string:Poland">Poland</option><option label="Portugal" value="string:Portugal">Portugal</option><option label="Puerto Rico" value="string:Puerto Rico">Puerto Rico</option><option label="Qatar" value="string:Qatar">Qatar</option><option label="Reunion" value="string:Reunion">Reunion</option><option label="Romania" value="string:Romania">Romania</option><option label="Russian Federation" value="string:Russian Federation">Russian Federation</option><option label="Rwanda" value="string:Rwanda">Rwanda</option><option label="Saint Barthelemy" value="string:Saint Barthelemy">Saint Barthelemy</option><option label="Saint Helena, Ascension and Tristan da Cunha" value="string:Saint Helena, Ascension and Tristan da Cunha">Saint Helena, Ascension and Tristan da Cunha</option><option label="Saint Kitts And Nevis" value="string:Saint Kitts And Nevis">Saint Kitts And Nevis</option><option label="Saint Lucia" value="string:Saint Lucia">Saint Lucia</option><option label="Saint Martin (French part)" value="string:Saint Martin (French part)">Saint Martin (French part)</option><option label="Saint Pierre And Miquelon" value="string:Saint Pierre And Miquelon">Saint Pierre And Miquelon</option><option label="Saint Vincent And The Grenadines" value="string:Saint Vincent And The Grenadines">Saint Vincent And The Grenadines</option><option label="Samoa" value="string:Samoa">Samoa</option><option label="San Marino" value="string:San Marino">San Marino</option><option label="Sao Tome And Principe" value="string:Sao Tome And Principe">Sao Tome And Principe</option><option label="Saudi Arabia" value="string:Saudi Arabia">Saudi Arabia</option><option label="Senegal" value="string:Senegal">Senegal</option><option label="Serbia" value="string:Serbia">Serbia</option><option label="Seychelles" value="string:Seychelles">Seychelles</option><option label="Sierra Leone" value="string:Sierra Leone">Sierra Leone</option><option label="Singapore" value="string:Singapore">Singapore</option><option label="Sint Maarten (Dutch part)" value="string:Sint Maarten (Dutch part)">Sint Maarten (Dutch part)</option><option label="Slovakia" value="string:Slovakia">Slovakia</option><option label="Slovenia" value="string:Slovenia">Slovenia</option><option label="Solomon Islands" value="string:Solomon Islands">Solomon Islands</option><option label="Somalia" value="string:Somalia">Somalia</option><option label="South Africa" value="string:South Africa">South Africa</option><option label="South Georgia And The South Sandwich Islands" value="string:South Georgia And The South Sandwich Islands">South Georgia And The South Sandwich Islands</option><option label="South Sudan" value="string:South Sudan">South Sudan</option><option label="Spain" value="string:Spain">Spain</option><option label="Sri Lanka" value="string:Sri Lanka">Sri Lanka</option><option label="Sudan" value="string:Sudan">Sudan</option><option label="Suriname" value="string:Suriname">Suriname</option><option label="Svalbard and Jan Mayen" value="string:Svalbard and Jan Mayen">Svalbard and Jan Mayen</option><option label="Eswatini" value="string:Eswatini">Eswatini</option><option label="Sweden" value="string:Sweden">Sweden</option><option label="Switzerland" value="string:Switzerland">Switzerland</option><option label="Syrian Arab Republic" value="string:Syrian Arab Republic">Syrian Arab Republic</option><option label="Taiwan (Province of China)" value="string:Taiwan (Province of China)">Taiwan (Province of China)</option><option label="Tajikistan" value="string:Tajikistan">Tajikistan</option><option label="Tanzania, United Republic Of" value="string:Tanzania, United Republic Of">Tanzania, United Republic Of</option><option label="Thailand" value="string:Thailand">Thailand</option><option label="Timor-Leste" value="string:Timor-Leste">Timor-Leste</option><option label="Togo" value="string:Togo">Togo</option><option label="Tokelau" value="string:Tokelau">Tokelau</option><option label="Tonga" value="string:Tonga">Tonga</option><option label="Trinidad And Tobago" value="string:Trinidad And Tobago">Trinidad And Tobago</option><option label="Tunisia" value="string:Tunisia">Tunisia</option><option label="Turkey" value="string:Turkey">Turkey</option><option label="Turkmenistan" value="string:Turkmenistan">Turkmenistan</option><option label="Turks And Caicos Islands" value="string:Turks And Caicos Islands">Turks And Caicos Islands</option><option label="Tuvalu" value="string:Tuvalu">Tuvalu</option><option label="Uganda" value="string:Uganda">Uganda</option><option label="Ukraine" value="string:Ukraine">Ukraine</option><option label="United Arab Emirates" value="string:United Arab Emirates">United Arab Emirates</option><option label="United States Minor Outlying Islands" value="string:United States Minor Outlying Islands">United States Minor Outlying Islands</option><option label="Uruguay" value="string:Uruguay">Uruguay</option><option label="Uzbekistan" value="string:Uzbekistan">Uzbekistan</option><option label="Vanuatu" value="string:Vanuatu">Vanuatu</option><option label="Holy See" value="string:Holy See">Holy See</option><option label="Venezuela (Bolivarian Republic of)" value="string:Venezuela (Bolivarian Republic of)">Venezuela (Bolivarian Republic of)</option><option label="Viet Nam" value="string:Viet Nam">Viet Nam</option><option label="Virgin Islands (British)" value="string:Virgin Islands (British)">Virgin Islands (British)</option><option label="Virgin Islands (U.S.)" value="string:Virgin Islands (U.S.)">Virgin Islands (U.S.)</option><option label="Wallis and Futuna" value="string:Wallis and Futuna">Wallis and Futuna</option><option label="Western Sahara" value="string:Western Sahara">Western Sahara</option><option label="Yemen" value="string:Yemen">Yemen</option><option label="Zambia" value="string:Zambia">Zambia</option><option label="Zimbabwe" value="string:Zimbabwe">Zimbabwe</option></select><!-- end ngIf: !field.multiSelect -->
+                    <!-- ngIf: field.multiSelect -->
+                </div><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_NAME ng-valid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yIx91fw9" class="jv-form-field-label ng-binding ng-scope">
+                    Zip/Postal Code<!-- ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yIx91fw9" name="input-yIx91fw9" autocomplete="postal-code" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="false" type="text" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-valid ng-scope ng-empty ng-valid-required ng-valid-pattern ng-valid-maxlength"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng-model="applyData.fieldMap" class="jv-form-field ng-pristine ng-untouched ng-valid ng-scope ng-isolate-scope ng-not-empty">
+        <div ng-form="inputForm" ng-show="show({ error: !validOnSubmit }) &amp;&amp; !hide" class="jv-form-field-input JVA_PHONE ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" ng-class="{ 'jv-invalid-field': !validOnSubmit &amp;&amp; field.showErrorMessage }" ng-init="browser = 'desktop'">
+            <!-- ngIf: field.icon -->
+                        <!-- ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' --><label ng-if="field.desktopLabel &amp;&amp; field.type !== 'checkbox' &amp;&amp; field.type !== 'radio'" for="jv-field-yEx91fw5" class="jv-form-field-label ng-binding ng-scope">
+                    Phone<!-- ngIf: field.required --><span ng-if="field.required" class="jv-required-label ng-scope">*</span><!-- end ngIf: field.required -->
+                </label><!-- end ngIf: field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+
+
+            <div ng-switch="" on="field.type" class="jv-form-field-control" ng-class="{ 'jv-form-field-appearance': field.type === 'select' &amp;&amp; supportsAppearance }">
+                <!-- ngSwitchWhen: input --><input ng-switch-when="input" id="jv-field-yEx91fw5" name="input-yEx91fw5" autocomplete="tel" ng-class="{ 'jv-form-bg-icon': field.icon }" ng-model="ngModel[field.viewFieldEId]" ng-required="field.required" ng-pattern="[object Object]" aria-required="true" type="tel" maxlength="100" jv-clear="" class="ng-pristine ng-untouched ng-scope ng-empty ng-invalid ng-invalid-required ng-valid-pattern ng-valid-maxlength" required="required"><!-- end ngSwitchWhen: -->
+                <!-- ngSwitchWhen: formattedNumber -->
+                <!-- ngSwitchWhen: currency -->
+                <!-- ngSwitchWhen: checkbox -->
+                <!-- ngSwitchWhen: radio -->
+                <!-- ngSwitchWhen: select -->
+                <!-- ngSwitchWhen: textarea -->
+                <!-- ngSwitchWhen: heading -->
+                <!-- ngSwitchWhen: hr -->
+                <!-- ngSwitchWhen: p -->
+            </div>
+            <!-- ngIf: mailcheck.suggestion -->
+            <!-- ngIf: !validOnSubmit -->
+            <!-- ngIf: !validOnSubmit && field.desktopLabel && field.type !== 'checkbox' && field.type !== 'radio' -->
+            <!-- ngIf: !validOnSubmit && inputForm.$error.pattern -->
+            <!-- ngIf: !validOnSubmit && !inputForm.$error.pattern && field.showErrorMessage -->
+        </div>
+    </div><!-- end ngRepeat: field in applyFields --><div ng-repeat="field in applyFields" jv-apply-field="field" jv-apply-fields="(field.fieldId &amp;&amp; field.fieldId === -7) ? applyFields : null" jv-apply-field-show="showInvalidField(error)" jv-step="1" ng
+<!-- TRUNCATED HERE — original chat message hit a ~50,000 character size limit at this exact point. Everything above this line is exactly what was pasted; nothing below was received. -->

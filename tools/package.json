@@ -1,0 +1,9 @@
+{
+  "name": "autofill-simulator",
+  "private": true,
+  "description": "Standalone CLI tool: paste a form's HTML, see what Auto Fill/Learn would do against your real companion service.",
+  "type": "commonjs",
+  "dependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

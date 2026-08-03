@@ -1,0 +1,80 @@
+{
+  "page_url": "https://jobs.lever.co/oxylabs/a8707d60-ea7e-4a89-90ee-ab2055df45ca/apply",
+  "frame_url": "https://jobs.lever.co/oxylabs/a8707d60-ea7e-4a89-90ee-ab2055df45ca/apply",
+  "frame_id": 0,
+  "captured_at": "20260717T092624Z",
+  "fields": [
+    {
+      "label": "Full name\u2731",
+      "type": "text",
+      "source": "profile",
+      "value": "Pawel Kaminski"
+    },
+    {
+      "label": "Email\u2731",
+      "type": "email",
+      "source": "profile",
+      "value": "pawkaminwel0902@gmail.com"
+    },
+    {
+      "label": "Phone \u2731",
+      "type": "text",
+      "source": "profile",
+      "value": "+48573503853"
+    },
+    {
+      "label": "Current location No location found. Try entering a different locationLoading",
+      "type": "text",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "Current company",
+      "type": "text",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "Link to your profile (Linkedin/Github etc.) URL",
+      "type": "text",
+      "source": "profile",
+      "value": "https://www.linkedin.com/in/pawel-kaminski-b74100419/"
+    },
+    {
+      "label": "cards[38843bea-033a-4c55-b93c-8a00a773fbdf][field0]",
+      "type": "textarea",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "cards[38843bea-033a-4c55-b93c-8a00a773fbdf][field1]",
+      "type": "textarea",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "cards[38843bea-033a-4c55-b93c-8a00a773fbdf][field2]",
+      "type": "textarea",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "cards[38843bea-033a-4c55-b93c-8a00a773fbdf][field3]",
+      "type": "textarea",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "cards[d76ac174-1f1a-48c8-a3ff-ac1ddc8de643][field0]",
+      "type": "textarea",
+      "source": "unmatched",
+      "value": null
+    },
+    {
+      "label": "Yes, Oxylabs can contact me about future job opportunities for up to 3 yearsPrivacy policy",
+      "type": "checkbox",
+      "source": "unmatched",
+      "value": null
+    }
+  ]
+}

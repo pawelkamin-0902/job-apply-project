@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Auto Job Apply - Welcome</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <h1>Welcome to Auto Job Apply</h1>
+  <p class="hint">
+    Two quick things, then you're into Settings to fill in your profile and resumes. You can change
+    any of this later.
+  </p>
+
+  <h2>1. Companion service</h2>
+  <p class="hint">
+    Paste the token from <code>~/.job-apply-project/secret.token</code>
+    (on Windows, that's usually <code>C:\Users\&lt;you&gt;\.job-apply-project\secret.token</code>) on the
+    machine running the companion service.
+  </p>
+  <label for="baseUrl">Companion service URL</label>
+  <input id="baseUrl" type="text" value="http://127.0.0.1:3939" />
+  <label for="token">API Token</label>
+  <input id="token" type="text" />
+  <div class="button-row">
+    <button id="testConnBtn" type="button">Test connection</button>
+  </div>
+  <div id="connStatus" class="status-line"></div>
+
+  <h2>2. Who is this browser for?</h2>
+  <p class="hint">
+    Applying on behalf of more than one person on this computer? Each named profile has its own
+    contact info, work history, learned Q&amp;A answers, and uploaded resumes. This choice is saved to
+    THIS browser only - if you install the extension in another browser too, you'll pick a name there
+    independently, and the two stay pinned to their own profiles even though both talk to the same
+    companion service.
+  </p>
+  <label for="personName">Your name (or the person you're applying for)</label>
+  <input id="personName" type="text" placeholder="e.g. Karol" />
+
+  <div class="button-row">
+    <button id="continueBtn" type="button">Save &amp; continue to Settings</button>
+  </div>
+  <div id="continueStatus" class="status-line"></div>
+
+  <script type="module" src="onboarding.js"></script>
+</body>
+</html>

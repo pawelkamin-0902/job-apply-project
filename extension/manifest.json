@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Job Apply",
+  "version": "0.1.0",
+  "description": "Generate tailored resumes and (later) autofill job applications using your local Claude Code CLI.",
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs", "debugger"],
+  "host_permissions": ["http://127.0.0.1/*", "<all_urls>"],
+  "action": {},
+  "side_panel": { "default_path": "sidepanel.html" },
+  "options_page": "options.html",
+  "background": { "service_worker": "background.js" },
+  "commands": {
+    "auto-fill": {
+      "suggested_key": { "default": "Alt+F" },
+      "description": "Auto Fill"
+    },
+    "generate-json": {
+      "suggested_key": { "default": "Alt+G" },
+      "description": "Generate JSON (or Copy prompt for GPT)"
+    },
+    "extract-from-page": {
+      "suggested_key": { "default": "Alt+E" },
+      "description": "Extract from page"
+    },
+    "learn-page": {
+      "suggested_key": { "default": "Alt+L" },
+      "description": "Learn this page"
+    },
+    "generate-pdf": {
+      "description": "Generate PDF - suggest Alt+P in chrome://extensions/shortcuts"
+    },
+    "save-sample": {
+      "description": "Save Sample - suggest Alt+S in chrome://extensions/shortcuts"
+    },
+    "attach-resume": {
+      "description": "Attach Resume to Form - suggest Alt+R in chrome://extensions/shortcuts"
+    },
+    "portal-sync": {
+      "description": "Save & Sync to Portal - suggest Alt+Y in chrome://extensions/shortcuts"
+    },
+    "open-settings": {
+      "description": "Settings - suggest Alt+O in chrome://extensions/shortcuts"
+    },
+    "refresh-panel": {
+      "description": "Refresh - suggest Alt+U in chrome://extensions/shortcuts"
+    }
+  }
+}
