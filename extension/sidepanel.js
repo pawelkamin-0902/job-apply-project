@@ -37,6 +37,39 @@ async function injectPageScripts(tabId) {
   await chrome.scripting.executeScript({ target, files: ["field-detector.js"] });
 }
 
+// Snapshot [Auto Fill] console output right after a run so Save Sample still gets logs even
+// if Ashby/Greenhouse remounts an iframe before the user clicks Save Sample.
+let lastAutoFillConsoleSnapshot = null; // { tabId, frames: Map<frameId, string> }
+
+async function snapshotConsoleLogsFromTab(tabId) {
+  try {
+    await injectPageScripts(tabId);
+    const injections = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => (typeof window.getAutoFillConsoleLog === "function" ? window.getAutoFillConsoleLog() : ""),
+    });
+    const frames = new Map();
+    for (const injection of injections) {
+      const log = String(injection.result || "").trim();
+      if (log) frames.set(injection.frameId, log);
+    }
+    lastAutoFillConsoleSnapshot = { tabId, frames };
+    return frames;
+  } catch {
+    return new Map();
+  }
+}
+
+function consoleLogForFrame(tabId, frameId, liveLog) {
+  const live = String(liveLog || "").trim();
+  if (live) return live;
+  const snap = lastAutoFillConsoleSnapshot;
+  if (snap && snap.tabId === tabId && snap.frames.has(frameId)) {
+    return snap.frames.get(frameId);
+  }
+  return "";
+}
+
 // Always a new tab — reusing one previously (see git history) meant generating a PDF for a
 // *different* job silently replaced the tab still showing the last job's PDF, which read as
 // data loss/confusion rather than a convenience.
@@ -904,9 +937,9 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
       findBambooResumeFileInput() || findSmartRecruitersResumeFileInput() || findJoinResumeFileInput();
     if (!target) {
       target = candidates.find((input) => {
-        const label = resolveFileInputLabel(input);
-        return !EXCLUDE_RE.test(label) && !isAutoParseWidget(input) && RESUME_RE.test(label);
-      });
+      const label = resolveFileInputLabel(input);
+      return !EXCLUDE_RE.test(label) && !isAutoParseWidget(input) && RESUME_RE.test(label);
+    });
     }
     if (!target) {
       // No explicitly resume-labeled field — fall back to whatever's left once cover-letter/
@@ -2063,7 +2096,7 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
 // page's own CSP might block, so it has to happen in the panel, not here), then runs
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
 async function runAutofillInPage(profile, qaBank) {
-  if (typeof clearAutoFillConsoleLog === "function") clearAutoFillConsoleLog();
+  if (typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(`[Auto Fill][run] start ${location.href}`);
 
   // Label resolution, visibility checks, honeypot/combobox detection, and group/native/shadow
@@ -2339,7 +2372,7 @@ async function runAutofillInPage(profile, qaBank) {
       },
     },
     { re: /linkedin/i, get: (p) => p.contact.linkedin },
-    { re: /website|portfolio/i, get: (p) => p.contact.website },
+    { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -2479,15 +2512,27 @@ async function runAutofillInPage(profile, qaBank) {
       key: "notice_period",
       re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
     },
-    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
+    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
     {
       key: "english_proficiency",
-      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b|\bdo you have english\b/i,
     },
     {
       key: "polish_proficiency",
       re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+    },
+    {
+      key: "years_experience",
+      re: /\bhow many years\b.*\bexperience\b|\byears of experience\b.*\b(field|role|have)\b/i,
+    },
+    {
+      key: "hear_about",
+      re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+    },
+    {
+      key: "reasonable_accommodation",
+      re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
     },
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
@@ -2598,7 +2643,7 @@ async function runAutofillInPage(profile, qaBank) {
         new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: str })
       );
     } else {
-      element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("input", { bubbles: true }));
     }
     element.dispatchEvent(new Event("change", { bubbles: true }));
     // Some widgets sync their own internal model off keyboard events specifically, not input/
@@ -3255,6 +3300,11 @@ async function runAutofillInPage(profile, qaBank) {
     const target = (desiredText || "").toLowerCase().trim();
     const cur = display.toLowerCase();
     if (cur === target || cur.startsWith(target + ",") || cur.startsWith(target + " ")) return true;
+    if (element.closest && element.closest(".phone-input__country")) {
+      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
+      if (bareCountry === target || bareCountry.startsWith(target)) return true;
+      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+    }
     return cur.includes(target) || target.includes(cur);
   }
 
@@ -3999,7 +4049,7 @@ async function runAutofillInPage(profile, qaBank) {
       if (typeHeadStartMs) {
         await new Promise((resolve) => setTimeout(resolve, typeHeadStartMs));
       }
-      let options = [];
+    let options = [];
       let lastSig = "";
       let stableReads = 0;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -4652,6 +4702,143 @@ async function runAutofillInPage(profile, qaBank) {
     return named ? named.name : null;
   }
 
+  function isYesNoOptionSet(optionLabels) {
+    const opts = (optionLabels || []).map((o) => String(o).trim().toLowerCase()).filter(Boolean);
+    if (!opts.length || opts.length > 4) return false;
+    return opts.every((o) => /^(yes|no|true|false|prefer not to say|n\/a|not applicable)$/.test(o));
+  }
+
+  function coerceComboboxAnswerForOptions(label, answer, optionLabels) {
+    const desired = String(answer || "").trim();
+    if (!desired || !optionLabels || !optionLabels.length) return desired;
+    if (!isYesNoOptionSet(optionLabels)) return desired;
+    const cat = detectCategory(label);
+    const low = desired.toLowerCase();
+    if (
+      cat === "english_proficiency" ||
+      cat === "polish_proficiency" ||
+      /\b(proficiency|fluent|fluency|language skill)\b/i.test(label)
+    ) {
+      if (/\b(fluent|native|proficient|advanced|c1|c2|mastery|upper intermediate|b2|excellent)\b/i.test(low)) {
+        return optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || desired;
+      }
+      if (/\b(none|no proficiency|beginner|elementary|a1|basic)\b/i.test(low)) {
+        return optionLabels.find((o) => /^no$/i.test(String(o).trim())) || desired;
+      }
+    }
+    if (/^(yes|y|true)$/i.test(desired)) {
+      return optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || desired;
+    }
+    if (/^(no|n|false)$/i.test(desired)) {
+      return optionLabels.find((o) => /^no$/i.test(String(o).trim())) || desired;
+    }
+    return desired;
+  }
+
+  function computeTotalYearsExperience() {
+    const entries = profile && Array.isArray(profile.experience) ? profile.experience : [];
+    if (!entries.length) return null;
+    const now = new Date();
+    let earliest = null;
+    for (const entry of entries) {
+      const parsed = parseExperienceDate(entry && entry.start_date);
+      if (!parsed || !parsed.year) continue;
+      const month = parsed.month || 1;
+      const d = new Date(parseInt(parsed.year, 10), month - 1, 1);
+      if (!earliest || d < earliest) earliest = d;
+    }
+    if (!earliest) return null;
+    const months = (now.getFullYear() - earliest.getFullYear()) * 12 + (now.getMonth() - earliest.getMonth());
+    return Math.max(0, Math.round(months / 12));
+  }
+
+  function pickExperienceYearsOption(totalYears, optionLabels) {
+    if (totalYears == null || !optionLabels || !optionLabels.length) return null;
+    const parsed = optionLabels
+      .map((label) => {
+        const text = String(label || "").trim();
+        const plus = text.match(/(\d+)\s*\+/);
+        if (plus) return { label: text, min: parseInt(plus[1], 10), max: Infinity };
+        const range = text.match(/(\d+)\s*[-–]\s*(\d+)/);
+        if (range) return { label: text, min: parseInt(range[1], 10), max: parseInt(range[2], 10) };
+        const single = text.match(/^(\d+)$/);
+        if (single) {
+          const n = parseInt(single[1], 10);
+          return { label: text, min: n, max: n };
+        }
+        const embedded = text.match(/\b(\d+)\b/);
+        if (embedded) {
+          const n = parseInt(embedded[1], 10);
+          return { label: text, min: n, max: n };
+        }
+        return null;
+      })
+      .filter(Boolean);
+    if (!parsed.length) return null;
+    const allPlainDigits = parsed.every((p) => p.min === p.max && p.max <= 30);
+    if (allPlainDigits) {
+      const fits = parsed.filter((p) => p.min <= totalYears).sort((a, b) => b.min - a.min);
+      if (fits.length) return fits[0].label;
+      return parsed.sort((a, b) => a.min - b.min)[0].label;
+    }
+    const containing = parsed.find((p) => totalYears >= p.min && totalYears <= p.max);
+    if (containing) return containing.label;
+    let best = parsed[0];
+    let bestDist = Infinity;
+    for (const p of parsed) {
+      const dist = totalYears < p.min ? p.min - totalYears : totalYears > p.max ? totalYears - p.max : 0;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = p;
+      }
+    }
+    return best.label;
+  }
+
+  function comboboxRetryCandidates(label, optionLabels, qaAnswer) {
+    const candidates = [];
+    const add = (v) => {
+      const s = String(v || "").trim();
+      if (!s) return;
+      if (!candidates.some((c) => c.toLowerCase() === s.toLowerCase())) candidates.push(s);
+    };
+    if (qaAnswer) {
+      add(qaAnswer);
+      add(coerceComboboxAnswerForOptions(label, qaAnswer, optionLabels));
+    }
+    const cat = detectCategory(label);
+    if (cat === "years_experience") {
+      const total = computeTotalYearsExperience();
+      const bucket = pickExperienceYearsOption(total, optionLabels);
+      if (bucket === "5+" && optionLabels.includes("5")) {
+        add("5");
+        add("5+");
+      } else {
+        add(bucket);
+      }
+      if (total != null) {
+        for (const o of optionLabels) {
+          const text = String(o).trim();
+          if (text === "5+" || text === "5") continue;
+          const n = parseInt(text, 10);
+          if (!Number.isNaN(n) && n <= total) add(text);
+        }
+      }
+    }
+    if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
+      const linkedInOpt = optionLabels.find((o) => /linkedin/i.test(String(o)));
+      if (linkedInOpt) add(linkedInOpt);
+      else add("LinkedIn");
+    }
+    if (cat === "reasonable_accommodation") {
+      add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
+    }
+    if (cat === "b2b_contract") {
+      add(optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || "Yes");
+    }
+    return candidates;
+  }
+
   // ---- RUN ----
   const filled = [];
   const unmatched = [];
@@ -4712,9 +4899,9 @@ async function runAutofillInPage(profile, qaBank) {
             if (clickGroupOption(group.options, part)) any = true;
           }
           if (any) {
-            filled.push({ label: group.label, value: qaMatch.answer, source: "learned" });
-            continue;
-          }
+      filled.push({ label: group.label, value: qaMatch.answer, source: "learned" });
+      continue;
+    }
         } else if (clickGroupOption(group.options, qaMatch.answer)) {
           filled.push({ label: group.label, value: qaMatch.answer, source: "learned" });
           continue;
@@ -4728,6 +4915,15 @@ async function runAutofillInPage(profile, qaBank) {
     if (optionLabels.length === 1 && clickGroupOption(group.options, optionLabels[0])) {
       filled.push({ label: group.label, value: optionLabels[0], source: "only-option" });
       continue;
+    }
+    if (
+      detectCategory(group.label) === "reasonable_accommodation" &&
+      optionLabels.some((t) => /^no$/i.test(String(t).trim()))
+    ) {
+      if (clickGroupOption(group.options, "No")) {
+        filled.push({ label: group.label, value: "No", source: "default" });
+        continue;
+      }
     }
     // Stamp the first option element so a later AI pick can click the matching sibling(s).
     if (optionLabels.length > 1 && group.options[0] && group.options[0].element) {
@@ -4770,8 +4966,8 @@ async function runAutofillInPage(profile, qaBank) {
       // Job Title + Company + dates come from profile.experience[N] (see
       // fillWorkdayExperienceFromProfile above).
       if (/role\s*description|description|responsibilit|duties|achievements|bullet/i.test(ownLabel)) {
-        continue;
-      }
+      continue;
+    }
       if (/^location\b/i.test(ownLabel)) {
         continue;
       }
@@ -4848,7 +5044,7 @@ async function runAutofillInPage(profile, qaBank) {
       }
       continue;
     }
-    if (isPhoneDialCodePicker(element) && profile.contact && profile.contact.phone) {
+    if (isPhoneDialCodePicker(element) && profile.contact && (profile.contact.phone || profile.contact.country)) {
       // Real calling codes are 1-3 digits with no way to tell the boundary from the digit
       // string alone (see setPhoneValue's own comment on the same ambiguity) - `/^(\+\d+)/` used
       // to match the ENTIRE leading digit run, not just the code, so this always tried to match
@@ -4974,6 +5170,17 @@ async function runAutofillInPage(profile, qaBank) {
         continue;
       }
       if (profile.contact.country) {
+        if (fillGreenhouseViaReactFiber(element, profile.contact.country)) {
+          const nowShown = reactSelectDisplayValue(element);
+          if (
+            isCorrectDialCode(nowShown) ||
+            (!profile.contact.phone && comboboxValueCommitted(element, profile.contact.country))
+          ) {
+            filled.push({ label, value: nowShown || profile.contact.country, source: "profile" });
+            await closeComboboxDown();
+            continue;
+          }
+        }
         // Deliberately ignoring fillReactSelectByClick's own return value here (was `committed
         // || isCorrectDialCode(nowShown)`) - it can ALSO be fooled by the exact same shape-only
         // bug just fixed above, via its own internal isReactSelectAlreadySet short-circuit at the
@@ -4984,7 +5191,10 @@ async function runAutofillInPage(profile, qaBank) {
         // itself correctly says. Relying solely on the exact-value check below closes that gap.
         await fillReactSelectByClick(element, profile.contact.country);
         const nowShown = reactSelectDisplayValue(element);
-        if (isCorrectDialCode(nowShown)) {
+        if (
+          isCorrectDialCode(nowShown) ||
+          (!profile.contact.phone && comboboxValueCommitted(element, profile.contact.country))
+        ) {
           filled.push({ label, value: nowShown || profile.contact.country, source: "profile" });
           console.info(
             `[Auto Fill][phone-watch] country picker committed via country name "${profile.contact.country}" (now showing "${nowShown}")`
@@ -5019,14 +5229,27 @@ async function runAutofillInPage(profile, qaBank) {
       looksLikeComboboxPick(element) &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
-      if (fillGreenhouseViaReactFiber(element, qaMatch.answer)) {
-        filled.push({ label, value: qaMatch.answer, source: "learned" });
-        continue;
+      const qaPicks = [qaMatch.answer];
+      if (
+        (detectCategory(label) === "english_proficiency" || detectCategory(label) === "polish_proficiency") &&
+        /\bdo you have\b/i.test(label)
+      ) {
+        qaPicks.unshift(coerceComboboxAnswerForOptions(label, qaMatch.answer, ["Yes", "No"]));
       }
-      if (await fillReactSelectByClick(element, qaMatch.answer)) {
-        filled.push({ label, value: qaMatch.answer, source: "learned" });
-        continue;
+      let qaComboboxDone = false;
+      for (const qaPick of [...new Set(qaPicks.map(String).filter(Boolean))]) {
+        if (fillGreenhouseViaReactFiber(element, qaPick)) {
+          filled.push({ label, value: qaPick, source: "learned" });
+          qaComboboxDone = true;
+          break;
+        }
+        if (await fillReactSelectByClick(element, qaPick)) {
+          filled.push({ label, value: qaPick, source: "learned" });
+          qaComboboxDone = true;
+          break;
+        }
       }
+      if (qaComboboxDone) continue;
       qaComboboxFailed = true;
     }
     if (qaAnswerUsable && !qaComboboxFailed && (await fillSingle(element, qaMatch.answer))) {
@@ -5108,6 +5331,25 @@ async function runAutofillInPage(profile, qaBank) {
         continue;
       }
       if (optionLabels.length > 1) {
+        const retryPicks = comboboxRetryCandidates(
+          label,
+          optionLabels,
+          qaComboboxFailed && qaMatch ? qaMatch.answer : null
+        );
+        let comboboxDone = false;
+        for (const pick of retryPicks) {
+          if (fillGreenhouseViaReactFiber(element, pick)) {
+            filled.push({ label, value: pick, source: qaMatch && qaComboboxFailed ? "learned" : "profile" });
+            comboboxDone = true;
+            break;
+          }
+          if (await fillReactSelectByClick(element, pick)) {
+            filled.push({ label, value: pick, source: qaMatch && qaComboboxFailed ? "learned" : "profile" });
+            comboboxDone = true;
+            break;
+          }
+        }
+        if (comboboxDone) continue;
         const idx = stampIdx(element, label);
         unmatched.push({
           idx,
@@ -5268,7 +5510,7 @@ async function fillGeneratedAnswersInPage(answers) {
         new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: str })
       );
     } else {
-      element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("input", { bubbles: true }));
     }
     element.dispatchEvent(new Event("change", { bubbles: true }));
     // Some widgets sync their own internal model off keyboard events specifically, not input/
@@ -6399,7 +6641,7 @@ async function fillGeneratedAnswersInPage(answers) {
       if (typeHeadStartMs) {
         await new Promise((resolve) => setTimeout(resolve, typeHeadStartMs));
       }
-      let options = [];
+    let options = [];
       let lastSig = "";
       let stableReads = 0;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -6624,8 +6866,8 @@ async function fillGeneratedAnswersInPage(answers) {
     // can no longer sacrifice the rest of the batch's results.
     try {
       el = resolveFillTarget(el) || el;
-      const tag = el.tagName.toLowerCase();
-      let ok = true;
+    const tag = el.tagName.toLowerCase();
+    let ok = true;
     if (tag === "select") {
       ok = setSelectValue(el, value);
     } else if (
@@ -6745,7 +6987,7 @@ async function fillGeneratedAnswersInPage(answers) {
       nativeSet(el, value);
       ok = textInputCommitted(el, value);
     }
-      if (ok) count++;
+    if (ok) count++;
       if (looksLikeComboboxPick(el)) {
         await new Promise((resolve) => setTimeout(resolve, 350));
       }
@@ -6876,7 +7118,7 @@ function captureSampleInPage(profile, qaBank) {
     // Phone Code"/"Phone Device Type"/"Phone Extension" from matching as the phone number itself.
     { re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|mobile|telephone)\b/i, get: (p) => p.contact.phone },
     { re: /linkedin/i, get: (p) => p.contact.linkedin },
-    { re: /website|portfolio/i, get: (p) => p.contact.website },
+    { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -6999,15 +7241,27 @@ function captureSampleInPage(profile, qaBank) {
       key: "notice_period",
       re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
     },
-    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
+    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
     {
       key: "english_proficiency",
-      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b|\bdo you have english\b/i,
     },
     {
       key: "polish_proficiency",
       re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+    },
+    {
+      key: "years_experience",
+      re: /\bhow many years\b.*\bexperience\b|\byears of experience\b.*\b(field|role|have)\b/i,
+    },
+    {
+      key: "hear_about",
+      re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+    },
+    {
+      key: "reasonable_accommodation",
+      re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
     },
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
@@ -7183,7 +7437,8 @@ function captureSampleInPage(profile, qaBank) {
     url: location.href,
     html: serializeWithOpenShadow(document.documentElement),
     fields,
-    console_log: typeof getAutoFillConsoleLog === "function" ? getAutoFillConsoleLog() : "",
+    console_log:
+      typeof window.getAutoFillConsoleLog === "function" ? window.getAutoFillConsoleLog() : "",
   };
 }
 
@@ -7356,15 +7611,27 @@ const MATCH_CATEGORY_PATTERNS = [
     key: "notice_period",
     re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
   },
-  { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
+  { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
   { key: "nationality", re: /\bnationality\b/i },
   {
     key: "english_proficiency",
-    re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+    re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b|\bdo you have english\b/i,
   },
   {
     key: "polish_proficiency",
     re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+  },
+  {
+    key: "years_experience",
+    re: /\bhow many years\b.*\bexperience\b|\byears of experience\b.*\b(field|role|have)\b/i,
+  },
+  {
+    key: "hear_about",
+    re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+  },
+  {
+    key: "reasonable_accommodation",
+    re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
   },
   { key: "relocation", re: /\brelocat|currently based|based in\b/i },
   { key: "gender", re: /\bgender\b/i },
@@ -8047,7 +8314,7 @@ el("autofillBtn").addEventListener("click", async () => {
         const matchable = idxEligible.filter((u) => !u.skipQaMatch);
         const data = matchable.length
           ? await apiFetch("/match-answers", {
-              method: "POST",
+          method: "POST",
               body: JSON.stringify({ questions: matchable.map((u) => u.label) }),
             })
           : { results: [] };
@@ -8294,6 +8561,7 @@ el("autofillBtn").addEventListener("click", async () => {
     const generatedNote = [matchedCount && `${matchedCount} matched`, generatedCount && `${generatedCount} generated`]
       .filter(Boolean)
       .join(", ");
+    await snapshotConsoleLogsFromTab(tab.id);
     resultEl.textContent = `Filled ${filledCount} field(s)${generatedNote ? ` (${generatedNote})` : ""}.${
       needsHuman.length
         ? ` ${needsHuman.length} need your input: ${needsHuman.map((u) => u.label || "(no label)").join(", ")}.`
@@ -8423,11 +8691,11 @@ el("saveSampleBtn").addEventListener("click", async () => {
         url: i.result.url,
         html: i.result.html,
         fields: i.result.fields,
-        console_log: i.result.console_log || "",
+        console_log: consoleLogForFrame(tab.id, i.frameId, i.result.console_log),
       })),
     };
     const data = await apiFetch("/save-sample", { method: "POST", body: JSON.stringify(body) });
-    const hasLog = valid.some((i) => (i.result.console_log || "").trim());
+    const hasLog = valid.some((i) => consoleLogForFrame(tab.id, i.frameId, i.result.console_log).trim());
     resultEl.textContent = `Saved ${data.saved.length} file(s): ${data.saved.join(", ")}${
       hasLog ? " (includes console.log)" : ""
     }`;

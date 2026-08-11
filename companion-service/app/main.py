@@ -662,6 +662,7 @@ async def save_sample(body: SaveSampleRequest) -> SaveSampleResponse:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     saved: list[str] = []
+    merged_console: list[str] = []
     for frame in body.frames:
         suffix = f"-frame{frame.frame_id}" if frame.frame_id else ""
         base_name = f"{slug}-{timestamp}{suffix}"
@@ -679,13 +680,16 @@ async def save_sample(body: SaveSampleRequest) -> SaveSampleResponse:
         }
         if frame.console_log and frame.console_log.strip():
             meta["has_console_log"] = True
+            merged_console.append(
+                f"=== frame {frame.frame_id} {frame.url} ===\n{frame.console_log.strip()}"
+            )
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         saved.append(html_path.name)
 
-        if frame.console_log and frame.console_log.strip():
-            log_path = CAPTURED_SAMPLES_DIR / f"{base_name}.console.log"
-            log_path.write_text(frame.console_log, encoding="utf-8")
-            saved.append(log_path.name)
+    if merged_console:
+        log_path = CAPTURED_SAMPLES_DIR / f"{slug}-{timestamp}.console.log"
+        log_path.write_text("\n\n".join(merged_console) + "\n", encoding="utf-8")
+        saved.append(log_path.name)
 
     return SaveSampleResponse(ok=True, saved=saved)
 
