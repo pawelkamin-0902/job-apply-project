@@ -2196,7 +2196,22 @@ async function runAutofillInPage(profile, qaBank) {
       }
     }
     const raw = `${resolveOwnLabel(element, host)} ${findGroupContextLabel(host || element) || ""}`;
-    return /\(\s*required\s*\)/i.test(raw) || /[*•✱]/.test(raw);
+    if (/\(\s*required\s*\)/i.test(raw) || /[*•✱]/.test(raw)) return true;
+    // PeopleForce career application: required is `class="required"` on the <label>, but the
+    // label's `for` points at the question text, NOT the real input id (`field_store_data_*`),
+    // so the label[for=id] asterisk check above never fires. Confirmed live on fotc.peopleforce.io:
+    // every custom screening question stayed canGenerate:false, so gpt-auto never opened.
+    let pfNode = element.parentElement;
+    for (let depth = 0; depth < 8 && pfNode; depth++, pfNode = pfNode.parentElement) {
+      const pfLabel = pfNode.querySelector(":scope > label.required, label.required");
+      if (!pfLabel || !pfNode.contains(element) || pfLabel.contains(element)) continue;
+      const controls = pfNode.querySelectorAll(
+        'input:not([type="hidden"]):not([type="file"]):not([type="submit"]):not([type="button"]), textarea, select'
+      );
+      if ([...controls].includes(element)) return true;
+      break;
+    }
+    return false;
   }
 
   // ---- consequential fields: never guess these, only fill from a structured/QA-bank match ----
@@ -2431,11 +2446,25 @@ async function runAutofillInPage(profile, qaBank) {
     // a saved answer for the same underlying question never got reused via category match.
     { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
-    { key: "salary_expectations", re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect/i },
+    {
+      key: "salary_expectations",
+      re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+    },
     { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
-    { key: "notice_period", re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b/i },
+    {
+      key: "notice_period",
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+    },
+    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
-    { key: "english_proficiency", re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i },
+    {
+      key: "english_proficiency",
+      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+    },
+    {
+      key: "polish_proficiency",
+      re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+    },
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
@@ -4956,12 +4985,14 @@ async function runAutofillInPage(profile, qaBank) {
     // asking for manual input even after isVisible() started detecting it correctly.
     const isFreeText = tag === "textarea" || (tag === "input" && /^(text|email|tel|url|search|range)?$/i.test(element.type || ""));
     const isCoverLetter = /\bcover(ing)?\s*letter\b/i.test(label) || /\bcover(ing)?\s*letter\b/i.test(ownLabel);
-    const canGenerate =
+    const fieldRequired = isRequiredField(element, host) || isCoverLetter;
+    const gptBatchEligible =
       isFreeText &&
-      !isConsequential(label) &&
+      !isConsentField(label) &&
       !structured.isStructuredCategory &&
       !looksLikeComboboxPick(element) &&
-      (isRequiredField(element, host) || isCoverLetter);
+      fieldRequired;
+    const canGenerate = gptBatchEligible && !isConsequential(label);
     // Stamped for every unmatched field (including selects above) — the side panel tries an
     // AI-based QA-bank match first, then free-text generation / select option-picking.
     const idx = stampIdx(element, label);
@@ -4974,7 +5005,14 @@ async function runAutofillInPage(profile, qaBank) {
     // gpt-auto local QA-match pass below, regardless of any fix to how it originally got saved -
     // confirmed live: a genuinely non-generatable, option-less unmatched entry still ended up
     // filled with an unrelated, wrong country each run.
-    unmatched.push({ idx, label, type: element.type || tag, canGenerate, skipQaMatch: isPhoneDialCodePicker(element) });
+    unmatched.push({
+      idx,
+      label,
+      type: element.type || tag,
+      canGenerate,
+      gptBatchEligible,
+      skipQaMatch: isPhoneDialCodePicker(element),
+    });
   }
 
   // Ungrouped single checkboxes (no shared `name`, so not caught above) — e.g. a lone
@@ -6746,11 +6784,25 @@ function captureSampleInPage(profile, qaBank) {
     // a saved answer for the same underlying question never got reused via category match.
     { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
-    { key: "salary_expectations", re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect/i },
+    {
+      key: "salary_expectations",
+      re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+    },
     { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
-    { key: "notice_period", re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b/i },
+    {
+      key: "notice_period",
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+    },
+    { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
-    { key: "english_proficiency", re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i },
+    {
+      key: "english_proficiency",
+      re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+    },
+    {
+      key: "polish_proficiency",
+      re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+    },
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
@@ -7071,10 +7123,25 @@ const MATCH_CATEGORY_PATTERNS = [
   // "authorized to work".
   { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
-  { key: "salary_expectations", re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect/i },
-  { key: "notice_period", re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b/i },
+  {
+    key: "salary_expectations",
+    re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+  },
+  { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
+  {
+    key: "notice_period",
+    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+  },
+  { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract)\b|\bcontract\s*type\b/i },
   { key: "nationality", re: /\bnationality\b/i },
-  { key: "english_proficiency", re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i },
+  {
+    key: "english_proficiency",
+    re: /\benglish\b.*\b(level|proficiency|fluency|language)\b|\bfluency in english\b/i,
+  },
+  {
+    key: "polish_proficiency",
+    re: /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i,
+  },
   { key: "relocation", re: /\brelocat|currently based|based in\b/i },
   { key: "gender", re: /\bgender\b/i },
   { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
@@ -7674,7 +7741,11 @@ el("autofillBtn").addEventListener("click", async () => {
 
     const finalFills = []; // { frameId, idx, value, kind: "matched" | "generated" }
     const matchErrors = [];
-    let generationCandidates = idxEligible.filter((u) => u.canGenerate);
+    const gptAutoProvider =
+      settings.answer_provider === "gpt-auto" || settings.answer_provider === "gpt-auto-headless";
+    let generationCandidates = idxEligible.filter(
+      (u) => u.canGenerate || (gptAutoProvider && u.gptBatchEligible)
+    );
     // GPT/select-pick prompts must never include placeholder chrome like "Select One", and a
     // dropdown with only that left after filtering isn't a real pick. Optional selects are
     // already excluded upstream (only required comboboxes/selects get `options` stamped).

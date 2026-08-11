@@ -2994,6 +2994,30 @@ unverified outside a live browser).
     entries use `Author: Claude` the same way. See the "Contributor log" section at the top
     of this file.
 
+109. **PeopleForce (fotc.peopleforce.io): gpt-auto never opened for required screening
+    questions; footer locale picker surfaced as "Powered by PeopleForce".** `Author: Cursor`.
+    Reported live: Auto Fill filled 3 profile fields, then listed 7 "need your input" including
+    B2B/salary/availability/proficiency questions — but no ChatGPT tab opened.
+    - **Root cause 1**: PeopleForce marks required via `<label class="required">`, but the
+      label's `for` points at the question text, not the real input id (`field_store_data_*`),
+      so `isRequiredField` never fired → every custom question got `canGenerate: false`.
+    - **Root cause 2**: Consequential questions (B2B, etc.) are intentionally excluded from
+      `canGenerate`, and gpt-auto only batched fields with `canGenerate: true` — so even after
+      fixing required detection, B2B/salary still wouldn't reach the batch unless QA matched
+      in-pass.
+    - **Root cause 3**: Footer `#career_locale` language `<select>` resolved its label from
+      nearby "Powered by PeopleForce" footer text.
+  - **Fixed**: `isRequiredField` walks up to a sibling `label.required`; stamp
+      `gptBatchEligible` separately from `canGenerate`; gpt-auto batches
+      `gptBatchEligible` fields (batch prompt still uses QA bank — consequential answers come
+      from saved entries, not invented). `field-detector.js`: exclude `#career_locale`, resolve
+      pf-phone-number label from `label[for="career_application_form_phone_numbers"]`. Expanded
+      `CATEGORY_PATTERNS` / `MATCH_CATEGORY_PATTERNS` for monthly rate, availability-to-start,
+      B2B contract, Polish proficiency.
+    - **Verified offline** via `test-detect.mjs` on capture
+      `fotc-peopleforce-io-20260811T054719Z.html`: 9 real fields, phone labeled, locale picker
+      gone. **Not yet confirmed live** that gpt-auto now opens for the screening batch.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

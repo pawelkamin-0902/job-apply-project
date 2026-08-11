@@ -246,6 +246,18 @@ function resolveOwnLabel(element, host) {
     const v = (cxHost.getAttribute("cx-prop-label") || "").trim();
     if (v) return v;
   }
+  // PeopleForce Vue phone widget: real label is on a sibling <label for="...phone_numbers">
+  // outside the pf-phone-number mount; the inner <input type="tel"> has no label[for=id] link.
+  // Confirmed live on fotc.peopleforce.io apply form.
+  if (element.closest && element.closest('[data-component="pf-phone-number"]')) {
+    const pfPhoneLabel =
+      document.querySelector('label[for="career_application_form_phone_numbers"]') ||
+      (element.closest("#new_career_application_form, .new_career_application_form") &&
+        element
+          .closest("#new_career_application_form, .new_career_application_form")
+          .querySelector('label[for*="phone_numbers"]'));
+    if (pfPhoneLabel && cleanedText(pfPhoneLabel)) return cleanedText(pfPhoneLabel);
+  }
   if (element.id) {
     const labelEl = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
     if (labelEl && cleanedText(labelEl)) return cleanedText(labelEl);
@@ -470,6 +482,11 @@ function isVisible(element) {
   // label made of the real select's own concatenated option text, picked up via label
   // resolution's sibling-climbing fallback).
   if (element.closest && element.closest(".select2-container")) return false;
+  // PeopleForce career-site footer language picker (`#career_locale`) — not an application
+  // question. Confirmed live on fotc.peopleforce.io: resolved via footer "Powered by PeopleForce"
+  // proximity and surfaced as a bogus unmatched field, while real screening questions never
+  // reached gpt-auto because `isRequiredField` missed PeopleForce's `label.required` class.
+  if (element.id === "career_locale" || (element.name === "locale" && element.closest("footer"))) return false;
   // Zoho Recruit's own phone-number widget (<crux-phone-component>) renders its country/dial-
   // code picker as a separate `<lyte-dropdown lt-prop-user-value="dial_code">` sibling of the
   // real number input, inside a plain `<div role="combobox">` with no label of its own anywhere
