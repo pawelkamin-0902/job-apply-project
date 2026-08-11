@@ -21,9 +21,25 @@ function extractFunction(source, name) {
   const startRe = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`);
   const start = source.search(startRe);
   if (start < 0) throw new Error(`Could not find function ${name}`);
-  let i = source.indexOf("{", start);
+  // Find the opening brace of the function BODY — not a default-arg `{}` like
+  // `function runAutofillInPage(profile, qaBank, options = {}) {`.
+  const headerOpen = source.indexOf("(", start);
   let depth = 0;
-  for (; i < source.length; i++) {
+  let bodyOpen = -1;
+  for (let i = headerOpen; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) {
+        bodyOpen = source.indexOf("{", i + 1);
+        break;
+      }
+    }
+  }
+  if (bodyOpen < 0) throw new Error(`Could not find body of ${name}`);
+  depth = 0;
+  for (let i = bodyOpen; i < source.length; i++) {
     const ch = source[i];
     if (ch === "{") depth++;
     else if (ch === "}") {
