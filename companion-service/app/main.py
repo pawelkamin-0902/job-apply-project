@@ -670,20 +670,22 @@ async def save_sample(body: SaveSampleRequest) -> SaveSampleResponse:
         html_path.write_text(frame.html, encoding="utf-8")
 
         meta_path = CAPTURED_SAMPLES_DIR / f"{base_name}.json"
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "page_url": body.page_url,
-                    "frame_url": frame.url,
-                    "frame_id": frame.frame_id,
-                    "captured_at": timestamp,
-                    "fields": [field.model_dump() for field in frame.fields],
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        meta = {
+            "page_url": body.page_url,
+            "frame_url": frame.url,
+            "frame_id": frame.frame_id,
+            "captured_at": timestamp,
+            "fields": [field.model_dump() for field in frame.fields],
+        }
+        if frame.console_log and frame.console_log.strip():
+            meta["has_console_log"] = True
+        meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         saved.append(html_path.name)
+
+        if frame.console_log and frame.console_log.strip():
+            log_path = CAPTURED_SAMPLES_DIR / f"{base_name}.console.log"
+            log_path.write_text(frame.console_log, encoding="utf-8")
+            saved.append(log_path.name)
 
     return SaveSampleResponse(ok=True, saved=saved)
 

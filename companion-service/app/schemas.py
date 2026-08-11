@@ -294,6 +294,7 @@ class SampleFrameCapture(BaseModel):
     url: str
     html: str
     fields: list[SampleFieldCapture]
+    console_log: str | None = None
 
 
 class SaveSampleRequest(BaseModel):

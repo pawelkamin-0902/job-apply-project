@@ -3059,6 +3059,13 @@ unverified outside a live browser).
       `adroiti-peopleforce-io-20260811T064457Z.html`: 6 real fields, phone labeled, locale/currency
       gone. **Not yet confirmed live**.
 
+112. **Diagnostics: console capture + structured run logs + platform testing workflow.**
+    `Author: Cursor`. User feedback: autofill slower than manual; need platform-by-platform
+    fixes with better logs. Added `console-capture.js` (injected before field-detector on
+    Auto Fill / Learn / Save Sample); `[Auto Fill][run|detect|filled|unmatched|summary]` logs
+    at end of `runAutofillInPage`; Save Sample writes `*.console.log` beside HTML/JSON.
+    Workflow doc: `extension/test-forms/PLATFORM_TESTING.md`.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -29,6 +29,14 @@ function isWorkdayHostname(hostname) {
 // that race). Reading it straight from the URL has no such timing dependency at all.
 const myTabId = Number(new URLSearchParams(location.search).get("tabId")) || null;
 
+// console-capture.js must load before field-detector.js so [Auto Fill] logs are buffered for
+// Save Sample and post-mortem debugging on real ATS pages.
+async function injectPageScripts(tabId) {
+  const target = { tabId, allFrames: true };
+  await chrome.scripting.executeScript({ target, files: ["console-capture.js"] });
+  await chrome.scripting.executeScript({ target, files: ["field-detector.js"] });
+}
+
 // Always a new tab — reusing one previously (see git history) meant generating a PDF for a
 // *different* job silently replaced the tab still showing the last job's PDF, which read as
 // data loss/confusion rather than a convenience.
@@ -2055,6 +2063,9 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
 // page's own CSP might block, so it has to happen in the panel, not here), then runs
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
 async function runAutofillInPage(profile, qaBank) {
+  if (typeof clearAutoFillConsoleLog === "function") clearAutoFillConsoleLog();
+  console.info(`[Auto Fill][run] start ${location.href}`);
+
   // Label resolution, visibility checks, honeypot/combobox detection, and group/native/shadow
   // field collection (cleanedText, normalizeLabel, resolveOwnLabel, labelForElement, isVisible,
   // isHoneypot, looksLikeComboboxPick, collectFormFields, ...) all come from field-detector.js,
@@ -4653,6 +4664,9 @@ async function runAutofillInPage(profile, qaBank) {
   };
 
   const { groups, singles, loneCheckboxes } = collectFormFields();
+  console.info(
+    `[Auto Fill][detect] groups=${groups.length} singles=${singles.length} loneCheckboxes=${loneCheckboxes.length}`
+  );
   // Captured up front, while every single is still live and attached - nearestNamedControlKey
   // walks up via closest()/parentElement, which stops working the moment a field's own
   // ancestor's innerHTML gets reassigned out from under it (a removed node's parentElement goes
@@ -5208,6 +5222,21 @@ async function runAutofillInPage(profile, qaBank) {
   // "Missing entry" for Name/Email/salary even when the DOM looked filled.
   if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
     await new Promise((resolve) => setTimeout(resolve, 650));
+  }
+
+  console.info(`[Auto Fill][summary] filled=${filled.length} unmatched=${unmatched.length}`);
+  for (const f of filled) {
+    const preview = String(f.value == null ? "" : f.value).replace(/\s+/g, " ").trim().slice(0, 80);
+    console.info(`[Auto Fill][filled] ${f.source || "?"}: "${f.label || "(no label)"}" -> ${preview}`);
+  }
+  for (const u of unmatched) {
+    const opts =
+      Array.isArray(u.options) && u.options.length
+        ? ` options=${u.options.length}${u.options.length <= 4 ? ` [${u.options.join(" | ")}]` : ""}`
+        : "";
+    console.info(
+      `[Auto Fill][unmatched] "${u.label || "(no label)"}" type=${u.type || "?"} canGenerate=${Boolean(u.canGenerate)} gptBatch=${Boolean(u.gptBatchEligible)}${opts}`
+    );
   }
 
   return { filled, unmatched };
@@ -7150,7 +7179,12 @@ function captureSampleInPage(profile, qaBank) {
     return `<${tag}${attrs}>${inner}</${tag}>`;
   }
 
-  return { url: location.href, html: serializeWithOpenShadow(document.documentElement), fields };
+  return {
+    url: location.href,
+    html: serializeWithOpenShadow(document.documentElement),
+    fields,
+    console_log: typeof getAutoFillConsoleLog === "function" ? getAutoFillConsoleLog() : "",
+  };
 }
 
 // Injected into the page — same self-containment constraint as above. Keep the DETECT
@@ -7913,7 +7947,7 @@ el("autofillBtn").addEventListener("click", async () => {
     // group/combobox collection) as page globals - runAutofillInPage and runLearnInPage both
     // call the same collectFormFields() from it rather than each carrying an independently-
     // drifting copy, so injected first here on every frame.
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["field-detector.js"] });
+    await injectPageScripts(tab.id);
     const injections = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
       func: runAutofillInPage,
@@ -8168,7 +8202,7 @@ el("autofillBtn").addEventListener("click", async () => {
       resultEl.textContent = "Filling in answers...";
       // Re-inject field-detector so label rematch works if the apply drawer remounted
       // (Workable) and wiped data-af-idx stamps while ChatGPT was generating.
-      await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["field-detector.js"] });
+      await injectPageScripts(tab.id);
       for (const f of finalFills) {
         if (!byFrame.has(f.frameId)) byFrame.set(f.frameId, []);
         byFrame.get(f.frameId).push({ idx: f.idx, value: f.value, label: f.label || "" });
@@ -8227,7 +8261,7 @@ el("autofillBtn").addEventListener("click", async () => {
         // Re-injected defensively first, same as before fillGeneratedAnswersInPage above -
         // runAutofillInPage depends on field-detector.js's own globals (collectFormFields etc.),
         // which could be gone if anything remounted the page's own DOM since the first run.
-        await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["field-detector.js"] });
+        await injectPageScripts(tab.id);
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: true },
           func: runAutofillInPage,
@@ -8340,7 +8374,7 @@ el("learnBtn").addEventListener("click", async () => {
     // Same shared field-detector.js Auto Fill uses (see its handler above) - Learn calls the
     // identical collectFormFields(), so it can't find a different set of fields than Auto Fill
     // did, or resolve a label differently, on the same page.
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["field-detector.js"] });
+    await injectPageScripts(tab.id);
     const injections = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
       func: runLearnInPage,
@@ -8371,7 +8405,7 @@ el("saveSampleBtn").addEventListener("click", async () => {
     // Same shared field-detector.js Auto Fill/Learn use (see their handlers) - a captured
     // sample previously ran its own separately-drifting copy of detection, so it could report
     // fields/labels that no longer matched what a real Auto Fill run would actually see.
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: ["field-detector.js"] });
+    await injectPageScripts(tab.id);
     const injections = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
       func: captureSampleInPage,
@@ -8389,10 +8423,14 @@ el("saveSampleBtn").addEventListener("click", async () => {
         url: i.result.url,
         html: i.result.html,
         fields: i.result.fields,
+        console_log: i.result.console_log || "",
       })),
     };
     const data = await apiFetch("/save-sample", { method: "POST", body: JSON.stringify(body) });
-    resultEl.textContent = `Saved ${data.saved.length} file(s): ${data.saved.join(", ")}`;
+    const hasLog = valid.some((i) => (i.result.console_log || "").trim());
+    resultEl.textContent = `Saved ${data.saved.length} file(s): ${data.saved.join(", ")}${
+      hasLog ? " (includes console.log)" : ""
+    }`;
   } catch (err) {
     resultEl.textContent = `Save Sample failed: ${err.message}`;
   } finally {
