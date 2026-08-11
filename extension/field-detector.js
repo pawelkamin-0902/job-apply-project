@@ -264,8 +264,35 @@ function resolveOwnLabel(element, host) {
     const labelEl = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
     if (labelEl && cleanedText(labelEl)) return cleanedText(labelEl);
   }
+  // Workable wraps controls inside a giant <label> whose textContent includes the field value
+  // (summary textarea) or intl-tel-input's country list — use aria-labelledby / phone_label first.
+  const labelledby = element.getAttribute && element.getAttribute("aria-labelledby");
+  if (labelledby) {
+    const text = labelledby
+      .split(/\s+/)
+      .map((id) => {
+        const el = document.getElementById(id);
+        return el ? cleanedText(el) : "";
+      })
+      .filter(Boolean)
+      .join(" ");
+    if (text) return text;
+  }
+  if (element.classList && element.classList.contains("iti__tel-input")) {
+    const phoneLabel =
+      document.getElementById("phone_label") ||
+      (element.closest("label") && element.closest("label").querySelector("[id$='_label']"));
+    const phoneText = phoneLabel && cleanedText(phoneLabel);
+    if (phoneText) return phoneText.replace(/\s*\(optional\)\s*/i, "").trim();
+  }
   const parentLabel = element.closest ? element.closest("label") : null;
-  if (parentLabel && cleanedText(parentLabel)) return cleanedText(parentLabel);
+  if (parentLabel && cleanedText(parentLabel)) {
+    const parentText = cleanedText(parentLabel);
+    const ownValue = (element.value || "").trim();
+    if (!(ownValue && parentText.includes(ownValue) && parentText.length > ownValue.length + 20)) {
+      return parentText;
+    }
+  }
   // <fieldset><legend> is the standard, authoritative way to associate a label with a group of
   // controls - checked before aria-label/aria-labelledby since Workday's own custom "Select
   // One" button carries a generic, useless aria-label ("Select One Required" - just its own
@@ -287,18 +314,7 @@ function resolveOwnLabel(element, host) {
     }
     if (legendText) return legendText;
   }
-  const labelledby = element.getAttribute && element.getAttribute("aria-labelledby");
-  if (labelledby) {
-    const text = labelledby
-      .split(/\s+/)
-      .map((id) => {
-        const el = document.getElementById(id);
-        return el ? cleanedText(el) : "";
-      })
-      .filter(Boolean)
-      .join(" ");
-    if (text) return text;
-  }
+  // aria-labelledby handled above (before wrapping <label>).
   // A combobox's OWN aria-label is sometimes just its current, still-unselected placeholder
   // state ("Select", "Select...", "Choose an option") rather than the actual question -
   // confirmed live: Rippling's custom Select widget renders `aria-label="Select"` on every
@@ -729,6 +745,12 @@ function collectNativeElements() {
     // to fill. Same "exclude by ATS-specific automation id" approach already used for phone
     // country-code pickers and file-upload action buttons elsewhere in this function.
     .filter((el) => el.getAttribute("data-automation-id") !== "utilityMenuButton")
+    .filter((el) => {
+      const dataUi = (el.getAttribute && el.getAttribute("data-ui")) || "";
+      if (/autofill|import.*resume|resume.*import/i.test(dataUi)) return false;
+      if (el.closest && el.closest('[data-ui="autofill-button"]')) return false;
+      return true;
+    })
     // A custom element that hosts its OWN open shadow root (e.g. a SmartRecruiters `<spl-*>`
     // location/combobox widget whose real, interactive input lives inside that shadow root -
     // collectShadowElements below already finds it separately) must not ALSO be collected here

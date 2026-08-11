@@ -2449,6 +2449,7 @@ async function runAutofillInPage(profile, qaBank) {
         return e ? `${e.title} at ${e.company}` : null;
       },
     },
+    { re: /^summary\b/i, get: (p) => p.summary || "" },
   ];
 
   // Returns whether `label` matches a structured category at all (email/phone/name/...) as
@@ -7195,6 +7196,7 @@ function captureSampleInPage(profile, qaBank) {
         return e ? `${e.title} at ${e.company}` : null;
       },
     },
+    { re: /^summary\b/i, get: (p) => p.summary || "" },
   ];
 
   function matchStructuredField(label) {
@@ -8552,6 +8554,8 @@ el("autofillBtn").addEventListener("click", async () => {
       if (/^(choose password|retype password|middle name|notification|hear more about career opportunities|powered by peopleforce)$/i.test(lab)) {
         return false;
       }
+      if (/^autofill application\b/i.test(lab)) return false;
+      if (lab.length > 160) return false;
       return true;
     };
     const needsHuman = allUnmatched
