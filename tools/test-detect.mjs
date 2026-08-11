@@ -13,8 +13,12 @@ const FIELD_DETECTOR = fs.readFileSync(
   "utf8"
 );
 
+function stripScripts(html) {
+  return html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+}
+
 function setupDom(html) {
-  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, {
+  const dom = new JSDOM(`<!doctype html><html><body>${stripScripts(html)}</body></html>`, {
     pretendToBeVisual: true,
     url: "http://localhost/",
     runScripts: "dangerously",
