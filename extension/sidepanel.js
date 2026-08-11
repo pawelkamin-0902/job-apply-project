@@ -3313,6 +3313,64 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return cur.includes(target) || target.includes(cur);
   }
 
+  function comboboxFieldLabel(element) {
+    return (
+      (element && element.getAttribute && element.getAttribute("data-af-label")) ||
+      (element && element.id) ||
+      ""
+    );
+  }
+
+  function comboboxHasDisplayValue(element) {
+    const display = reactSelectDisplayValue(element);
+    return Boolean(display && !isGenericSelectPlaceholder(display));
+  }
+
+  function answerCouldMatchOptions(answer, optionLabels) {
+    const a = String(answer || "").toLowerCase().trim();
+    if (!a) return false;
+    if (!optionLabels || !optionLabels.length) return true;
+    return optionLabels.some((o) => {
+      const t = String(o).toLowerCase().trim();
+      return (
+        t === a ||
+        t.startsWith(a + ",") ||
+        t.startsWith(a + " ") ||
+        t.startsWith(a) ||
+        a.startsWith(t) ||
+        t.includes(a) ||
+        a.includes(t)
+      );
+    });
+  }
+
+  function comboboxTrace(element, event, detail) {
+    const label = comboboxFieldLabel(element) || "(no label)";
+    const id = (element && element.id) || "?";
+    const display = reactSelectDisplayValue(element);
+    console.info(`[Auto Fill][combobox] "${label}" id=${id} ${event}`, { display, ...(detail || {}) });
+  }
+
+  function watchComboboxDisplay(element, reason) {
+    const label = comboboxFieldLabel(element) || "(no label)";
+    let lastSeen = reactSelectDisplayValue(element);
+    let watchTicks = 0;
+    comboboxTrace(element, `watch start (${reason})`, { displayBefore: lastSeen });
+    const watchId = setInterval(() => {
+      watchTicks++;
+      const now = reactSelectDisplayValue(element);
+      if (now !== lastSeen) {
+        console.warn(
+          `[Auto Fill][combobox-watch] "${label}" id=${element.id || "?"} display changed: "${lastSeen}" -> "${now}" (${reason}, ~${watchTicks * 400}ms)`
+        );
+        lastSeen = now;
+      }
+      if (watchTicks >= 300) clearInterval(watchId);
+    }, 400);
+  }
+
+
+
   // Greenhouse remix react-select keeps options + onChange on React fibers — readable without
   // opening menus (executeScript-injected funcs cannot rely on module-level helpers; must live
   // inside runAutofillInPage / fillGeneratedAnswersInPage).
@@ -3571,8 +3629,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const init = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
       combo.dispatchEvent(new KeyboardEvent("keydown", init));
       combo.dispatchEvent(new KeyboardEvent("keyup", init));
+      const closedLabel = comboboxFieldLabel(combo) || combo.id || "?";
+      const closedDisplay = reactSelectDisplayValue(combo);
       combo.blur();
       await new Promise((resolve) => setTimeout(resolve, 80));
+      console.info(
+        `[Auto Fill][combobox-dismiss] closed other open menu: "${closedLabel}" id=${combo.id || "?"} display="${closedDisplay}"`
+      );
     }
   }
 
@@ -3609,12 +3672,25 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         return false;
       }
     }
+    const displayAtStart = reactSelectDisplayValue(element);
     if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
+      comboboxTrace(element, `skip SF already set -> "${desiredText}"`, { displayAtStart });
       return true;
     }
-    if (isReactSelectAlreadySet(element, desiredText)) return true;
+    if (isReactSelectAlreadySet(element, desiredText)) {
+      comboboxTrace(element, `skip react-select already set -> "${desiredText}"`, { displayAtStart });
+      return true;
+    }
+    if (comboboxHasDisplayValue(element) && comboboxValueCommitted(element, desiredText)) {
+      comboboxTrace(element, `skip display already committed -> "${desiredText}"`, { displayAtStart });
+      return true;
+    }
+    comboboxTrace(element, `open/fill attempt -> "${desiredText}"`, { displayBefore: displayAtStart });
     if (element.closest && element.closest(".select-shell") && fillGreenhouseViaReactFiber(element, desiredText)) {
+      const displayAfter = reactSelectDisplayValue(element);
+      comboboxTrace(element, `fiber committed -> "${desiredText}"`, { displayBefore: displayAtStart, displayAfter });
       await dismissOpenGreenhouseComboboxes(element);
+      watchComboboxDisplay(element, `after fiber commit "${desiredText}"`);
       return true;
     }
     const sfPick = isSuccessFactorsPicklist(element);
@@ -3692,8 +3768,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // several fallback tiers instead of committing on the first one. Tagged per call with the
       // desired text so parallel/sequential attempts (e.g. dial-code retry then country-name
       // retry) can be told apart in the console.
-      const tag = `[Auto Fill][combobox-retry "${desiredText}"]`;
+      const fieldLabel = comboboxFieldLabel(element);
+      const tag = `[Auto Fill][combobox-retry field="${fieldLabel}" id=${element.id || "?"} -> "${desiredText}"]`;
       if (!element.closest || !element.closest(".select-shell")) return false;
+      const displayBefore = reactSelectDisplayValue(element);
+      if (comboboxValueCommitted(element, desiredText)) {
+        console.info(`${tag} skip - already committed (display="${displayBefore}")`);
+        return true;
+      }
+      comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
       if (fiberOk) {
@@ -3766,8 +3849,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         if (await commitComboboxOption(match, control || element)) {
           await new Promise((resolve) => setTimeout(resolve, 200));
           if (comboboxValueCommitted(element, desiredText)) {
-            console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll})`);
+            const displayAfterCommit = reactSelectDisplayValue(element);
+            console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll}, display="${displayAfterCommit}")`);
             await dismissOpenGreenhouseComboboxes(element);
+            watchComboboxDisplay(element, `after tier-2 commit "${desiredText}"`);
             return true;
           }
         }
@@ -3793,8 +3878,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
             dispatchKey("Enter");
             await new Promise((resolve) => setTimeout(resolve, 200));
             if (comboboxValueCommitted(element, desiredText)) {
-              console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} ArrowDown step(s))`);
+              const displayAfterKb = reactSelectDisplayValue(element);
+              console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} step(s), display="${displayAfterKb}")`);
               await dismissOpenGreenhouseComboboxes(element);
+              watchComboboxDisplay(element, `after tier-3 commit "${desiredText}"`);
               return true;
             }
           }
@@ -3852,7 +3939,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       nativeSet(element, "");
       element.blur();
       await new Promise((resolve) => setTimeout(resolve, 100));
-      console.info(`${tag} tier 4 type-to-filter -> FAILED - no matching option anywhere, closed cleanly instead of leaving it ambiguous`);
+      const displayAfterFail = reactSelectDisplayValue(element);
+      console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
       return false;
     }
     // "Fresh" means "was not VISIBLE before this click", not "was not PRESENT in the DOM before
@@ -5012,6 +5100,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (workExpTouched.has(element)) continue;
     const label = labelForElement(element, host);
+    if (element.setAttribute) element.setAttribute("data-af-label", label);
     // Structured matching needs the field's OWN label, not the group-prefixed display label
     // above - confirmed live, a Workday "Address" section wraps City/Neighborhood/Municipality/
     // etc. in role="group" aria-labelledby="Address-section", so labelForElement prepends
@@ -5285,11 +5374,25 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const qaMatch = matchQaBank(label, element);
     let qaComboboxFailed = false;
     const qaAnswerUsable = qaMatch && isPlausibleQaComboboxAnswer(label, qaMatch.answer);
+    // Salary band dropdowns (e.g. Greenhouse "€15,000 - €20,000" yearly ranges) can't commit a
+    // QA answer phrased as monthly ("5,000-6,000 EUR/month") - confirmed live on Appinio: six
+    // full open/close tier cycles on a value that never appears in the list, visibly selecting
+    // then clearing the field each time. Skip blind QA combobox retries; go straight to discovery
+    // + select-pick against real option labels instead.
+    const salaryBandCombobox =
+      detectCategory(label) === "salary_expectations" && looksLikeComboboxPick(element);
     if (
       qaAnswerUsable &&
       looksLikeComboboxPick(element) &&
+      !salaryBandCombobox &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
+      if (comboboxHasDisplayValue(element)) {
+        const cur = reactSelectDisplayValue(element);
+        comboboxTrace(element, `skip QA combobox - already has display`, { current: cur, qaAnswer: qaMatch.answer });
+        filled.push({ label, value: cur, source: "already-set" });
+        continue;
+      }
       const qaPicks = [qaMatch.answer];
       if (
         (detectCategory(label) === "english_proficiency" || detectCategory(label) === "polish_proficiency") &&
@@ -5312,6 +5415,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       if (qaComboboxDone) continue;
       qaComboboxFailed = true;
+    }
+    if (salaryBandCombobox && qaAnswerUsable) {
+      qaComboboxFailed = true;
+      comboboxTrace(
+        element,
+        `salary band combobox - deferring QA "${qaMatch.answer}" to discovery/select-pick`,
+        {}
+      );
     }
     if (qaAnswerUsable && !qaComboboxFailed && (await fillSingle(element, qaMatch.answer))) {
       filled.push({ label, value: qaMatch.answer, source: "learned" });
@@ -5374,6 +5485,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       (!qaMatch || qaComboboxFailed) &&
       (isRequiredField(element, host) || qaComboboxFailed)
     ) {
+      if (comboboxHasDisplayValue(element)) {
+        const cur = reactSelectDisplayValue(element);
+        comboboxTrace(element, `skip discovery - already has display`, { current: cur });
+        filled.push({ label, value: cur, source: "already-set" });
+        continue;
+      }
       let optionLabels = findRadixHiddenSelectOptions(element);
       if (!optionLabels.length) {
         optionLabels = await discoverComboboxOptions(element);
@@ -5396,7 +5513,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           label,
           optionLabels,
           qaComboboxFailed && qaMatch ? qaMatch.answer : null
-        );
+        ).filter((pick) => answerCouldMatchOptions(pick, optionLabels));
+        if (
+          qaComboboxFailed &&
+          qaMatch &&
+          qaMatch.answer &&
+          !answerCouldMatchOptions(qaMatch.answer, optionLabels)
+        ) {
+          console.info(
+            `[Auto Fill][combobox] "${label}" QA answer "${qaMatch.answer}" matches none of ${optionLabels.length} option(s) - skipping blind retries`
+          );
+        }
+        comboboxTrace(element, `discovery retry picks`, { picks: retryPicks, optionCount: optionLabels.length });
         let comboboxDone = false;
         for (const pick of retryPicks) {
           if (fillGreenhouseViaReactFiber(element, pick)) {
@@ -6336,8 +6464,15 @@ async function fillGeneratedAnswersInPage(answers) {
       // several fallback tiers instead of committing on the first one. Tagged per call with the
       // desired text so parallel/sequential attempts (e.g. dial-code retry then country-name
       // retry) can be told apart in the console.
-      const tag = `[Auto Fill][combobox-retry "${desiredText}"]`;
+      const fieldLabel = comboboxFieldLabel(element);
+      const tag = `[Auto Fill][combobox-retry field="${fieldLabel}" id=${element.id || "?"} -> "${desiredText}"]`;
       if (!element.closest || !element.closest(".select-shell")) return false;
+      const displayBefore = reactSelectDisplayValue(element);
+      if (comboboxValueCommitted(element, desiredText)) {
+        console.info(`${tag} skip - already committed (display="${displayBefore}")`);
+        return true;
+      }
+      comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
       if (fiberOk) {
@@ -6410,8 +6545,10 @@ async function fillGeneratedAnswersInPage(answers) {
         if (await commitComboboxOption(match, control || element)) {
           await new Promise((resolve) => setTimeout(resolve, 200));
           if (comboboxValueCommitted(element, desiredText)) {
-            console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll})`);
+            const displayAfterCommit = reactSelectDisplayValue(element);
+            console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll}, display="${displayAfterCommit}")`);
             await dismissOpenGreenhouseComboboxes(element);
+            watchComboboxDisplay(element, `after tier-2 commit "${desiredText}"`);
             return true;
           }
         }
@@ -6437,8 +6574,10 @@ async function fillGeneratedAnswersInPage(answers) {
             dispatchKey("Enter");
             await new Promise((resolve) => setTimeout(resolve, 200));
             if (comboboxValueCommitted(element, desiredText)) {
-              console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} ArrowDown step(s))`);
+              const displayAfterKb = reactSelectDisplayValue(element);
+              console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} step(s), display="${displayAfterKb}")`);
               await dismissOpenGreenhouseComboboxes(element);
+              watchComboboxDisplay(element, `after tier-3 commit "${desiredText}"`);
               return true;
             }
           }
@@ -6496,7 +6635,8 @@ async function fillGeneratedAnswersInPage(answers) {
       nativeSet(element, "");
       element.blur();
       await new Promise((resolve) => setTimeout(resolve, 100));
-      console.info(`${tag} tier 4 type-to-filter -> FAILED - no matching option anywhere, closed cleanly instead of leaving it ambiguous`);
+      const displayAfterFail = reactSelectDisplayValue(element);
+      console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
       return false;
     }
     // "Fresh" means "was not VISIBLE before this click", not "was not PRESENT in the DOM before
