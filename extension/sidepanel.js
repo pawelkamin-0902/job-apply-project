@@ -2444,7 +2444,8 @@ async function runAutofillInPage(profile, qaBank) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
+    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+    { key: "eligible_to_work", re: /^eligible to work$/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
@@ -2477,6 +2478,18 @@ async function runAutofillInPage(profile, qaBank) {
       if (re.test(text)) return key;
     }
     return null;
+  }
+
+  function isPlausibleQaComboboxAnswer(label, answer) {
+    const a = String(answer || "").trim();
+    if (!a) return false;
+    const cat = detectCategory(label);
+    if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
+      if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
+    }
+    if (cat === "nationality" && /^none$/i.test(a)) return false;
+    if (cat === "disability_status" && /^\d+$/.test(a)) return false;
+    return true;
   }
 
   // "what"/"your" recur across nearly every boilerplate application question ("What is your
@@ -3194,6 +3207,14 @@ async function runAutofillInPage(profile, qaBank) {
   }
 
   function reactSelectDisplayValue(element) {
+    if (isSuccessFactorsPicklist(element)) {
+      const title = (element.getAttribute && element.getAttribute("title")) || "";
+      const placeholder = (element.getAttribute && element.getAttribute("placeholder")) || "";
+      if (title && title !== placeholder && !/^no\s+selection$/i.test(title.trim())) {
+        return title.trim();
+      }
+      return "";
+    }
     const control = element && element.closest && element.closest('[class*="__control"]');
     if (!control) return "";
     const single = control.querySelector('[class*="__single-value"]');
@@ -3201,6 +3222,9 @@ async function runAutofillInPage(profile, qaBank) {
   }
 
   function comboboxValueCommitted(element, desiredText) {
+    if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
+      return true;
+    }
     if (isReactSelectAlreadySet(element, desiredText)) return true;
     const display = reactSelectDisplayValue(element);
     if (!display || isGenericSelectPlaceholder(display)) return false;
@@ -3286,6 +3310,9 @@ async function runAutofillInPage(profile, qaBank) {
   }
 
   function isReactSelectAlreadySet(element, desiredText) {
+    if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
+      return true;
+    }
     const current = reactSelectDisplayValue(element);
     if (!current || isGenericSelectPlaceholder(current)) return false;
     // Greenhouse's phone dial-code picker (see isPhoneDialCodePicker) always commits as a bare
@@ -4857,8 +4884,9 @@ async function runAutofillInPage(profile, qaBank) {
     }
     const qaMatch = matchQaBank(label, element);
     let qaComboboxFailed = false;
+    const qaAnswerUsable = qaMatch && isPlausibleQaComboboxAnswer(label, qaMatch.answer);
     if (
-      qaMatch &&
+      qaAnswerUsable &&
       looksLikeComboboxPick(element) &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
@@ -4872,7 +4900,7 @@ async function runAutofillInPage(profile, qaBank) {
       }
       qaComboboxFailed = true;
     }
-    if (qaMatch && !qaComboboxFailed && (await fillSingle(element, qaMatch.answer))) {
+    if (qaAnswerUsable && !qaComboboxFailed && (await fillSingle(element, qaMatch.answer))) {
       filled.push({ label, value: qaMatch.answer, source: "learned" });
       continue;
     }
@@ -5013,6 +5041,21 @@ async function runAutofillInPage(profile, qaBank) {
       gptBatchEligible,
       skipQaMatch: isPhoneDialCodePicker(element),
     });
+  }
+
+  // SAP SuccessFactors: State/Province stays disabled until Country/Region commits — re-scan
+  // after the main singles pass so the cascading picklist is live before we give up on it.
+  for (const { element, host } of collectFormFields().singles) {
+    if (!element.isConnected || !isSuccessFactorsPicklist(element) || element.disabled) continue;
+    const label = labelForElement(element, host);
+    const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+    if (!/^(state|province)\b/i.test(ownLabel) && !/^state\/province$/i.test(label)) continue;
+    if (filled.some((f) => f.label === label)) continue;
+    const structured = matchStructuredField(ownLabel, element);
+    if (!structured.value) continue;
+    if (await fillSingle(element, structured.value)) {
+      filled.push({ label, value: String(structured.value), source: "profile" });
+    }
   }
 
   // Ungrouped single checkboxes (no shared `name`, so not caught above) — e.g. a lone
@@ -5490,6 +5533,14 @@ async function fillGeneratedAnswersInPage(answers) {
   }
 
   function reactSelectDisplayValue(element) {
+    if (isSuccessFactorsPicklist(element)) {
+      const title = (element.getAttribute && element.getAttribute("title")) || "";
+      const placeholder = (element.getAttribute && element.getAttribute("placeholder")) || "";
+      if (title && title !== placeholder && !/^no\s+selection$/i.test(title.trim())) {
+        return title.trim();
+      }
+      return "";
+    }
     const control = element && element.closest && element.closest('[class*="__control"]');
     if (!control) return "";
     const single = control.querySelector('[class*="__single-value"]');
@@ -5497,6 +5548,9 @@ async function fillGeneratedAnswersInPage(answers) {
   }
 
   function isReactSelectAlreadySet(element, desiredText) {
+    if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
+      return true;
+    }
     const current = reactSelectDisplayValue(element);
     if (!current || isGenericSelectPlaceholder(current)) return false;
     // Greenhouse's phone dial-code picker (see isPhoneDialCodePicker) always commits as a bare
@@ -5586,6 +5640,9 @@ async function fillGeneratedAnswersInPage(answers) {
   }
 
   function comboboxValueCommitted(element, desiredText) {
+    if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
+      return true;
+    }
     if (isReactSelectAlreadySet(element, desiredText)) return true;
     const display = reactSelectDisplayValue(element);
     if (!display || isGenericSelectPlaceholder(display)) return false;
@@ -6782,7 +6839,8 @@ function captureSampleInPage(profile, qaBank) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
+    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+    { key: "eligible_to_work", re: /^eligible to work$/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
@@ -6815,6 +6873,18 @@ function captureSampleInPage(profile, qaBank) {
       if (re.test(text)) return key;
     }
     return null;
+  }
+
+  function isPlausibleQaComboboxAnswer(label, answer) {
+    const a = String(answer || "").trim();
+    if (!a) return false;
+    const cat = detectCategory(label);
+    if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
+      if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
+    }
+    if (cat === "nationality" && /^none$/i.test(a)) return false;
+    if (cat === "disability_status" && /^\d+$/.test(a)) return false;
+    return true;
   }
 
   // "what"/"your" recur across nearly every boilerplate application question ("What is your
@@ -7121,7 +7191,8 @@ const MATCH_CATEGORY_PATTERNS = [
   // Kept in sync with runAutofillInPage's own CATEGORY_PATTERNS - "eligible to work" confirmed
   // live as a real wording variant (Globalization Partners' Greenhouse form) alongside
   // "authorized to work".
-  { key: "authorized_to_work", re: /authori[sz]ed to work|eligible to work|legally authorised to work/i },
+  { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+  { key: "eligible_to_work", re: /^eligible to work$/i },
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
   {
     key: "salary_expectations",
@@ -8055,7 +8126,17 @@ el("autofillBtn").addEventListener("click", async () => {
     }
 
     const filledKeys = new Set(finalFills.map((f) => `${f.frameId}:${f.idx}`));
-    const needsHuman = allUnmatched.filter((u) => u.idx === undefined || !filledKeys.has(`${u.frameId}:${u.idx}`));
+    const shouldReportNeedsHuman = (u) => {
+      const lab = (u.label || "").trim();
+      if (u.type === "password") return false;
+      if (/^(choose password|retype password|middle name|notification|hear more about career opportunities)$/i.test(lab)) {
+        return false;
+      }
+      return true;
+    };
+    const needsHuman = allUnmatched
+      .filter((u) => u.idx === undefined || !filledKeys.has(`${u.frameId}:${u.idx}`))
+      .filter(shouldReportNeedsHuman);
 
     const generatedNote = [matchedCount && `${matchedCount} matched`, generatedCount && `${generatedCount} generated`]
       .filter(Boolean)

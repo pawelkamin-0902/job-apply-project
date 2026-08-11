@@ -583,6 +583,21 @@ function isCharacterCounterField(element) {
   return /chars?\s*remaining|charcount|char_count|remainingchars/.test(name);
 }
 
+// Fields Auto Fill should never touch or surface in "need your input" — account passwords,
+// marketing opt-in checkboxes, optional middle name when the profile has no value.
+function isAutofillExcludedField(element) {
+  if (!element) return false;
+  const type = (element.type || "").toLowerCase();
+  if (type === "password") return true;
+  const label = normalizeLabel(resolveOwnLabel(element) || "");
+  if (/^choose password$|^retype password$/i.test(label)) return true;
+  if (type === "checkbox" && /^(notification|hear more about career opportunities)$/i.test(label)) {
+    return true;
+  }
+  if (/^middle name$/i.test(label)) return true;
+  return false;
+}
+
 function looksLikeComboboxPick(element) {
   // intl-tel-input flag control — not a form question (see isVisible / setPhoneValue).
   if (
@@ -683,7 +698,7 @@ function collectNativeElements() {
     ),
   ]
     .filter(isVisible)
-    .filter((el) => !isHoneypot(el) && !isCharacterCounterField(el))
+    .filter((el) => !isHoneypot(el) && !isCharacterCounterField(el) && !isAutofillExcludedField(el))
     .filter((el) => {
       // That same button renders a plain hidden native <input type="text"> right beside it as
       // an accessibility/focus proxy - the same logical field as the button, not a second one,
@@ -728,7 +743,9 @@ function collectShadowElements() {
     for (const host of root.querySelectorAll("*")) {
       if (!host.tagName.includes("-") || !host.shadowRoot) continue;
       for (const inner of host.shadowRoot.querySelectorAll("input, select, textarea")) {
-        if (!isVisible(inner) || isHoneypot(inner) || isCharacterCounterField(inner)) continue;
+        if (!isVisible(inner) || isHoneypot(inner) || isCharacterCounterField(inner) || isAutofillExcludedField(inner)) {
+          continue;
+        }
         // spl-autocomplete nests spl-input → inner <input>; label/aria-label live on the outer
         // spl-autocomplete host, not spl-input (label="" there). Confirmed live: ethnicity/
         // gender/disability selects resolved to blank labels without this climb.
@@ -814,7 +831,19 @@ function collectRadioCheckboxGroups() {
           const el = document.getElementById(labelledby.split(/\s+/)[0]);
           if (el && cleanedText(el)) groupLabel = cleanedText(el);
         }
+      } else if (node.getAttribute && node.getAttribute("role") === "radiogroup") {
+        // SAP SuccessFactors EEO radios: <ul role="radiogroup" aria-labelledby="56:_groupLabel">
+        // with option labels on sibling <label for="56:_item_N"> — no <fieldset>.
+        const labelledby = node.getAttribute("aria-labelledby");
+        if (labelledby) {
+          const el = document.getElementById(labelledby.split(/\s+/)[0]);
+          if (el && cleanedText(el)) groupLabel = cleanedText(el);
+        }
       }
+    }
+    if (!groupLabel && els[0].name && /^tor__/i.test(els[0].name)) {
+      const sfLabel = document.getElementById(`label_${els[0].name}`);
+      if (sfLabel && cleanedText(sfLabel)) groupLabel = cleanedText(sfLabel);
     }
     if (!groupLabel) {
       // Zoho Recruit: shared-name checkboxes sit under `.crc-form-row` with the question in a
@@ -1062,6 +1091,7 @@ function collectFormFields() {
   const singles = [];
   const loneCheckboxes = [];
   for (const target of allSingleTargets) {
+    if (isAutofillExcludedField(target.element)) continue;
     if (target.element.type === "radio" || target.element.type === "checkbox") {
       loneCheckboxes.push(target);
     } else {

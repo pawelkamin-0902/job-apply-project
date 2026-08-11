@@ -3018,6 +3018,30 @@ unverified outside a live browser).
       `fotc-peopleforce-io-20260811T054719Z.html`: 9 real fields, phone labeled, locale picker
       gone. **Not yet confirmed live** that gpt-auto now opens for the screening batch.
 
+110. **SAP SuccessFactors (career55.sapsf.eu): discovery worked but fills didn't stick;
+    gender split into 3 fields; QA category leaked +48 onto work-auth picklists.** `Author: Cursor`.
+    Reported live: 14 filled (7 matched, 7 generated), 16 "need your input" including passwords,
+    gender option labels, marketing checkboxes, and SF paginated picklists (Country, Phone Type,
+    State). Console `[combobox-discovery]` logs showed options found for most picklists — discovery
+    was fine; commit verification was not.
+    - **Root cause 1**: `comboboxValueCommitted` / `reactSelectDisplayValue` only understood
+      react-select `__single-value` nodes — SF RCM picklists commit via the visible input's
+      `title` + hidden `tor__f*` value, so every SF pick looked "not committed" after click even
+      when the DOM had updated (e.g. `title="Yes"` on legal-auth).
+    - **Root cause 2**: SF Gender uses `<ul role="radiogroup" aria-labelledby="…">` with
+      `label_tor__fgender` in the table — not a `<fieldset>`, so `collectRadioCheckboxGroups`
+      left "No Selection"/"Female"/"Male" as three separate unmatched fields.
+    - **Root cause 3**: `authorized_to_work` category regex also matched bare "Eligible to Work",
+      letting category-match pull unrelated QA answers; dial-code-shaped values like `+48` were
+      not rejected for yes/no picklists.
+    - **Root cause 4**: State/Province stays `disabled` until Country commits — singles loop ran
+      once up front while State was still disabled.
+    - **Fixed**: SF-aware `reactSelectDisplayValue` / `comboboxValueCommitted` /
+      `isReactSelectAlreadySet` (both injected copies); radiogroup + `label_tor__*` grouping;
+      `isAutofillExcludedField` for passwords/marketing/middle name; split `eligible_to_work`
+      category; `isPlausibleQaComboboxAnswer`; post-pass SF State re-scan after Country; trim
+      `needsHuman` report noise. **Not yet confirmed live** on career55.sapsf.eu.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
