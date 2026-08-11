@@ -123,6 +123,43 @@ function sanitizeJsonControlChars(text) {
   return result;
 }
 
+// Confirmed live: ChatGPT's reply is sometimes a genuinely valid JSON object followed by a
+// stray trailing fragment (e.g. `{"answers":[...]}_]().`  - looks like a truncated/duplicated
+// markdown artifact tacked on after the real answer). JSON.parse rejects the WHOLE string the
+// moment there's anything after the closing brace, discarding an otherwise-perfectly-good,
+// fully-parsed batch of answers over a few stray trailing characters. Scans from the first `{`
+// or `[`, tracking bracket depth (ignoring braces/brackets found inside string literals) until
+// depth returns to zero, and returns just that balanced span - trailing garbage after it is
+// simply never included, rather than being reason to throw the whole response away.
+function extractFirstJsonValue(text) {
+  const s = text || "";
+  const start = s.search(/[{[]/);
+  if (start === -1) return s;
+  const open = s[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return s.slice(start); // unbalanced - hand back what we have and let JSON.parse report why
+}
+
 // The shared mechanism both resume-generation-via-GPT and Auto-Fill-via-GPT are built on: opens
 // a real, visible chatgpt.com tab (NOT background - a background/inactive tab gets throttled by
 // Chrome's own power-saving timer throttling, which would make the polling loops inside
@@ -2553,6 +2590,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function isPlausibleQaComboboxAnswer(label, answer) {
     const a = String(answer || "").trim();
     if (!a) return false;
+    // Screen-reader / aria-live chrome accidentally learned as a "Salutation" answer —
+    // confirmed live on Zoho Recruit: Auto Fill tried to pick
+    // "One or more results available. Press Up or Down Arrow Keys…" as the Salutation value.
+    if (/one or more results available|press (up or down|alt \+|enter to select)|resize the selection list/i.test(a)) {
+      return false;
+    }
+    if (a.length > 120) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
@@ -4232,8 +4276,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // though a real manual click does. Only reached when the normal, invisible path already
     // failed - trustedClick's visible debugging banner is the cost of this fallback, not the
     // default behavior.
+    // Zoho Recruit: never use trustedClick. Confirmed live on 3m-consultancy.zohorecruit.com —
+    // Autofill burned minutes on Zip/City/Salutation combobox retries, each trustedClick flash
+    // of the "extension started debugging this browser" banner making Auto Fill unusable.
+    // Zoho Lyte opens with simulateClick / focus / typing; if that fails, leave unmatched.
+    const allowTrustedClick = !/(^|\.)zohorecruit\.(com|eu|in)$/i.test(location.hostname || "");
     if (!options.length) {
-      if (!comboboxExpanded(element, controlEl) && (await trustedClick(controlEl || element))) {
+      if (
+        allowTrustedClick &&
+        !comboboxExpanded(element, controlEl) &&
+        (await trustedClick(controlEl || element))
+      ) {
         if (typedInto) nativeSet(typedInto, desiredText);
         options = await waitForStableOptions(pace.trustedRetry);
       } else if (comboboxExpanded(element, controlEl)) {
@@ -5485,6 +5538,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       (!qaMatch || qaComboboxFailed) &&
       (isRequiredField(element, host) || qaComboboxFailed)
     ) {
+      // Optional Zoho/Lyte picklists (Salutation, Current Job Title) with no usable QA answer:
+      // do NOT open/discover. Confirmed live on 3m-consultancy Zoho: optional Salutation +
+      // Current Job Title burned open/close + debugger trustedClick cycles, then landed in
+      // "need your input" for fields the applicant can leave as -None-.
+      if (!isRequiredField(element, host) && !qaAnswerUsable) {
+        comboboxTrace(element, "skip optional combobox - not required, no usable QA", {});
+        continue;
+      }
       if (comboboxHasDisplayValue(element)) {
         const cur = reactSelectDisplayValue(element);
         comboboxTrace(element, `skip discovery - already has display`, { current: cur });
@@ -5574,6 +5635,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const isFreeText = tag === "textarea" || (tag === "input" && /^(text|email|tel|url|search|range)?$/i.test(element.type || ""));
     const isCoverLetter = /\bcover(ing)?\s*letter\b/i.test(label) || /\bcover(ing)?\s*letter\b/i.test(ownLabel);
     const fieldRequired = isRequiredField(element, host) || isCoverLetter;
+    // Optional free-text with no profile/QA answer (Facebook, Skill Set, etc.) — leave alone.
+    // Confirmed live: listing them under "need your input" made Auto Fill feel worse than
+    // filling manually, and GPT was asked to invent CAPTCHA/Facebook answers.
+    if (isFreeText && !fieldRequired && !qaAnswerUsable && !structured.isStructuredCategory) {
+      continue;
+    }
+    if (looksLikeComboboxPick(element) && !fieldRequired && !qaAnswerUsable) {
+      continue;
+    }
     const gptBatchEligible =
       isFreeText &&
       !isConsentField(label) &&
@@ -7517,6 +7587,13 @@ function captureSampleInPage(profile, qaBank) {
   function isPlausibleQaComboboxAnswer(label, answer) {
     const a = String(answer || "").trim();
     if (!a) return false;
+    // Screen-reader / aria-live chrome accidentally learned as a "Salutation" answer —
+    // confirmed live on Zoho Recruit: Auto Fill tried to pick
+    // "One or more results available. Press Up or Down Arrow Keys…" as the Salutation value.
+    if (/one or more results available|press (up or down|alt \+|enter to select)|resize the selection list/i.test(a)) {
+      return false;
+    }
+    if (a.length > 120) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
@@ -8620,7 +8697,18 @@ el("autofillBtn").addEventListener("click", async () => {
 
         let answers;
         try {
-          const parsed = JSON.parse(sanitizeJsonControlChars(stripJsonFences(rawResponse)));
+          const cleaned = sanitizeJsonControlChars(stripJsonFences(rawResponse));
+          let parsed;
+          try {
+            parsed = JSON.parse(cleaned);
+          } catch (firstErr) {
+            // ChatGPT sometimes appends junk after valid JSON (confirmed live Zoho batch:
+            // `...}]}_]().`). Recover the first complete {...} object.
+            const start = cleaned.indexOf("{");
+            const end = cleaned.lastIndexOf("}");
+            if (start < 0 || end <= start) throw firstErr;
+            parsed = JSON.parse(cleaned.slice(start, end + 1));
+          }
           answers = parsed.answers;
           if (!Array.isArray(answers)) throw new Error('Expected an "answers" array');
         } catch (err) {
@@ -8790,6 +8878,9 @@ el("autofillBtn").addEventListener("click", async () => {
         return false;
       }
       if (/^autofill application\b/i.test(lab)) return false;
+      if (/^(facebook|twitter|instagram|tiktok|xing)\b/i.test(lab)) return false;
+      if (/^captcha\b|security\s*code/i.test(lab)) return false;
+      if (/^salutation\b/i.test(lab)) return false;
       if (lab.length > 160) return false;
       return true;
     };

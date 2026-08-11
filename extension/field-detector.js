@@ -624,6 +624,31 @@ function isAutofillExcludedField(element) {
     return true;
   }
   if (/^middle name$/i.test(label)) return true;
+  // CAPTCHA / human-verification - never fill, never GPT. Confirmed live on Zoho Recruit:
+  // CAPTCHA was canGenerate:true and sent to ChatGPT (which then produced garbage JSON).
+  if (/^captcha\b|security\s*code|enter\s*(the\s*)?(code|characters)\s*(you\s*)?see/i.test(label)) {
+    return true;
+  }
+  // Optional social vanity fields that aren't LinkedIn/Website/portfolio — confirmed live on
+  // Zoho 3m-consultancy: Facebook was listed as "need your input" and burned GPT/select time
+  // despite being optional and having no profile value.
+  if (/^(facebook|twitter|instagram|tiktok|xing)\b/i.test(label)) return true;
+  return false;
+}
+
+// Zoho Recruit lyte-autocomplete (Zip/City): a decorative `div.lyteDummyEventContainer
+// [role=combobox]` sits beside the real `<input>`. Collecting BOTH made Auto Fill burn minutes
+// opening/closing the fake combobox with trustedClick (debugger banner flash) for a postal code
+// that the sibling text input already accepts via nativeSet — confirmed live on
+// 3m-consultancy.zohorecruit.com (Zip DIV alone: ~2.5 minutes of open/close churn).
+function isZohoAutocompleteChrome(element) {
+  if (!element || !element.closest) return false;
+  const auto = element.closest("lyte-autocomplete");
+  if (!auto) return false;
+  if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") return false;
+  // Dummy combobox / drop-button chrome — keep the real input only.
+  if (element.classList && element.classList.contains("lyteDummyEventContainer")) return true;
+  if (element.getAttribute("role") === "combobox" && auto.querySelector("input")) return true;
   return false;
 }
 
@@ -727,7 +752,7 @@ function collectNativeElements() {
     ),
   ]
     .filter(isVisible)
-    .filter((el) => !isHoneypot(el) && !isCharacterCounterField(el) && !isAutofillExcludedField(el))
+    .filter((el) => !isHoneypot(el) && !isCharacterCounterField(el) && !isAutofillExcludedField(el) && !isZohoAutocompleteChrome(el))
     .filter((el) => {
       // That same button renders a plain hidden native <input type="text"> right beside it as
       // an accessibility/focus proxy - the same logical field as the button, not a second one,
@@ -751,6 +776,9 @@ function collectNativeElements() {
       if (el.closest && el.closest('[data-ui="autofill-button"]')) return false;
       return true;
     })
+    // Zoho Recruit lyte-dropdown picklists (Salutation, Current Job Title): the visible trigger
+    // is `div.lyteDummyEventContainer[role=combobox]`. Keep those — they are the real control.
+    // (Autocomplete chrome is filtered above via isZohoAutocompleteChrome.)
     // A custom element that hosts its OWN open shadow root (e.g. a SmartRecruiters `<spl-*>`
     // location/combobox widget whose real, interactive input lives inside that shadow root -
     // collectShadowElements below already finds it separately) must not ALSO be collected here
