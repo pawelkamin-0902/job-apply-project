@@ -64,14 +64,41 @@ export async function fetchResumeFileBase64(resumeId) {
     DEFAULT_TIMEOUT_MS
   );
   if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => "")}`);
-  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const contentType = (res.headers.get("content-type") || "application/octet-stream").split(";")[0].trim();
   const disposition = res.headers.get("content-disposition") || "";
-  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+  // Starlette/FastAPI emit ONLY `filename*=utf-8''...` (no plain filename=) when the name
+  // contains spaces/non-ASCII — confirmed: "Stefan Iacob.pdf" →
+  // `attachment; filename*=utf-8''Stefan%20Iacob.pdf`. The old `/filename="?([^"]+)"?/` regex
+  // missed that form entirely (it does not match `filename*=`), so Attach fell back to the
+  // bare name "resume" with no extension. Profiles whose uploaded files had no spaces in the
+  // filename still worked because those got a quoted `filename="..."`. Parse RFC 5987
+  // filename* first, then quoted/plain filename=.
+  let filename = parseContentDispositionFilename(disposition);
+  if (!filename) {
+    filename = contentType === "application/pdf" ? "resume.pdf" : "resume";
+  }
   const buffer = await res.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return { base64: btoa(binary), mimeType: contentType, filename: filenameMatch ? filenameMatch[1] : "resume" };
+  return { base64: btoa(binary), mimeType: contentType, filename };
+}
+
+function parseContentDispositionFilename(disposition) {
+  if (!disposition) return "";
+  const star = disposition.match(/filename\*\s*=\s*(?:UTF-8''|utf-8'')?([^;\s]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      return star[1].trim().replace(/^"|"$/g, "");
+    }
+  }
+  const quoted = disposition.match(/filename\s*=\s*"([^"]+)"/i);
+  if (quoted) return quoted[1].trim();
+  const plain = disposition.match(/filename\s*=\s*([^;\s]+)/i);
+  if (plain) return plain[1].trim().replace(/^"|"$/g, "");
+  return "";
 }
 
 export async function checkHealth() {

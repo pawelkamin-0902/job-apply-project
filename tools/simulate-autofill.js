@@ -1794,6 +1794,8 @@ async function main() {
   global.document = dom.window.document;
   global.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
   global.Event = dom.window.Event;
+  global.MouseEvent = dom.window.MouseEvent;
+  global.KeyboardEvent = dom.window.KeyboardEvent;
   global.CSS = dom.window.CSS || { escape: (s) => s.replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c) };
 
   // jsdom has no real layout engine, so every element defaults to a 0x0 box - isVisible()'s

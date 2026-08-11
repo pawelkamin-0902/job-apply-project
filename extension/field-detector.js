@@ -37,6 +37,8 @@ function normalizeLabel(raw) {
   // trailing "* (required)", a colon right before a trailing "*", etc.) — strip it here once
   // instead of trying to special-case every site's pattern.
   let text = (raw || "").replace(/ /g, " ").trim();
+  // Comeet Bootstrap dropdown aria-label: "Choose answer for How did you hear about Muse Group?"
+  text = text.replace(/^choose (an )?answer for\s+/i, "").trim();
   text = text.replace(/\(\s*(required|optional)\s*\)\s*$/i, "").trim();
   // Screen-reader-only "Required" text right after the asterisk (Teamtailor: <sup>*</sup>
   // <span class="sr-only">Required</span> concatenates to "...*Required" via textContent). The
@@ -50,7 +52,54 @@ function normalizeLabel(raw) {
   // since only the plain "*"/"•" characters were covered here before.
   text = text.replace(/[:\s]*[*•✱][:\s]*$/, "").trim();
   text = text.replace(/^[*•✱]\s*/, "").trim();
+  // SmartRecruiters spl-textarea character counter appended to resolved label text
+  // ("Are there any restrictions… 171/1440") when proximity resolution reads a wrapper.
+  text = text.replace(/\s+\d+\/\d+$/, "").trim();
+  // Lever location autocomplete status text concatenated into the label when the widget is
+  // idle/empty ("Current location No location found. Try entering a different locationLoading").
+  text = text.replace(/\s*no location found\.?\s*try entering a different location/i, "").trim();
+  text = text.replace(/\s*loading\s*$/i, "").trim();
   return text.replace(/\s+/g, " ").trim();
+}
+
+// SmartRecruiters oneclick-ui screening questions: real question text lives in a
+// `<span slot="label-content">` on the spl-* host (spl-input, spl-textarea, spl-radio-group),
+// inside `[data-test="question-container"]` — not on the inner shadow <input>/<textarea> and
+// not on the host's empty `label=""` / `inlinelabelcontent` attribute. Confirmed live on
+// jobs.smartrecruiters.com/.../screening: without this, Yes/No spl-radio questions were
+// invisible to group detection and text fields inherited the wrong sibling question text.
+function findSmartRecruitersQuestionLabel(host) {
+  if (!host || !host.closest) return null;
+  const container =
+    host.closest('[data-test="question-container"]') ||
+    host.closest(
+      "sr-question-field-radio, sr-question-field-text, sr-question-field-textarea, sr-question-field-select, sr-question-field-autocomplete"
+    );
+  if (!container) return null;
+  const widget =
+    (host.matches &&
+      host.matches("spl-radio-group, spl-input, spl-textarea, spl-autocomplete") &&
+      host) ||
+    host.closest("spl-radio-group, spl-input, spl-textarea, spl-autocomplete") ||
+    container.querySelector("spl-radio-group, spl-input, spl-textarea, spl-autocomplete");
+  if (widget) {
+    const slotLabel = widget.querySelector('span[slot="label-content"]');
+    if (slotLabel && cleanedText(slotLabel)) return cleanedText(slotLabel);
+  }
+  const radioGroup = host.closest("spl-radio-group") || container.querySelector("spl-radio-group");
+  if (radioGroup) {
+    const fieldset = radioGroup.querySelector('fieldset[aria-labelledby]');
+    const labelledby = fieldset && fieldset.getAttribute("aria-labelledby");
+    if (labelledby) {
+      const labelEl = document.getElementById(labelledby.split(/\s+/)[0]);
+      if (labelEl && cleanedText(labelEl)) return cleanedText(labelEl);
+    }
+  }
+  return null;
+}
+
+function stripSmartRecruitersSelectPrefix(text) {
+  return (text || "").replace(/^select\s+/i, "").trim();
 }
 
 // Climbs from `host` looking for a <label> that belongs specifically to it, stopping once an
@@ -151,7 +200,11 @@ function findHeadingInAncestors(host) {
 // "Country United States" - the currently selected value, genuinely useful) since this requires
 // the WHOLE trimmed string to be just the generic verb/phrase and nothing else.
 function isGenericSelectPlaceholder(text) {
-  return /^-*\s*(please\s+)?(select|choose)(\s+(one|an\s+option))?\s*\.{0,3}-*$/i.test((text || "").trim());
+  return (
+    /^-*\s*(please\s+)?(select|choose)(\s+(one|an\s+option))?\s*\.{0,3}-*$/i.test((text || "").trim()) ||
+    /^no\s+selection$/i.test((text || "").trim()) ||
+    /^select\s+option$/i.test((text || "").trim())
+  );
 }
 
 // Lever's own generic text-input placeholder - "Type your response", identical on EVERY custom
@@ -170,6 +223,8 @@ function isGenericTextPlaceholder(text) {
 // element carrying the actual `label` attribute and sitting in the light-DOM tree.
 function resolveOwnLabel(element, host) {
   host = host || element;
+  const srLabel = findSmartRecruitersQuestionLabel(host);
+  if (srLabel) return srLabel;
   if (host.hasAttribute && host.hasAttribute("label")) {
     const v = host.getAttribute("label").trim();
     if (v) return v;
@@ -207,7 +262,16 @@ function resolveOwnLabel(element, host) {
   const fieldset = element.closest ? element.closest("fieldset") : null;
   if (fieldset) {
     const legend = fieldset.querySelector("legend");
-    if (legend && cleanedText(legend)) return cleanedText(legend);
+    const legendText = legend && cleanedText(legend);
+    // Workday MM/YYYY: Month and Year spinbuttons share one "From"/"To" legend. Returning
+    // only the legend made both controls look identical ("Work Experience 1 - From"), so
+    // Auto Fill couldn't tell month from year. Confirmed live on
+    // intapp.wd1.myworkdayjobs.com — combine legend + aria-label ("From Month", "To Year").
+    const datePart = ((element.getAttribute && element.getAttribute("aria-label")) || "").trim();
+    if (legendText && /^(from|to)\b/i.test(legendText) && /^(month|year)$/i.test(datePart)) {
+      return `${legendText} ${datePart}`;
+    }
+    if (legendText) return legendText;
   }
   const labelledby = element.getAttribute && element.getAttribute("aria-labelledby");
   if (labelledby) {
@@ -239,13 +303,25 @@ function resolveOwnLabel(element, host) {
     !isGenericSelectPlaceholder(element.getAttribute("aria-label"))
   )
     return element.getAttribute("aria-label").trim();
-  if (
-    host !== element &&
-    host.getAttribute &&
-    host.getAttribute("aria-label") &&
-    !isGenericSelectPlaceholder(host.getAttribute("aria-label"))
-  )
-    return host.getAttribute("aria-label").trim();
+  // SuccessFactors RCM application forms: the real question sits in the table-row
+  // `<label id="label_tor__...">` while the visible control is a paginated picklist
+  // `<input role="combobox" class="rcmpaginatedselectinput">` (sometimes with a generic
+  // aria-label like "Details" for a cascading child picklist).
+  const sfRow = element.closest && element.closest("tr");
+  if (sfRow) {
+    const sfLabel = sfRow.querySelector("label[id^='label_tor__'], th label, .formFieldLabel label");
+    const sfText = sfLabel && cleanedText(sfLabel);
+    if (sfText) return sfText;
+  }
+  if (host !== element && host.getAttribute && host.getAttribute("aria-label")) {
+    const hostAria = stripSmartRecruitersSelectPrefix(host.getAttribute("aria-label").trim());
+    if (hostAria && !isGenericSelectPlaceholder(hostAria)) return hostAria;
+  }
+  const autocompleteHost = host.closest && host.closest("spl-autocomplete");
+  if (autocompleteHost && autocompleteHost !== host) {
+    const autoAria = stripSmartRecruitersSelectPrefix((autocompleteHost.getAttribute("aria-label") || "").trim());
+    if (autoAria && !isGenericSelectPlaceholder(autoAria)) return autoAria;
+  }
   // A real <label> found in a shallow ancestor (findLabelInAncestors bails out if that ancestor
   // holds more than one control, so it's a fairly reliable signal) beats a generic placeholder
   // hint — confirmed live: an Ashby "Location" combobox had no id/label[for] pair at all (the
@@ -321,8 +397,24 @@ function resolveOwnLabel(element, host) {
   return element.name || (host.getAttribute && host.getAttribute("name")) || "";
 }
 
+// All Jobs Pro step panels (and similar Bootstrap card forms): the only <label> on a dropdown
+// is often the placeholder text ("Please select") while the real question sits in `.card-header`.
+function findStepPanelTitle(element) {
+  const card = element.closest && element.closest(".card, .step_panel, .panel");
+  if (!card) return null;
+  const header = card.querySelector(".card-header strong, .card-header, .panel-heading");
+  if (!header) return null;
+  const text = cleanedText(header);
+  if (!text) return null;
+  return text.replace(/^step\s+\d+\s*[-–:]\s*/i, "").trim() || text;
+}
+
 function labelForElement(element, host) {
-  const own = normalizeLabel(resolveOwnLabel(element, host));
+  let own = normalizeLabel(resolveOwnLabel(element, host));
+  if (isGenericSelectPlaceholder(own)) {
+    const stepTitle = findStepPanelTitle(element);
+    if (stepTitle) own = normalizeLabel(stepTitle);
+  }
   const groupLabel = normalizeLabel(findGroupContextLabel(host || element) || "");
   if (groupLabel && groupLabel.toLowerCase() !== own.toLowerCase()) {
     return own ? `${groupLabel} - ${own}` : groupLabel;
@@ -339,6 +431,30 @@ function isVisible(element) {
   // field that's already detected elsewhere (the real <select>, or the phone <input>) — not
   // separate fields the applicant needs to fill themselves.
   if (element.classList.contains("select2-search__field") || element.classList.contains("iti__search-input")) return false;
+  if (isCharacterCounterField(element)) return false;
+  if (element.name === "g-recaptcha-response" || element.id === "g-recaptcha-response") return false;
+  // SuccessFactors site language selector — not part of the job application form.
+  if (
+    element.closest &&
+    (element.closest(".rcmUserLangDropDown, #rcmQuickApplyMenu") ||
+      element.classList.contains("sfDropMenuBtn") ||
+      element.classList.contains("globalSearchSelector"))
+  ) {
+    return false;
+  }
+  // All Jobs Pro: conditional follow-up fields (e.g. sponsorship details) start display:none.
+  if (element.closest && element.closest(".js_hidden_initially, [hidden], [aria-hidden='true']")) return false;
+  // intl-tel-input's flag/dial-code control is `role="combobox"` (Workable: `.iti__selected-flag`)
+  // beside the real phone <input>. Treating it as its own field opens the country list during
+  // Auto Fill, then Escape/blur closes Workable's Evergreen apply *dialog* — confirmed live on
+  // jobs.workable.com view/... apply drawer. Country is set via setPhoneValue on the tel input.
+  if (
+    element.classList.contains("iti__selected-flag") ||
+    element.classList.contains("iti__selected-country") ||
+    (element.closest && element.closest(".iti__flag-container"))
+  ) {
+    return false;
+  }
   // Zoho Recruit's own Lyte-framework dropdown search/filter box (e.g. a "Current Location"
   // combobox's own type-to-filter input, id="searchsingle_..._Current_Location") is the same
   // category of internal-search-box UI as the two above - not itself a question, just a filter
@@ -382,6 +498,42 @@ function isVisible(element) {
   // below would otherwise treat it exactly like a Workable a11y decoy and silently drop the
   // entire field, with no unmatched entry left even to ask the applicant about it.
   if (element.tagName === "INPUT" && element.type === "range") return true;
+  // Workday's MM/YYYY date widget (formField-startDate / formField-endDate): the real editable
+  // controls are role="spinbutton" inputs with data-automation-id dateSectionMonth-input /
+  // dateSectionYear-input, visually overlaid by a display div and often near-zero sized —
+  // confirmed live on intapp.wd1.myworkdayjobs.com Work Experience dates. Same "real control,
+  // decorative visual on top" shape as the range case above; without this they never reach
+  // Auto Fill at all.
+  const dateAutoId = element.getAttribute && element.getAttribute("data-automation-id");
+  if (
+    dateAutoId === "dateSectionMonth-input" ||
+    dateAutoId === "dateSectionYear-input" ||
+    (element.getAttribute("role") === "spinbutton" &&
+      element.closest &&
+      element.closest('[data-automation-id="dateInputWrapper"]'))
+  ) {
+    return true;
+  }
+  // Comeet (and Bootstrap "styled-form" kits): native radio/checkbox is opacity:0 / near-zero
+  // size under a Font Awesome check stack + `.option-title`. Confirmed live on
+  // www.comeet.com/.../devops-engineer apply iframe: Yes/No and "I consent" radios failed
+  // the rect check below and never entered collectRadioCheckboxGroups — whole questionnaire
+  // tail missing from Auto Fill. Same "real control, decorative visual on top" shape as range.
+  if (
+    element.tagName === "INPUT" &&
+    (element.type === "radio" || element.type === "checkbox") &&
+    element.name &&
+    element.closest &&
+    element.closest("li.styled-form-component, ul.options li, label.checkboxLabel, .styled-form-component")
+  ) {
+    const row =
+      element.closest("li.styled-form-component, ul.options li, .styled-form-component") ||
+      element.closest("label");
+    if (row) {
+      const rr = row.getBoundingClientRect();
+      if (rr.width > 1 && rr.height > 1) return true;
+    }
+  }
   const rect = element.getBoundingClientRect();
   if (rect.width <= 1 || rect.height <= 1) return false; // visually-hidden a11y decoys (Workable)
   if (element.offsetParent === null && style.position !== "fixed" && style.position !== "sticky") return false;
@@ -406,7 +558,23 @@ function isHoneypot(element) {
   );
 }
 
+// Character-counter display inputs (All Jobs Pro: `charsremaining` beside a textarea) — not
+// applicant-facing fields, just UI chrome updated by onkeyup handlers.
+function isCharacterCounterField(element) {
+  if (element.tagName !== "INPUT") return false;
+  const name = (element.name || element.id || "").toLowerCase();
+  return /chars?\s*remaining|charcount|char_count|remainingchars/.test(name);
+}
+
 function looksLikeComboboxPick(element) {
+  // intl-tel-input flag control — not a form question (see isVisible / setPhoneValue).
+  if (
+    element.classList.contains("iti__selected-flag") ||
+    element.classList.contains("iti__selected-country") ||
+    (element.closest && element.closest(".iti__flag-container"))
+  ) {
+    return false;
+  }
   return (
     element.getAttribute("role") === "combobox" ||
     element.getAttribute("aria-autocomplete") === "list" ||
@@ -419,11 +587,27 @@ function looksLikeComboboxPick(element) {
     // click-and-select-from-the-rendered-list path is needed here too, same as any other
     // custom combobox.
     Boolean(element.closest('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"]')) ||
+    // SmartRecruiters City / place-of-residence: <spl-autocomplete data-test="location-
+    // autocomplete"> (inner shadow <input> looks like plain text). Confirmed live on
+    // jobs.smartrecruiters.com oneclick-ui: structured City fill typed "Warsaw" via nativeSet
+    // and never opened/clicked a suggestion — the widget requires a real list pick.
+    Boolean(
+      element.closest(
+        'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
+      )
+    ) ||
     // Workday's plain "Select One" single-pick dropdown - a `<button aria-haspopup="listbox">`
     // with no role="combobox" of its own. Needs the same click-and-select-from-the-rendered-
     // listbox handling as any other custom combobox, not a native-set (which wouldn't even
     // apply to a <button> in the first place).
-    (element.tagName === "BUTTON" && element.getAttribute("aria-haspopup") === "listbox")
+    (element.tagName === "BUTTON" && element.getAttribute("aria-haspopup") === "listbox") ||
+    // Comeet Bootstrap dropdown: `<a class="dropdown-toggle" aria-haspopup="true" name="How
+    // did you hear…">` — not a button/role=combobox. Confirmed live on comeet.co apply iframe.
+    (element.tagName === "A" &&
+      (element.getAttribute("aria-haspopup") === "true" ||
+        element.getAttribute("aria-haspopup") === "listbox" ||
+        element.hasAttribute("dropdown-toggle") ||
+        element.classList.contains("dropdown-toggle")))
   );
 }
 
@@ -478,11 +662,11 @@ function collectNativeElements() {
       // which then got nonsense values learned/reported. `button[aria-haspopup="true"/"listbox"]`
       // and `aria-multiselectable="true"` are specific enough that neither false-positives on
       // any of those.
-      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="file"]), textarea, select, [role="combobox"], button[aria-haspopup="listbox"], button[aria-haspopup="true"], [role="button"][aria-haspopup="true"], [aria-multiselectable="true"]'
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="file"]), textarea, select, [role="combobox"], button[aria-haspopup="listbox"], button[aria-haspopup="true"], [role="button"][aria-haspopup="true"], a.dropdown-toggle[aria-haspopup], a[dropdown-toggle][aria-haspopup], [aria-multiselectable="true"]'
     ),
   ]
     .filter(isVisible)
-    .filter((el) => !isHoneypot(el))
+    .filter((el) => !isHoneypot(el) && !isCharacterCounterField(el))
     .filter((el) => {
       // That same button renders a plain hidden native <input type="text"> right beside it as
       // an accessibility/focus proxy - the same logical field as the button, not a second one,
@@ -527,13 +711,53 @@ function collectShadowElements() {
     for (const host of root.querySelectorAll("*")) {
       if (!host.tagName.includes("-") || !host.shadowRoot) continue;
       for (const inner of host.shadowRoot.querySelectorAll("input, select, textarea")) {
-        if (isVisible(inner) && !isHoneypot(inner)) found.push({ element: inner, host });
+        if (!isVisible(inner) || isHoneypot(inner) || isCharacterCounterField(inner)) continue;
+        // spl-autocomplete nests spl-input → inner <input>; label/aria-label live on the outer
+        // spl-autocomplete host, not spl-input (label="" there). Confirmed live: ethnicity/
+        // gender/disability selects resolved to blank labels without this climb.
+        let labelHost = host;
+        const autocomplete = host.closest && host.closest("spl-autocomplete");
+        if (autocomplete) labelHost = autocomplete;
+        found.push({ element: inner, host: labelHost });
       }
       found.push(...collectFrom(host.shadowRoot));
     }
     return found;
   }
   return collectFrom(document);
+}
+
+// SmartRecruiters screening questions use custom `<spl-radio role="radio" name="question_*">`
+// elements (no native <input type="radio">), grouped under `<spl-radio-group>`.
+function collectSplRadioGroups(claimed) {
+  const byName = new Map();
+  for (const el of document.querySelectorAll('spl-radio[name^="question_"]')) {
+    if (!isVisible(el)) continue;
+    const name = el.getAttribute("name");
+    if (!name) continue;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(el);
+  }
+  const groups = [];
+  for (const radios of byName.values()) {
+    if (radios.length < 2) continue;
+    let groupLabel = findSmartRecruitersQuestionLabel(radios[0]);
+    if (!groupLabel) {
+      const group = radios[0].closest("spl-radio-group");
+      if (group) groupLabel = findSmartRecruitersQuestionLabel(group);
+    }
+    if (!groupLabel) continue;
+    groups.push({
+      kind: "radio-group",
+      label: normalizeLabel(groupLabel),
+      options: radios.map((el) => ({
+        element: el,
+        optionLabel: normalizeLabel(el.getAttribute("label") || ""),
+      })),
+    });
+    radios.forEach((r) => claimed.add(r));
+  }
+  return groups;
 }
 
 // Groups radio/checkbox inputs sharing a `name` into one question with N options, using the
@@ -575,15 +799,105 @@ function collectRadioCheckboxGroups() {
         }
       }
     }
+    if (!groupLabel) {
+      // Zoho Recruit: shared-name checkboxes sit under `.crc-form-row` with the question in a
+      // sibling `<label class="crm-from-label" id="crc-label-{name}">` — no <fieldset> and no
+      // role="group", so the climb above never finds a label and every option used to fall
+      // through as a separate lone checkbox (canGenerate:false). Confirmed live on
+      // easyslotbooking.zohorecruit.in: "Did you worked on this technologies?" (GRPC /
+      // RabbitMQ / Minimal API) was reported four times instead of one multi-option group
+      // eligible for GPT select-picking.
+      const row = els[0].closest && els[0].closest(".crc-form-row");
+      if (row) {
+        const lab = row.querySelector("label.crm-from-label, label");
+        if (lab && cleanedText(lab)) groupLabel = cleanedText(lab);
+      }
+      if (!groupLabel && els[0].name) {
+        const byId = document.getElementById(`crc-label-${els[0].name}`);
+        if (byId && cleanedText(byId)) groupLabel = cleanedText(byId);
+      }
+    }
+    // Comeet stamps the full question text on each radio's `name` (and often a nearby
+    // `legend.question-title`). Use that when fieldset climb missed — name values like
+    // "gender" stay excluded by requiring spaces / "?" / length.
+    if (!groupLabel && els[0].name) {
+      const n = els[0].name.trim();
+      if (n.length > 20 || /\s/.test(n) || /\?/.test(n)) groupLabel = n;
+    }
+    if (!groupLabel) {
+      const qTitle =
+        els[0].closest &&
+        els[0].closest("fieldset, .question") &&
+        els[0].closest("fieldset, .question").querySelector("legend.question-title, .question-title");
+      if (qTitle && cleanedText(qTitle)) groupLabel = cleanedText(qTitle);
+    }
     if (!groupLabel) continue; // no real group question found — leave these to be handled individually
     groups.push({
       kind: els[0].type === "checkbox" ? "checkbox-group" : "radio-group",
       label: normalizeLabel(groupLabel),
-      options: els.map((el) => ({ element: el, optionLabel: normalizeLabel(resolveOwnLabel(el)) })),
+      options: els.map((el) => {
+        // Zoho Lyte checkboxes put the real option text ("GRPC") in an aria-hidden span
+        // referenced by aria-labelledby, and also on the host's lt-prop-label. cleanedText
+        // strips aria-hidden, so resolveOwnLabel alone returns "" and then climbs to the
+        // question label — every option would look identical. Prefer lt-prop-label / raw
+        // labelledby text before resolveOwnLabel.
+        let optionLabel = "";
+        const lyte = el.closest && el.closest("lyte-checkbox");
+        if (lyte) {
+          const prop = (lyte.getAttribute("lt-prop-label") || "").trim();
+          if (prop) optionLabel = prop;
+        }
+        // Comeet: visible answer text is `.option-title` beside the zero-size radio.
+        if (!optionLabel) {
+          const optTitle =
+            (el.closest && el.closest("li") && el.closest("li").querySelector(".option-title")) ||
+            (el.parentElement && el.parentElement.querySelector(".option-title"));
+          if (optTitle && cleanedText(optTitle)) optionLabel = cleanedText(optTitle);
+        }
+        if (!optionLabel) {
+          const labelledby = el.getAttribute && el.getAttribute("aria-labelledby");
+          if (labelledby) {
+            optionLabel = labelledby
+              .split(/\s+/)
+              .map((id) => {
+                const node = document.getElementById(id);
+                return node ? (node.textContent || "").trim() : "";
+              })
+              .filter(Boolean)
+              .join(" ");
+          }
+        }
+        if (!optionLabel) optionLabel = resolveOwnLabel(el) || "";
+        return { element: el, optionLabel: normalizeLabel(optionLabel) };
+      }),
     });
     els.forEach((el) => claimed.add(el));
   }
   return { groups, claimed };
+}
+
+// Modal/form chrome ("Cancel", "Submit application", …) — never Yes/No-style answers.
+// Confirmed live on jobs.workable.com: Cancel + Submit sit as sibling <button>s in
+// `[data-role="dialog-actions"]`; the sibling-button fallback walked up into the dialog,
+// grabbed the first descendant <label> ("First name"), and Auto Fill treated Cancel/Submit
+// as answers to First name — clicking Cancel closes the apply drawer.
+function isFormChromeActionButton(button) {
+  if (!button) return true;
+  if (
+    button.closest &&
+    button.closest(
+      '[data-role="dialog-actions"], [data-ui="application-form-actions"], [class*="dialog-actions"], [class*="modal-footer"], [class*="ModalFooter"]'
+    )
+  ) {
+    return true;
+  }
+  const dataUi = (button.getAttribute && button.getAttribute("data-ui")) || "";
+  if (/cancel|submit|close|dismiss/i.test(dataUi)) return true;
+  if (button.type === "submit" || button.type === "reset") return true;
+  const t = (button.textContent || "").replace(/\s+/g, " ").trim();
+  return /^(cancel|close|dismiss|submit(\s+application)?|apply(\s+now)?|save(\s+and\s+continue)?|back|next|continue|skip)$/i.test(
+    t
+  );
 }
 
 // Ashby-style Yes/No pairs rendered as plain <button>s instead of real radio inputs.
@@ -607,7 +921,19 @@ function collectButtonGroups(claimed) {
       // action buttons inside it mis-detected as a fake 2-option answer to "Type or paste your
       // Resume here" (the label meant for the actual paste textarea, picked up via ancestor
       // climbing). Real UI action buttons the user never sees can't be a real question.
-      return t && t.length <= 20 && !claimed.has(b) && isVisible(b);
+      if (!t || t.length > 20 || claimed.has(b) || !isVisible(b)) return false;
+      if (isFormChromeActionButton(b)) return false;
+      // Workday EEO / "Select One" dropdowns are plain <button aria-haspopup="listbox">
+      // widgets — each is its OWN combobox field, not a Yes/No answer option. Confirmed live
+      // on agilent.wd5.myworkdayjobs.com: Gender / Race / Hispanic / Veteran Status all sat
+      // inside one Equal Employment Opportunity role="group", got claimed here as a single
+      // button-group whose "options" were literally ["Select One","Select One",...], and
+      // vanished from singles — Auto Fill then only "saw" that one fake group + consent.
+      if (b.getAttribute("aria-haspopup") === "listbox" || b.getAttribute("aria-haspopup") === "true") {
+        return false;
+      }
+      if (isGenericSelectPlaceholder(t)) return false;
+      return true;
     });
     if (buttons.length < 2 || buttons.length > 6) continue;
     let groupLabel = null;
@@ -650,7 +976,14 @@ function collectButtonGroups(claimed) {
     const buttons = [...parent.children].filter((b) => {
       if (b.tagName !== "BUTTON" || claimed.has(b)) return false;
       const t = (b.textContent || "").trim();
-      return t && t.length <= 20 && isVisible(b);
+      if (!t || t.length > 20 || !isVisible(b)) return false;
+      if (isFormChromeActionButton(b)) return false;
+      // Same Workday Select One / combobox-trigger exclusion as the container pass above.
+      if (b.getAttribute("aria-haspopup") === "listbox" || b.getAttribute("aria-haspopup") === "true") {
+        return false;
+      }
+      if (isGenericSelectPlaceholder(t)) return false;
+      return true;
     });
     if (buttons.length < 2 || buttons.length > 6) continue;
     let groupLabel = null;
@@ -662,8 +995,23 @@ function collectButtonGroups(claimed) {
         if (el && cleanedText(el)) groupLabel = cleanedText(el);
       }
       if (!groupLabel) {
-        const label = node.querySelector && node.querySelector("label");
-        if (label && cleanedText(label)) groupLabel = cleanedText(label);
+        // Prefer a <label> that is an immediate neighbor of the button row (Ashby Yes/No),
+        // never `querySelector("label")` on a dialog/form shell — that returns the first
+        // field label in the body (Workable Cancel/Submit → "First name").
+        const prev = parent.previousElementSibling;
+        if (prev && prev.tagName === "LABEL" && cleanedText(prev)) groupLabel = cleanedText(prev);
+        const childLabel = [...parent.children].find((c) => c.tagName === "LABEL" && cleanedText(c));
+        if (!groupLabel && childLabel) groupLabel = cleanedText(childLabel);
+      }
+      if (!groupLabel && depth <= 2 && node.querySelectorAll) {
+        // Shallow only: a label that does not wrap another text field (those are form
+        // inputs' own labels, not this button group's question).
+        for (const lab of node.querySelectorAll("label")) {
+          if (!cleanedText(lab)) continue;
+          if (lab.querySelector('input:not([type="hidden"]), textarea, select')) continue;
+          groupLabel = cleanedText(lab);
+          break;
+        }
       }
     }
     if (!groupLabel) continue;
@@ -685,7 +1033,10 @@ function collectButtonGroups(claimed) {
 //                                          its own yes/no field rather than part of a group
 //   claimed: Set of elements already spoken for by a group (useful if a caller needs it)
 function collectFormFields() {
-  const { groups: rcGroups, claimed } = collectRadioCheckboxGroups();
+  const claimed = new Set();
+  const splGroups = collectSplRadioGroups(claimed);
+  const { groups: rcGroups, claimed: rcClaimed } = collectRadioCheckboxGroups();
+  rcClaimed.forEach((el) => claimed.add(el));
   const buttonGroups = collectButtonGroups(claimed);
   const nativeElements = collectNativeElements().filter((el) => !claimed.has(el));
   const shadowElements = collectShadowElements();
@@ -701,5 +1052,5 @@ function collectFormFields() {
     }
   }
 
-  return { groups: [...rcGroups, ...buttonGroups], singles, loneCheckboxes, claimed };
+  return { groups: [...splGroups, ...rcGroups, ...buttonGroups], singles, loneCheckboxes, claimed };
 }

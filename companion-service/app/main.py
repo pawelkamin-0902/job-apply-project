@@ -522,6 +522,7 @@ async def prompt_preview_answers(
     verbatim); the full profile/work-history JSON was pure bloat for that job, on top of being
     unnecessary personal data to hand to an external chat session for every batch."""
     qa_bank = store.get_qa(active_person)
+    profile = store.get_profile(active_person)
     return BatchAnswerPromptResponse(
         system_prompt=build_batch_answer_system_prompt(),
         user_message=build_batch_answer_user_message(
@@ -531,6 +532,8 @@ async def prompt_preview_answers(
             [entry.model_dump() for entry in qa_bank],
             resume=body.resume,
             options_per_question=body.options_per_question,
+            multi_per_question=body.multi_per_question,
+            profile=profile.model_dump(),
         ),
     )
 

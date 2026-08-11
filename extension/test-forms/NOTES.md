@@ -14,6 +14,21 @@ design/validate the autofill content script's field-detection logic (`sidepanel.
 functions, explicitly marked as a placeholder meant to be swapped for something more
 sophisticated).
 
+## Contributor log (Claude ↔ Cursor)
+
+This file is the shared handoff between assistants working on autofill. **When you fix
+something, append a new numbered finding under "Confirmed findings"** (continue the sequence)
+and tag who did it:
+
+- **`Author: Claude`** — written by Claude (historical entries before this section often
+  omit the tag but are Claude's work unless noted otherwise).
+- **`Author: Cursor`** — written by Cursor after a code change in this repo.
+
+Each entry should say: symptom (live-reported if possible), root cause, what changed (file +
+function names), whether it's confirmed live or "not yet confirmed", and any follow-up for the
+other assistant. Cross-reference earlier findings by number (`#86`, `#106`, …) instead of
+re-explaining them.
+
 ## Fixtures
 
 | File | ATS | Notes |
@@ -2305,6 +2320,679 @@ unverified outside a live browser).
       instruction) against a synthetic react-select-style widget: a single-option scenario
       correctly discovers exactly that one option, and a multiple-option scenario correctly
       discovers all real options while excluding a generic "Select..." placeholder option.
+
+86. **Reported live on a real job-boards.greenhouse.io application (DistroKid): "7 fields
+    filled, then GPT opened, generated all answers, GPT closed - then nothing gets filled. Just
+    opens a select box and closes it."** Investigated after a large amount of Greenhouse-
+    specific combobox-filling logic was found already in place (`fillGreenhouseViaReactFiber`,
+    `tryGreenhouseRemixSelect`, trusted-click/keyboard-navigation fallbacks in
+    `fillReactSelectByClick`) - clearly already under heavy iteration, so this was investigated
+    by reading, not guessed at blind.
+    - **Confirmed, fixed**: `fillGeneratedAnswersInPage`'s own per-field dispatch loop had NO
+      try/catch around any individual field's fill logic - an exception thrown anywhere while
+      processing ONE field (a Greenhouse combobox interaction being the most likely candidate,
+      given its own elaborate multi-fallback logic) would propagate uncaught out of the WHOLE
+      loop, aborting it immediately. Since the fill count is only ever returned once, after the
+      loop fully completes, this doesn't just fail the one problem field - it silently discards
+      credit for every OTHER field already successfully filled earlier in the exact same batch,
+      matching the reported "generated all answers, then nothing gets filled" shape precisely
+      (not "the select field specifically didn't fill" - literally nothing in that batch did).
+      Fixed by wrapping each field's fill attempt in its own try/catch, so one bad field can no
+      longer sacrifice the rest of the batch's results.
+    - **Not yet confirmed as the FULL fix** - this addresses the cascading-failure shape but
+      doesn't by itself explain why the Greenhouse combobox itself failed to commit a value in
+      the first place (the "opens and closes" part) - that's still an open question, given how
+      much fallback logic already exists for exactly this widget. Next step if it recurs after
+      this fix: check the browser's own DevTools console during a live run for a thrown error
+      (now caught, but still logged if a `console.error`/similar is added, or visible via a
+      breakpoint) to identify exactly which fallback path is failing and why.
+    - Investigated via a temporary alternate mount of the VMware shared folder
+      (`/home/administrator/hgfs-mount/`, since `/mnt/hgfs` itself is root-owned and requires
+      sudo this session didn't have passwordless access to) - `sync.sh` itself still points at
+      `/mnt/hgfs/...` and was NOT modified; syncing during this investigation was done with a
+      one-off manual `rsync` command instead. If `/mnt/hgfs` stops working again, either restore
+      it directly (`sudo mount -t fuse.vmhgfs-fuse .host:/ /mnt/hgfs`) or mount to an
+      owned directory the same way.
+    - Update: `/mnt/hgfs` itself has since been properly restored with `-o allow_other` (no more
+      workaround needed) and the catch block above now does `console.error` the caught error
+      (field idx/label + the actual thrown error) instead of swallowing it silently, so a
+      recurrence gives real diagnostic data instead of another guess.
+
+87. **Reported live on a real Greenhouse application: the phone country-code combobox visibly
+    opened/cycled through options (arrow-key style) then closed, reopened and typed a country
+    name to commit correctly - then, AFTER other fields had already been filled, it silently
+    changed to a DIFFERENT, wrong country, non-deterministically (a different wrong country each
+    run).** Root cause: `fillGeneratedAnswersInPage`'s `findElementByLabel` - the fallback re-
+    lookup used when a GPT-answered field's original `data-af-idx` stamp is no longer found in
+    the DOM (e.g. after a React re-render elsewhere on the page) - matches purely by label text,
+    with no concept of Greenhouse's phone widget having its own dial-code sub-picker labeled bare
+    **"Country"** (the exact same collision `matchStructuredField` already guards against
+    elsewhere, see the comment at its `isPhoneDialCodePicker` check - but that guard lives only in
+    `runAutofillInPage`'s scope; `findElementByLabel` had no idea phone-dial-code pickers even
+    exist). When a genuinely different "Country" question (residence/nationality, worded as bare
+    "Country" on some Greenhouse postings) loses its own DOM stamp and falls back to this label
+    lookup, it matches the phone widget's "Country" label instead and overwrites the already-
+    correct dial code with that OTHER question's GPT-generated answer - which varies run to run,
+    explaining the "different wrong country each time" shape exactly. Fixed by adding a local
+    `isPhoneDialCodePicker` + `rejectPhoneDialCode` guard to every match path in
+    `findElementByLabel`, skipping a phone-dial-code-picker match unless the target label itself
+    is actually asking about a dial/calling/country code.
+
+88. **Reported live on Greenhouse (confirmed by the user): the "Phone" number field ends up with
+    a WRONG value after autofill** - the number field is filled once, then changes to something
+    incorrect. Confirmed from a real capture (job-boards-greenhouse-io-20260810T060909Z.html)
+    that Greenhouse's phone widget is actually TWO separate, adjacent pieces: `.phone-input__country`
+    (the react-select "Country" combobox already covered by #87) AND `.phone-input__phone`, which
+    is itself wrapped in a real intl-tel-input widget (`.iti`, confirmed via
+    `class="... iti__tel-input"` + `data-intl-tel-input-id="0"` on the actual `<input id="phone">`).
+    - **A wrong first attempt was caught and reverted before syncing broadly**: initially assumed
+      (by analogy with Workday, which genuinely does want local-digits-only in its plain phone-
+      number field) that `.phone-input__country`'s presence meant the number field should also get
+      its country-code prefix stripped. That's backwards for Greenhouse - `.iti`'s own
+      `setPhoneValue`/`iti.setNumber()` needs the FULL "+48…" string to auto-detect its embedded
+      country flag; stripping the prefix first would have left it with nothing to detect from.
+      Reverted the `hasSeparateCountryCodeField`/phone-pattern change, and instead added a
+      `matchStructuredField(label, element)` → `get(profile, element)` signature extension so the
+      phone pattern can check `element.closest('.iti')` and always return the FULL value for any
+      intl-tel-input-wrapped field, documenting the invariant rather than guessing at it again.
+    - **Root cause of the actual "ends up wrong" bug is NOT yet confirmed** - the real mechanism
+      (most likely candidate: some sync between `.phone-input__country`'s react-select and the
+      `.iti` widget's own internal country-detection, given both represent the same real-world
+      fact and are filled independently by two different code paths in the same loop) needs live
+      data to pin down rather than more blind guessing, especially after the above wrong turn.
+      Added temporary diagnostic-only logging (`[Auto Fill][phone-watch]` console lines) in
+      `runAutofillInPage`: logs the phone number's value right after it's filled, then polls it
+      every 400ms for 8s logging any change with a timestamp; also logs which of the three
+      country-picker fill attempts (already-shown / dial-code / country-name) actually committed.
+      Not a fix - remove once a repro's console output identifies the real mechanism.
+    - Next step: reproduce live with DevTools console open on the Greenhouse tab, and read off the
+      `[Auto Fill][phone-watch]` lines - they'll show the exact value transition and rough timing,
+      which should make the actual cause obvious instead of guessed at.
+    - **Follow-up, resolved**: user's repro showed the Phone number field working correctly (the
+      `[phone-watch]` "filled ... watching for later changes" line appeared and never fired a
+      "changed" warning) - so #86/the reverted wrong-turn theory above was a dead end. The ACTUAL
+      wrong field was the "Country" dial-code picker itself, now showing an unrelated country
+      (Armenia, then Romania on a different capture) with a different value each site, still with
+      ZERO of the new `[phone-watch]` country-picker logs firing at all - meaning
+      `isPhoneDialCodePicker`'s whole dedicated fill block wasn't even reached, or all 3 of its own
+      attempts genuinely failed to commit. Traced the fallthrough: when all 3 attempts fail, the
+      field falls through EVERY exclusion further down (all of which correctly check
+      `isPhoneDialCodePicker`) and lands, unguarded, on the generic catch-all
+      `unmatched.push({idx, label, type, canGenerate})` at the very end of the loop - with
+      `canGenerate: false` (correctly non-generatable as free text) and no `options` (correctly
+      excluded from select-pick too), so per the orchestrator's own `generationCandidates`/
+      `selectPickCandidates` filters it should never reach the AI at all.
+    - **Root cause confirmed**: `matchQaBankEntry`'s word-overlap tier needs >=2 shared
+      significant words, and a bare "Country" label is only ONE word - it can never clear that
+      bar; its category-shortcut tier has no pattern for bare "country" either (checked
+      `MATCH_CATEGORY_PATTERNS` directly). The ONLY tier that can still match a one-word label is
+      the plain exact-text tier (`normLabel === normQuestion`) - meaning the wrong country values
+      seen live are near-certainly a STALE, previously-learned QA-bank entry (`{question:
+      "Country", answer: "<wrong country>"}`), saved by some EARLIER buggy run (most likely #87's
+      now-fixed `findElementByLabel` label-collision bug, before it existed) and silently
+      reapplied on every subsequent run since - independent of any downstream code fix, since the
+      QA bank itself is what's wrong, not the matching logic. Different sites showing different
+      wrong countries is consistent with multiple separate bad entries having been saved over
+      time (or the SAME entry read differently) rather than fresh AI hallucination each run.
+    - **Fixed defensively regardless**: added a `skipQaMatch: isPhoneDialCodePicker(element)` flag
+      to the catch-all `unmatched.push`, and made both the gpt-auto local QA-bank match loop and
+      the server-side `/match-answers` semantic-match loop skip any item so flagged - a
+      phone-dial-code picker's only correct value is profile.contact.phone/country directly, it
+      must never be handed ANY saved/learned/AI-matched answer, past or future. This closes the
+      gap regardless of whether the live bad value is exactly this stale-entry mechanism.
+    - **Action still needed from the user**: open Settings → Q&A and delete any saved entry whose
+      question is literally "Country" (or very close to it) - the code fix above stops it from
+      being APPLIED going forward, but the bad saved answer itself isn't automatically removed.
+
+89. **User confirmed #88's QA-bank theory was a dead end for this symptom - the ACTUAL live
+    report: while a completely UNRELATED later question ("Are you comfortable with the salary
+    range?") has its own combobox opened during Auto Fill, the ALREADY-CORRECTLY-FILLED phone
+    NUMBER field suddenly reverts/changes.** Root cause: `setPhoneValue`'s intl-tel-input JS-API
+    path (`iti.setNumber(value)`) writes the input's `.value` through the library's own internal
+    DOM assignment, with no idea a React component might also be watching this same input.
+    React tracks controlled inputs via each element's own `_valueTracker`, comparing its cached
+    value against what a dispatched `input` event reports before deciding whether to invoke the
+    component's real `onChange` - `setPhoneValue` dispatched `input`/`change` afterward but never
+    reset that tracker first (unlike `nativeSet`, which already does this for plain text inputs -
+    the same category of gap, just missing in this one specific path). Without it, React can
+    decide nothing really changed and never update ITS OWN internal state to match what's
+    visibly on screen - the DOM looks right until ANY unrelated later re-render (opening a
+    completely different combobox elsewhere on the page is enough to trigger one), at which point
+    React re-renders this controlled input from its own still-stale pre-fill state, silently
+    reverting the visible value. Fixed by resetting `_valueTracker` to the current value right
+    before calling `setNumber()`/`plugin.setNumber()`, same trick `nativeSet` already uses.
+    - Also explicitly requested: step/tier-level diagnostic logging (`[Auto Fill][country-retry
+      "<value>"]` console lines) added throughout `tryGreenhouseRemixSelect`'s 4 fallback tiers
+      (React-fiber direct, click-poll, keyboard-nav, type-to-filter) in BOTH duplicate copies -
+      logs which tier committed, how many polls/steps it took, and what it saw, to answer "why
+      does this need 3 retries instead of one" with real data instead of guessing at Greenhouse's
+      own react-select internals blind.
+    - Not yet confirmed live - needs a retest to know whether the React-tracker fix actually stops
+      the phone number from reverting when a later, unrelated combobox opens.
+
+90. **Follow-up from the tier logging in #89: the user's live console output directly proved the
+    "why 3 retries" cause, AND surfaced a real, separate verification bug.** Renamed the
+    `[country-retry]` log tag to `[combobox-retry]` first - it was misleadingly implying
+    phone-specific logging, when `tryGreenhouseRemixSelect` is actually the shared fill helper
+    for every Greenhouse react-select combobox on the page (confirmed live: the exact same tag
+    fired for "No"/sponsorship, "60000 EUR"/salary, "European Union"/region, "Advanced"/English
+    level - none phone-related at all, which is what the user was asking about).
+    - **Bug 1, the actual "3 retries" cause**: the dial-code guess `String(profile.contact.phone)
+      .match(/^(\+\d+)/)?.[1]` is greedy - for "+48694542078" it captures the ENTIRE leading digit
+      run ("+48694542078"), not just the calling code ("+48"), since there's no way to know the
+      code's real boundary (1-3 digits) from the digit string alone (same ambiguity
+      `setPhoneValue` already documents elsewhere). The live log showed this bogus full-number
+      "target" burning all 4 `fillReactSelectByClick` fallback tiers (~4-5s, including a 25-step
+      keyboard scan through "united states...benin" that never gets anywhere near "poland" in an
+      alphabetical list) on a GUARANTEED failure, every single run, before ever reaching the
+      correct country-name attempt. Fixed by dropping the dial-code guess entirely and using
+      `profile.contact.country` (unambiguous) as the only fill attempt.
+    - **Bug 2, found only because of bug 1's log noise**: even the country-name attempt, which the
+      log proved DOES correctly find and click "Poland +48" (poll #0, first try, confirmed via a
+      real `simulateClick` in the stack trace), still got reported as FAILED - because this
+      widget's own committed display is ALWAYS just "+48" (flag + calling code, confirmed from
+      the earlier capture's markup), never the country name, and `comboboxValueCommitted`'s plain
+      text compare checked the display against "Poland" and found no textual overlap with "+48"
+      at all. The interaction worked; only the SUCCESS CHECK was wrong. Fixed by also accepting
+      any bare "+<digits>" display as a valid success signal for this specific picker, alongside
+      the normal text compare (kept, in case some other site's version of this widget does show
+      the country name instead).
+    - Noted in the same session, likely unrelated: a `my.greenhouse.io/users/self` 401
+      Unauthorized + uncaught `UnauthorizedError` fired from Greenhouse's OWN `phone_input.tsx`/
+      `country_input.tsx` handlers during the click (visible in the user's console output) - looks
+      like the app tries to fetch/sync a logged-in candidate profile on phone/country change and
+      fails for an anonymous applicant. Uncaught promise rejections don't block other already-
+      scheduled synchronous code, so this is very unlikely to be why the click's own state commit
+      appeared to fail - included here only in case it recurs and turns out to matter after all.
+    - Not yet confirmed live - needs a retest showing the country picker committing on the very
+      first attempt with no more "FAILED to commit" warnings.
+
+91. **Follow-up retest of #90 showed the fix was only half-applied.** The outer
+    `isPhoneDialCodePicker` block correctly recognized the "+48" display as success afterward
+    (`"country picker committed via country name..."` did print), but the retest logs showed
+    `tryGreenhouseRemixSelect` itself STILL burned through all 4 fallback tiers first, same as
+    before - #90's fix only patched the outer post-hoc check, not the verification INSIDE the
+    retry loop that decides whether to stop early. Root cause: `comboboxValueCommitted` calls
+    `isReactSelectAlreadySet` first, and THAT function still did the same plain country-name text
+    compare against a "+48" display - so tier 2's very first click (poll #0, confirmed committing
+    correctly in the live log) still read back as "not committed" internally, forcing all 3
+    remaining tiers to run for nothing every single time. Fixed at the actual source this time:
+    added the same "+<digits> display on a phone-dial-code picker counts as committed" check
+    directly inside `isReactSelectAlreadySet` (in both duplicate copies), which
+    `comboboxValueCommitted` already calls first - so this one fix covers every caller,
+    including tryGreenhouseRemixSelect's own internal tier-2 verification this time.
+    - Also reported: the phone-number-reverts-later bug from #89 is still unconfirmed either way,
+      because the diagnostic watcher only ran for 8s (20 ticks) and a real multi-field form's
+      remaining comboboxes (several seconds each through their own fallback tiers) easily run
+      past that before the field the user actually saw revert is even reached - the watcher had
+      already stopped by then, so it never got a chance to log the real transition. Extended to
+      2 minutes (300 ticks) to comfortably cover a full run instead of guessing at a duration.
+    - Not yet confirmed live - needs a retest with the country picker committing in well under
+      1 second (poll #0, no tier 3/4 at all this time), AND, if the phone number still reverts,
+      an actual `[phone-watch] value changed from X to Y` log line this time instead of silence.
+
+92. **#91's retry fix confirmed live** - country picker now commits on poll #0, no tier 3/4 at
+    all. But the user clarified the actual live symptom is the COUNTRY/DIAL-CODE display itself
+    ("+48") changing later, not the number digits (the number-field watcher already confirmed
+    those stay put) - reported specifically as happening when a much LATER, unrelated question
+    ("Are you comfortable with the salary range?") gets its own combobox opened. Realized the
+    existing phone-watch instrumentation only ever polled the NUMBER input's `.value` - there was
+    ZERO logging watching the country picker's OWN displayed value over time, so a change there
+    would never have been caught regardless of watcher duration. Added a matching watcher
+    (`reactSelectDisplayValue` polled every 400ms for 2 minutes) right after the country picker
+    is filled, logging `"country picker changed from X to Y"` if it ever does.
+    - Not yet confirmed live - needs a retest showing either no change at all, or (this time) an
+      actual before/after value for what the country/dial-code display changes TO.
+
+93. **#92's new watcher immediately caught it, with an unambiguous smoking gun.** Live log:
+    `"+48" -> "+376"` (Andorra) at ~5.2s after fill, then `"+376" -> "+374"` (Armenia) at ~26s -
+    both early entries in an ALPHABETICALLY-sorted country list, at timings that landed exactly
+    during a LATER, completely unrelated field's ("60000 EUR") OWN tier-3 keyboard-navigation
+    fallback (repeated `ArrowDown` key presses dispatched for THAT field, not this one).
+    - **Root cause**: the country/dial-code picker's dropdown was never explicitly closed after a
+      successful commit (tier 2's click already correctly selects+closes the VISIBLE menu, but
+      nothing resets whatever internal "which listbox is active" state Greenhouse's remix
+      react-select tracks). Later, totally unrelated `ArrowDown` presses meant for a DIFFERENT
+      field's own retry logic get silently absorbed by this picker instead, walking it one
+      option at a time through the alphabetical country list and changing its already-correct
+      value out from under a field that had already finished minutes earlier in wall-clock terms
+      (this form's later comboboxes each burn several seconds of their own fallback tiers).
+    - **Fixed**: added an explicit close-down step (`Escape` keydown/keyup + `.blur()` + a short
+      settle wait - the exact same pattern `discoverComboboxOptions` already uses elsewhere in
+      this file for the same reason) right after the country picker's commit is confirmed,
+      before moving on to any other field.
+    - Scoped to just this picker for now, since that's the one with a live, reproduced report -
+      the same "still marked active, later steals unrelated ArrowDown presses" mechanism could in
+      principle affect any OTHER Greenhouse combobox filled via tryGreenhouseRemixSelect's tier 2
+      click-poll (which never explicitly closes down either), so if a similar report ever surfaces
+      for a non-phone field, apply the same closeComboboxDown() step there too.
+    - Not yet confirmed live - needs a retest with NO `"country picker changed from..."` warning
+      appearing at all, however long the rest of the form takes to fill.
+
+94. **#93's Escape/blur close-down did NOT fix it - retest showed the EXACT same "+48" ->
+    "+376" -> "+374" progression, at the same timings, during the same unrelated "60000 EUR"
+    field's own tier-3 keyboard-nav.** User asked three sharp questions that reframed the
+    investigation: (1) could a DIFFERENT field's autofill directly affect the phone/country
+    picker, (2) is a "retry" genuinely re-processing the SAME field, or is some later pass
+    starting over from the beginning (re-touching already-filled fields), (3) is this related to
+    an EARLIER-session report of "pressing Enter changes the phone code"?
+    - Clarified (2): the two separate script-execution contexts seen in every log (VM1839 then
+      VM1915, etc.) are `runAutofillInPage` (the first, structured/QA-bank pass) followed by
+      `fillGeneratedAnswersInPage` (a SEPARATE, later pass that applies AI-matched/generated
+      answers to whatever the first pass left unmatched) - not a restart from the beginning. A
+      field showing up in BOTH just means the first pass's own attempt at it failed and it fell
+      through to the second pass with a fresh answer.
+    - (1) and (3) both remain genuinely open and are exactly why the Escape/blur fix didn't help:
+      that fix assumed the country picker's OWN internal "open" state just needed clearing, but
+      if EITHER (a) some GLOBAL keyboard-routing mechanism still delivers a later field's own
+      Enter/ArrowDown to whatever Greenhouse's app considers "active" regardless of this widget's
+      own DOM state, or (b) the later field's OWN fillReactSelectByClick call is somehow being
+      handed the COUNTRY PICKER'S element directly (a stale/colliding `data-af-idx` resolving to
+      the wrong node - same shape as the earlier findElementByLabel bug, #87), closing this one
+      widget down properly wouldn't prevent either. The user's recollection that pressing Enter
+      specifically (not just ArrowDown) previously changed the phone code fits (b) less than (a) -
+      Enter is what COMMITS a highlighted option, consistent with a highlight that ArrowDown
+      presses elsewhere kept moving actually belonging to this widget the whole time.
+    - Added a direct diagnostic to tell (a) and (b) apart instead of guessing further: every call
+      to `fillReactSelectByClick` now logs a warning if the element it was actually handed is
+      inside `.phone-input__country`, including the desiredText it was asked to search for. If
+      "60000 EUR" (or any other unrelated field's own answer) shows up tagged against the country
+      picker's own element, that's (b) confirmed directly - the wrong node, not a leaked event.
+    - Not yet confirmed live - needs a retest reading off whether this new warning appears at all
+      during the "60000 EUR" field's own attempt.
+
+95. **#94's diagnostic came back clean - the new warning never fired.** Retest showed the EXACT
+    same "+48" -> "+376" -> "+374" progression, at the same timings, during the same "60000 EUR"
+    field's own tier-3 keyboard-nav - but `fillReactSelectByClick` was never once called with the
+    country picker's own element as `element`. Directly rules out (b) (wrong DOM node from a
+    stale/colliding idx or label match) - "60000 EUR"'s own fill code genuinely operates on its
+    own, correct element the whole time.
+    - New leading theory (a): `dispatchKey` fires KeyboardEvents via `element.dispatchEvent()` on
+      the CORRECT element, but that's not the same as real browser focus. If Greenhouse's own app
+      routes keyboard navigation based on `document.activeElement` (a document-level listener,
+      common for widget libraries that don't rely purely on React's per-component event-target
+      routing) rather than the dispatched event's own target, these ArrowDown/Enter presses could
+      land on whatever ACTUALLY holds real focus regardless of which element they were dispatched
+      on. Notably, every successful commit in every log so far has been via tier 2 (a real click
+      on a real rendered option, which DOES properly move real focus/relies on React's own click
+      handler) - keyboard-nav (tier 3) has not committed even once in any live log yet, consistent
+      with keyboard events not reliably reaching the intended component's own logic at all. Also
+      notable: this codebase already has a `trustedClick` mechanism (real OS-level clicks via
+      `chrome.debugger`, because Greenhouse's app ignores synthetic mouse events for opening) but
+      has NO equivalent trusted-KEYBOARD mechanism anywhere - every ArrowDown/Enter/Escape
+      dispatched throughout this whole file is a synthetic, untrusted KeyboardEvent.
+    - Added a direct, minimal check instead of building a whole trusted-key mechanism speculatively
+      first: logs a warning whenever `document.activeElement !== element` right before dispatching
+      ArrowDown in the tier-3 loop, naming whatever element actually holds focus at that moment.
+    - Not yet confirmed live - if this warning fires during "60000 EUR"'s own tier-3 attempt
+      naming the phone/country picker's own input as the actual focus holder, that's the
+      confirmed mechanism, and the real fix becomes either (i) a trusted-keyboard-event helper
+      (chrome.debugger's Input.dispatchKeyEvent, mirroring trustedClick) or (ii) making sure
+      focus is more forcefully and durably moved before any keyboard-nav step, not guessed at
+      again - which one depends on what this log actually shows.
+
+96. **#95's focus-mismatch check also came back clean - confirmed the user's OWN 401/fetchProfile
+    timing check too (only happened once, doesn't correlate with the later changes).** Three
+    separate mechanisms now directly disproven by real data: not a wrong DOM element target
+    (#94), not stuck/wrong browser focus (#95), not a fetchProfile-retry-triggered reset. Rather
+    than propose a fourth blind code theory, switched tools entirely: asked the user to set a
+    DevTools DOM breakpoint ("break on subtree modifications") on the country picker's own
+    element to capture the REAL call stack at the moment of mutation - this didn't pan out in
+    practice (fiddly to set up correctly by hand; the user's reply came back as the element's
+    current HTML, not a paused call stack).
+    - Built the same capability directly into the diagnostic instead, needing no manual DevTools
+      interaction at all: `traceCountryPickerMutations()` temporarily wraps the DOM mutation
+      primitives React actually uses to update this widget's own subtree specifically
+      (`Node.prototype.insertBefore` - covers `appendChild` too in Chromium -, `removeChild`,
+      `replaceChild`, and the `CharacterData.prototype.data` setter for plain text-node updates),
+      scoped to just this picker's own `.select-shell` container (not the whole page), logging a
+      REAL synchronous stack trace (`new Error().stack`) the instant anything touches that
+      subtree - something polling `reactSelectDisplayValue` can never provide, since by the time
+      a poll notices a change, the causing call stack is long gone. Auto-restores the original
+      methods after 90s. Called right alongside the existing `watchCountryDisplay()`.
+    - Not yet confirmed live - needs a retest pasting back whatever `MUTATION ...` warning(s)
+      appear, which should finally show the actual responsible code path directly instead of
+      requiring another guess-and-eliminate round.
+
+97. **#96's monkey-patch-based tracer came back completely silent - zero MUTATION warnings -
+    while the value still changed exactly as before ("+48" -> "+376" -> "+374", same timings).**
+    Recognized this as a bug in the DIAGNOSTIC itself, not evidence the underlying issue stopped
+    happening: `chrome.scripting.executeScript` runs this whole script in an ISOLATED WORLD, a
+    separate JS realm from the page's own scripts, with its own independent copy of built-ins
+    like `Node.prototype`. Patching that copy's `insertBefore`/`removeChild`/`replaceChild`/
+    `CharacterData.data` has ZERO effect on React's own calls to the same-named methods, which go
+    through the PAGE's own, completely different copy - the trap could never have fired
+    regardless of what was actually happening on the page. (Plain DOM operations like
+    `element.value = ...`/`.dispatchEvent()`/`.click()` still work fine across this boundary
+    because the underlying DOM tree itself is shared between worlds - only the JS-level built-in
+    PROTOTYPES are separated per-realm; this is why everything else in this file has worked
+    normally despite running in the isolated world the whole time.)
+    - Replaced with `MutationObserver` instead, a real browser API that watches the actual shared
+      DOM tree directly rather than intercepting realm-scoped function calls, so it isn't subject
+      to the same isolation gap - it fires regardless of which world caused the change. Trade-off:
+      its callback runs asynchronously, so it can't capture the ORIGINAL synchronous call stack a
+      same-realm patch could have gotten - but it will actually fire this time, and reports real
+      mutation records (type, target, old/new text, added/removed nodes), which is still far more
+      than "we polled and it was different" with zero insight into what changed.
+    - Not yet confirmed live - needs a retest pasting back whatever `MUTATION observed inside
+      country picker subtree` warning(s) appear. If genuinely NOTHING fires even now, that would
+      mean the picker's OWN subtree literally isn't being touched at all, and whatever changes
+      `reactSelectDisplayValue`'s read result must be happening one level up (e.g. an ancestor
+      swap/remount that replaces this whole `.select-shell` wholesale) - worth widening the
+      observed root to a broader ancestor if this retest also comes back silent.
+
+98. **#97's MutationObserver worked, and finally delivered a real answer.** Two mutation events
+    caught, each with a genuine React-DOM internal commit call stack (`scheduler.production.min.js`'s
+    `postMessage`-based deferred/concurrent-mode scheduling, real `react-dom` fiber-commit
+    functions) - not anything from this extension's own click/keyboard/focus code. The country
+    picker is being independently re-rendered by GREENHOUSE'S OWN REACT APP via its own deferred
+    scheduler at some point during a run, resetting an already-correct value on its own. This
+    closes out the investigation that started at #90: three separate own-code theories (wrong
+    element target #94, stuck/wrong focus #95, fetchProfile-retry-timing correlation checked
+    directly by the user) were each ruled out first with live evidence before concluding this -
+    not guessed as a default explanation once other ideas ran out.
+    - Leading theory for WHY: every commit to this field also triggers Greenhouse's own
+      `fetchProfile()` call (visible in every capture since the very first Poland attempt), which
+      401s for an anonymous applicant (confirmed live: `UnauthorizedError: Unauthorized: User is
+      not logged in`). Most likely that call's own delayed error-handling resets this field as a
+      side effect, entirely inside Greenhouse's own app code - not something preventable from
+      outside their app.
+    - **Fixed by outlasting it instead of trying to prevent it**: added `reverifyPhoneCountryPickerInPage(profile)`,
+      a new small, self-contained top-level function (duplicates just `fillGreenhouseViaReactFiber`'s
+      own short helpers, not the full multi-tier DOM-click fallback chain, since the widget is
+      definitely already mounted by this point) that waits 3s, checks whether the picker's
+      display is still a valid "+NN" dial code, and if not, re-fills it directly via React fiber
+      manipulation. Wired into the `autofillBtn` handler as a genuinely final step - runs once,
+      across all frames, AFTER `fillGeneratedAnswersInPage` and its stray-frame sweep have both
+      already completed for everything else on the page - so nothing later in the run can still
+      knock it over. Reports "Corrected the phone country code, which the site's own app reset
+      mid-run." in the final status text when it actually had to fix something.
+    - Not yet confirmed live - needs a retest confirming the picker ends up correct AFTER the
+      whole run completes (not just immediately after its own initial fill), and checking whether
+      the new status-text note appears when a mid-run reset did happen.
+
+99. **User pushed for the actual final on-page state (not mid-run console logs) and it exposed a
+    real bug in #98's own fix, plus a separate, previously-unseen gap.** Final state showed the
+    country picker STILL wrong ("+374") despite #98's re-verify step supposedly running.
+    - **Root cause of #98 not working**: its own "is this correct" check only verified SHAPE
+      ("does this look like some +NN dial code"), not VALUE - and the wrong value Greenhouse's
+      own app resets this field TO ("+374") is ALSO shaped like a real dial code. The check saw
+      "+374", concluded "looks fine, nothing to fix", and skipped the re-fill entirely every time.
+    - **Fixed with exact-value verification instead of shape verification**: since any genuinely
+      correct calling code must be a literal PREFIX of the profile's own full phone number (e.g.
+      "+48" is a prefix of "+48694542078"; "+374" is not), checking that directly sidesteps the
+      "which exact length is the real code" ambiguity noted elsewhere in this file entirely.
+      Applied in THREE places that all had the same shape-only flaw: `reverifyPhoneCountryPickerInPage`
+      itself, the earlier "already showed"/"committed via country name" checks in
+      `runAutofillInPage`'s own `isPhoneDialCodePicker` block, and - the deepest, most important
+      one - `isReactSelectAlreadySet` itself (called first by `comboboxValueCommitted`, which
+      `tryGreenhouseRemixSelect`'s own tiers use to decide whether to stop early). That last one
+      matters most: without fixing it, a re-fill attempt starting while the picker already shows
+      a WRONG-but-valid-looking code would short-circuit at the very first line of
+      `fillReactSelectByClick`, claim "already correct", and never even attempt to click the real
+      target - the outer checks would have nothing real to verify regardless of how they
+      themselves were written. Also stopped trusting `fillReactSelectByClick`'s own boolean
+      return value in the outer check (was `committed || isCorrectDialCode(nowShown)`) for the
+      same reason - relies solely on reading the actual resulting value back off the DOM now.
+    - Added console logging (`final re-check: ...`) to `reverifyPhoneCountryPickerInPage` so the
+      next retest shows definitively whether it detected a wrong value and what it did about it.
+    - **Separate, newly confirmed gap, not yet investigated**: the final on-page state also showed
+      two OTHER required select fields ("What is your level of experience with AWS?", "How many
+      years of experience... building and scaling backend systems...") left on the placeholder
+      "Select..." - never filled at all. The console log showed a `combobox-retry "Expert"` value
+      committing successfully on poll #0, but "Expert" doesn't appear on EITHER of those two
+      fields (or anywhere else) in the final state - suggesting it landed on some OTHER,
+      similarly-worded skill-level field instead (same general shape as #87's bare-"Country"
+      label collision, just for a different set of fields this time). Needs its own investigation
+      - not yet started.
+    - Not yet confirmed live - needs a retest for both: does the country picker now end up
+      correct, and does the AWS/backend-systems gap still happen (ideally with a fresh Save
+      Sample capture of that section of the form, to see the real label text and structure).
+
+100. **#99's exact-value detection worked perfectly, but its own re-fill attempt didn't - retest
+     showed `"+374" is WRONG ... re-filling` immediately followed by `now showing "+374" (still
+     wrong)`.** Root cause: the re-fill duplicated `fillGreenhouseViaReactFiber`'s direct-React-
+     fiber technique standalone - but "tier 1 (React fiber direct)" has never once succeeded in
+     ANY log across this entire investigation, on this page, for ANY field. Only real clicks
+     (tier 2, inside `tryGreenhouseRemixSelect`) have ever actually committed a value here. A
+     standalone re-implementation using only the one approach that's never worked on this page
+     was never going to work either - this was a design mistake (reached for the smallest/
+     simplest helper to duplicate, not the one actually proven reliable).
+     - **Fixed by not duplicating fill logic a second time at all**: renamed the function to
+       `checkPhoneCountryPickerInPage` and stripped it down to detection only (still waits 3s,
+       still uses the exact-prefix check from #99 - that part worked correctly). If it reports
+       `wasWrong`, the `autofillBtn` handler now re-runs `runAutofillInPage` itself (the same
+       code that already commits this field correctly via real clicks earlier in the same run,
+       re-injecting field-detector.js first in case anything remounted since), then calls the
+       check function again to confirm and build the status-text note. Most other fields' own
+       fillSingle/isReactSelectAlreadySet checks should short-circuit quickly when already
+       correct, so this mainly just re-does the one thing that's actually still wrong, reusing
+       proven logic instead of a second, weaker copy of it.
+     - Not yet confirmed live - needs a retest confirming the country picker ends up correct in
+       the FINAL on-page state this time (not just the console's own "FIXED" log line), and that
+       re-running runAutofillInPage doesn't visibly disrupt any other already-correct field.
+
+101. **User saved the full console output to a file for a retest, which revealed both that #100's
+     fix genuinely works AND why it wasn't enough by itself.** Full trace: country picker drifted
+     "+48" -> "+376" (5.6s) -> "+1" (29.2s) - `checkPhoneCountryPickerInPage` correctly caught
+     "+1" as wrong and triggered `runAutofillInPage` again - the re-run's own "Poland" attempt
+     genuinely succeeded (`iti__flag iti__pl`, text "48", "committed via country name "Poland"
+     (now showing "+48")" - #100 confirmed working). But the SAME re-run ALSO reprocesses "60000
+     EUR" against the salary-comfort Yes/No field again (since runAutofillInPage reprocesses
+     every field), which immediately re-triggered the exact same drift mechanism ("+48" ->
+     "+374" again) - re-breaking what the re-run had just fixed, moments later.
+     - **Every single drift event across every retest in this whole investigation (#89-#101)
+       has happened during or immediately after a "60000 EUR" retry attempt specifically, and
+       NEVER after any other field's clean, quick commit** - "No"/"Yes"/"European Union"/
+       "Advanced"/"Expert" all commit on poll #0 with zero correlated mutations afterward, every
+       time. "60000 EUR" is the one answer that never matches its own field's real options
+       ([yes, no]) and always burns through all 4 fallback tiers - and is ALSO the one thing
+       that's ever preceded a drift.
+     - **Found the likely root cause of "60000 EUR" itself while investigating this connection**:
+       `MATCH_CATEGORY_PATTERNS`' `salary_expectations` category (`/\bsalary\b|\bcompensation\b|
+       .../i`, three independently-drifted copies in this file) matches on the bare word
+       "salary" alone - matching BOTH "Are you comfortable with the salary range...?" (a Yes/No
+       question) AND "What are your salary expectations?" (a genuinely open numeric question)
+       into the SAME category. `matchQaBankEntry`'s category-shortcut trusts a category match
+       unconditionally, bypassing word-overlap scoring entireley - so a saved/generated answer
+       meant for the numeric expectation question ("60000 EUR") got applied to the Yes/No
+       comfort question instead, which can never commit it.
+     - **Fixed at the pattern source** (all three copies): added a negative lookahead excluding
+       any question containing "comfortable" from the `salary_expectations` category match, so
+       the two semantically different questions can no longer collide via the category shortcut.
+       If this is indeed the root cause, it should eliminate "60000 EUR" ever being tried against
+       this field at all - which, per the 100% correlation observed above, should also eliminate
+       the recurring country-picker drift as a direct consequence, without needing to fully
+       understand Greenhouse's own internal trigger mechanism.
+     - Not yet confirmed live - needs a retest checking BOTH: does "60000 EUR" still appear at
+       all in the console (it shouldn't), and does the country picker now stay correct through
+       the whole run with no drift and no re-run needed.
+
+102. **#101's fix DID stop the drift and eliminated "60000 EUR" - confirmed live, zero drift,
+     zero "60000 EUR" this run - but at a real cost the user correctly rejected**: two fields
+     that used to get filled ("Are you comfortable with the salary range?" -> Yes, and the API
+     architecture experience level -> Advanced) came back completely EMPTY instead. Blocking the
+     whole category match to stop one bad answer also blocked whatever legitimate path was
+     filling the *other* question sharing that category - the wrong trade-off, since an unfilled
+     required field is worse than an occasionally-wrong one the user can correct, and the user
+     said so directly ("removing that field not filling that field doesn't make sense").
+     - **User's own hypothesis, and it's the better fix**: "in field, write other text doesn't
+       option in selectbox make that error I think" - i.e. typing text that doesn't match ANY
+       real option is itself what's risky, regardless of WHY the mismatch happened. Confirmed
+       correct on inspection: tier 4's last resort, when NOTHING matches even after typing, was
+       to blindly press Enter anyway and return whatever comboboxValueCommitted said - leaving
+       the widget holding non-matching typed text, uncommitted, in an undefined open/focused
+       state. That ambiguous state, not the specific mismatched answer itself, is the likely
+       actual vector for corrupting a DIFFERENT, unrelated field later.
+     - **Reverted #101's category-pattern change entirely** (all three copies, back to the
+       original bare `/\bsalary\b/` pattern) - restores whatever legitimate matching path was
+       filling "Yes"/"Advanced" before, with no attempt to suppress the mismatched "60000 EUR"
+       answer at its source anymore.
+     - **Fixed at the actual point of risk instead**: tier 4's fallback no longer types
+       non-matching text and blindly presses Enter. When nothing matches even after typing, it
+       now closes cleanly (Escape, clears the typed text back to empty, blurs) and returns
+       false - the ONE mismatched field still correctly ends up needing the user's input (an
+       honest outcome for a genuinely wrong/unmatched answer), without leaving the widget in an
+       ambiguous state that risked leaking into something else. Applied to both duplicate copies
+       of tryGreenhouseRemixSelect.
+     - Not yet confirmed live - needs a retest confirming ALL of: "Yes"/"Advanced" (or their
+       runtime equivalents) are filled again, "60000 EUR" (or whatever mismatched answer occurs)
+       still fails cleanly on its own field only, and the country/phone picker does not drift
+       even though the mismatch itself is no longer being prevented from happening.
+
+103. **User pasted the ACTUAL prompt body sent to GPT for batch-answering (captured live), which
+     settled where "60000 EUR" really comes from - not a code bug at all.** It's a genuine, saved
+     QA-bank entry (`Q: What are your salary expectations? A: 60000 EUR`) that GPT is choosing to
+     reuse for a completely different question ("Are you comfortable with the salary range?"),
+     against its own instruction not to. #101/#102's entire investigation into local
+     category-collision matching was chasing the wrong layer - the mismatch is happening inside
+     GPT's own batch-answer call, not in this file's own matching functions at all.
+     - **Root cause found in `companion-service/app/prompt.py`**: `build_batch_answer_system_prompt`
+       has ~25 lines of much more detailed, explicit grounding rules sitting commented out
+       directly above the live code - including the exact asymmetric-risk framing needed here
+       ("a missed reuse is safe... inventing a reuse that isn't really the same question is
+       not"). The live replacement was two thin lines, one containing a typo ("truable" instead
+       of "truthful"). Matches a prior Explore-agent finding from earlier this session ("~25
+       lines of commented-out grounding rules replaced by 2 terse lines... looks like an
+       interrupted edit") - this is very likely leftover from an in-progress Cursor edit that
+       never got finished, not anything introduced this session.
+     - **Fixed**: restored the detailed grounding rules, fixed the typo, and added a new,
+       explicit rule directly naming the exact failure mode observed live - a saved numeric
+       salary figure answers "what are your expectations", NOT a separate yes/no "are you
+       comfortable with this range" question, even though both mention salary; same for any
+       other pair of questions sharing a subject but asking for different things (country name
+       vs. phone country code, city vs. full address).
+     - **Separate, NOT fixed (data, not code)**: the pasted QA bank itself has other entries that
+       look wrong/garbled from past applications - `Are you eligible to work in this country? ->
+       +48`, `Do you have a disability? -> 9`, `Do you have the right to work in Serbia? -> 1
+       week`, `Security code -> e`, a privacy-notice checkbox answered `85273466004`, `Country ->
+       +48`, and (most tellingly) `Where are you currently located...? -> 60000 EUR` - the exact
+       same mismatch pattern, just saved into the bank itself instead of happening live. No live
+       access to the user's own running companion-service data from here - the user needs to
+       review/clean these up via the extension's own Settings -> Q&A tab. The prompt fix above
+       reduces how easily GPT reuses a wrong-but-adjacent entry, but doesn't remove already-wrong
+       saved entries, which can still get reused correctly-but-wrongly for their own actual
+       matching question.
+     - Not yet confirmed live - needs a retest of the exact same salary-comfort/salary-expectation
+       question pair to see whether GPT now correctly declines to reuse the numeric entry for it.
+
+104. **User pushed back correctly on #103: the prompt wording wasn't the real issue - several
+     fields end up unfilled even when GPT generates a reasonable answer for them.** Found a
+     genuinely separate, more fundamental bug in how batched GPT answers get matched back to
+     their own question: `aiCandidates.forEach((item, i) => { const ans = answers[i]; ... })` -
+     ChatGPT's returned answer at array position `i` was matched to the question that had been
+     SENT at position `i`, by raw array position, with NO verification the two arrays were even
+     the same length. The prompt asks for "one entry per question, in the same order", but
+     nothing ever checked ChatGPT actually honored that.
+     - If ChatGPT's reply is ever even one entry short, has an extra one, or reorders anything -
+       plausible for a large batch, and this form's own batch was large (287-entry Q&A bank,
+       many questions) - EVERY answer after the misalignment point silently shifts onto the
+       WRONG question. This explains the exact symptom precisely: one skill-level answer
+       ("Expert") landing on a completely different question than intended, and several
+       questions after it in the same batch ending up totally unfilled (their real answer had
+       shifted onto someone else's slot instead, or the shifted-in answer failed THAT other
+       field's own options validation and got silently dropped).
+     - **Fixed properly, not just patched**: rather than just validating array length (which
+       would only turn a silent corruption into an all-or-nothing failure for the whole batch),
+       changed the contract so each answer self-identifies which question it belongs to.
+       `_BATCH_ANSWER_SCHEMA_CONTRACT` (prompt.py) now requires a `question_number` field per
+       answer, matching the number each question was given in the prompt's own numbered list.
+       sidepanel.js now builds a `question_number -> answer` map and looks up `aiCandidates[i]`'s
+       answer by `i + 1` explicitly, instead of trusting raw array position. One missing or
+       misnumbered answer now only costs that ONE question (correctly falls through to "need
+       your input", reported via a new generationErrors note with the count) - it can no longer
+       cascade and corrupt every answer that came after it in the same batch.
+     - Not yet confirmed live - needs a retest of a large batch (many questions in one run, like
+       this report's own case) checking that every question gets either its own correct answer
+       or an honest "need your input", with no more answers landing on the wrong question.
+
+105. **#104's fix was too strict live**: only 1 question ("Where is your current residence?")
+     ever reached ChatGPT this run, ChatGPT answered it correctly ("European Union"), but the
+     status text showed `1 of 1 answer(s) came back without a usable question_number`. Root
+     cause: the companion-service (a separate Python process) doesn't auto-reload, so it can
+     still be serving an OLDER prompt that never asked ChatGPT for `question_number` at all - in
+     which case EVERY answer is missing it through no fault of ChatGPT's, and the strict
+     rejection added in #104 discarded a perfectly good answer outright. Fixed by falling back to
+     that entry's own array position whenever `question_number` is missing/invalid, instead of
+     rejecting it - keeps the old (correct, as long as counts genuinely match) behavior working
+     when the field isn't there at all, while still using it to guard against misalignment
+     whenever it IS present. (Also separately noticed and re-applied #103's own grounding-rules
+     restoration to `build_batch_answer_system_prompt` - it had reverted back to the old weak
+     wording + "truable" typo somehow between rounds, unrelated to anything requested.)
+     - **Second, separate question the user asked and NOT yet answered**: why did the other 3
+       required combobox questions ("level of experience with AWS", "years of experience...
+       backend systems", the same shape of question as "API architecture" which DID work
+       earlier) never even get asked at all - straight to "need your input" without ever
+       becoming a GPT/select-pick candidate. Confirmed the field markup itself is structurally
+       identical to "API architecture" (same Greenhouse remix react-select, same required
+       marker) via a fresh capture, so it's not a structural/markup difference. Means
+       `discoverComboboxOptions` is coming back with 0 options for these specific fields
+       specifically, causing them to fall through to the generic catch-all with no options
+       attached - but why some structurally-identical fields on the same page succeed and others
+       don't is still unknown. Added diagnostic logging (`[Auto Fill][combobox-discovery] "<label>"
+       -> N option(s) found`) for every required-combobox discovery attempt, to see live which
+       fields succeed vs. fail and in what order, instead of guessing at a cause with no
+       fields-page-specific data yet.
+     - Not yet confirmed live - needs a retest checking BOTH: does the phone/country + salary
+       question set now get correctly answered via question_number, and what the new
+       combobox-discovery log lines show for the AWS/backend-systems fields specifically.
+
+106. **#105's new logging answered its own question immediately.** Live result:
+     `discoverComboboxOptions` found options for only 1 of 5 required combobox fields on the same
+     page ("Where is your current residence?" -> 8 options); the other 4 - including "Are you
+     comfortable with the salary range?", whose real Yes/No options were separately CONFIRMED to
+     exist and be reachable via `tryGreenhouseRemixSelect`'s own retry chain in the exact same
+     run - all came back with 0. This is the actual, direct reason the 3 skill-level questions
+     never became GPT candidates at all: with no `options` discovered, they can never qualify for
+     `selectPickCandidates`, and being comboboxes they're not `canGenerate`-eligible either, so
+     they have no path to an answer whatsoever - "need your input" was the only possible outcome
+     for them regardless of anything about prompts, question_number, or the QA bank.
+     - **Root cause**: `discoverComboboxOptions` only ever tried opening the dropdown ONCE (a
+       single `trustedClick` + `simulateClick`), with no fallback if the flyout genuinely never
+       opened - unlike `tryGreenhouseRemixSelect`'s own `ensureOpen()`, which is the actual
+       proven-reliable mechanism used everywhere else in this file (trustedClick, then
+       simulateClick, then ArrowDown, then a trustedClick retry). Option discovery was
+       structurally less robust than the fill step itself, despite needing the exact same "does
+       this stubborn widget's flyout actually open" reliability.
+     - **Fixed**: gave `discoverComboboxOptions` the same multi-step open-retry sequence
+       `ensureOpen()` already uses, checking `aria-expanded` between each step instead of
+       assuming the first attempt worked.
+     - Not yet confirmed live - needs a retest showing the AWS/backend-systems/salary-comfort
+       fields now discovering real options instead of 0, and getting stamped as genuine
+       select-pick candidates that can actually reach GPT.
+
+107. **#106 confirmed working live - every field now gets answered.** User's next ask: speed -
+     the whole run visibly opens/closes comboboxes slowly. Trimmed wait times and retry counts
+     in the specific places that were the real cost centers, without touching any of the retry
+     LOGIC that just got fixed for reliability over the last several findings:
+     - Tier 2 (click-poll): 18 polls x 80ms -> 10 x 60ms. Successful matches exit on poll #0
+       regardless (confirmed true in every live log this whole investigation), so this only
+       shortens the worst case for a genuine mismatch that was going to fail anyway.
+     - Tier 3 (keyboard-nav): 25 steps x 70ms -> 8 x 50ms. Has never once committed successfully
+       in any live run on this site across the entire investigation (every real commit came via
+       tier 2) - cut way down instead of removed outright, so it still gets a much shorter
+       chance on other sites/widgets where it might actually work.
+     - Tier 4's clean-close wait: 150ms -> 100ms.
+     - `discoverComboboxOptions`'s own open-retry sequence (#106's fix): 250/200/120/220ms ->
+       180/150/90/160ms.
+     - The final phone/country re-verify wait (#98): 3000ms -> 1200ms - this was sized to wait
+       out a delayed Greenhouse-side reset that #106 traced back to unreliable option discovery
+       causing repeated failed retries in the first place; now that that's fixed, this wait is a
+       cheap safety margin rather than load-bearing, so it didn't need to stay this long.
+     - Left tier 1 (React fiber direct) and the overall 4-tier fallback STRUCTURE untouched -
+       tier 1 is synchronous with no delay of its own regardless, and changing which tiers run in
+       what order is exactly the kind of change likely to reintroduce something #90-#106 just
+       spent this many rounds fixing.
+     - Not yet confirmed live - needs a retest confirming the run feels meaningfully faster
+       AND that reliability holds (every field still gets an answer or an honest "need your
+       input", nothing silently breaks from the shorter waits).
+
+108. **Contributor log convention (Claude ↔ Cursor handoff).** `Author: Cursor`. No autofill
+    behavior change — documents how assistants should record fixes in this file. When Cursor
+    changes product code, append the next numbered finding with `Author: Cursor` (symptom,
+    root cause, files/functions, live-confirmed or not, cross-refs to prior `#NN`). Claude
+    entries use `Author: Claude` the same way. See the "Contributor log" section at the top
+    of this file.
 
 ## Known gaps (not yet acted on)
 

@@ -120,6 +120,21 @@ def _resume_block(resume: dict | None) -> str:
     return "TAILORED RESUME (JSON) — prefer this over the raw profile when they differ:\n" f"{json.dumps(resume, indent=2)}\n\n"
 
 
+def _profile_contact_block(profile: dict | None) -> str:
+    """Factual contact fields only — grounds gpt-auto batch answers without shipping full JSON."""
+    if not profile:
+        return ""
+    contact = profile.get("contact") or {}
+    facts = {
+        k: contact.get(k)
+        for k in ("name", "email", "phone", "location", "city", "country", "state", "linkedin", "website")
+        if contact.get(k)
+    }
+    if not facts:
+        return ""
+    return "CANDIDATE CONTACT FACTS (use for location/nationality/contact questions):\n" f"{json.dumps(facts, indent=2)}\n\n"
+
+
 def build_answer_user_message(
     profile: dict,
     question: str,
@@ -188,8 +203,11 @@ def build_select_pick_user_message(
 
 _BATCH_ANSWER_SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and nothing else \
 (no markdown code fences, no commentary before or after): \
-{"answers": [{"answerable": true or false, "answer": "string" or null}, ...]} \
-with exactly one entry per question, in the same order they were given."""
+{"answers": [{"question_number": <the number from the numbered list above>, "answerable": true or false, \
+"answer": "string" or null}, ...]} \
+with exactly one entry per question. question_number must match the number each question was given in the \
+list below (1, 2, 3, ...) - this is how each answer gets matched back to its own question, so it must be \
+correct even if you don't answer them in the same order they were given."""
 
 
 # Used by the GPT-tab-automation path for Auto Fill (see runChatGptPrompt/the answer_provider
@@ -200,32 +218,6 @@ with exactly one entry per question, in the same order they were given."""
 # above are still what Claude/Ollama use via /generate-answer - this doesn't replace those.
 def build_batch_answer_system_prompt() -> str:
     return (
-        # "You are helping a job candidate answer several specific application-form questions at once, "
-        # "using ONLY a bank of answers they've already given and approved on previous applications, plus "
-        # "the target job description as context. You are NOT given their full profile/work history - the "
-        # "saved Q&A bank below is the only source of real facts about them.\n\n"
-        # "You will be given a SAVED Q&A BANK. If a saved entry answers a new question — even if worded "
-        # "very differently, e.g. a different phrasing of the same underlying question, or a different "
-        # "company name filled into the same boilerplate question — reuse that saved answer's text for it "
-        # "verbatim rather than writing a new one. A missed reuse is safe (the candidate just answers it "
-        # "themselves instead); inventing a reuse that isn't really the same question is not, so only reuse "
-        # "a saved answer when you're genuinely confident it answers the new question.\n\n"
-        # "Non-negotiable rule: only use facts already present in the saved Q&A bank. Never invent "
-        # "motivations, experience, or facts that aren't grounded in what's provided — this applies to soft "
-        # "questions (\"why do you want to work here\") just as much as factual ones. If NOTHING in the "
-        # "saved bank genuinely answers a question, set that entry's answerable to false and answer to "
-        # "null — do NOT write a sentence explaining that you don't have enough information for it. That "
-        # "explanation is not a valid answer to put in a form field; a real applicant would leave the field "
-        # "blank and handle it themselves. Setting answerable to false for just that one entry is what "
-        # "triggers exactly that safe fallback in the actual application — it doesn't affect the other "
-        # "questions.\n\n"
-        # "Each question is independent — answer it on its own merits, not based on how you answered the "
-        # "others.\n\n"
-        # "Match each answer's length to what its own question actually asks. A question asking for a "
-        # "single fact (a job title, a company name, years of experience as a number) gets a short, direct "
-        # "phrase back, not a full paragraph. Only a genuinely open-ended question (\"why do you want to "
-        # "work here\", \"tell us about yourself\") gets a few sentences, still in first person and still "
-        # "matching a real application-form response, not a cover letter.\n\n"
         "Answer exactly what each question asks, using only the parts of the saved Q&A bank actually "
         "relevant to it — don't pull in unrelated saved answers just because they're available.\n\n"
         "All answers should be truable\n\n"
@@ -240,13 +232,22 @@ def build_batch_answer_user_message(
     qa_bank: list[dict],
     resume: dict | None = None,
     options_per_question: list[list[str] | None] | None = None,
+    multi_per_question: list[bool] | None = None,
+    profile: dict | None = None,
 ) -> str:
     lines = []
     for i, q in enumerate(questions):
         opts = options_per_question[i] if options_per_question and i < len(options_per_question) else None
+        multi = bool(multi_per_question[i]) if multi_per_question and i < len(multi_per_question) else False
         if opts:
             opt_text = "; ".join(opts)
-            lines.append(f"{i + 1}. {q}\n   OPTIONS (pick exactly one): {opt_text}")
+            if multi:
+                lines.append(
+                    f"{i + 1}. {q}\n"
+                    f"   OPTIONS (select ALL that apply; join chosen labels with \", \"): {opt_text}"
+                )
+            else:
+                lines.append(f"{i + 1}. {q}\n   OPTIONS (pick exactly one): {opt_text}")
         else:
             lines.append(f"{i + 1}. {q}")
     numbered = "\n".join(lines)
@@ -258,11 +259,14 @@ def build_batch_answer_user_message(
     select_note = ""
     if options_per_question and any(options_per_question):
         select_note = (
-            "\nFor any question that lists OPTIONS, your answer string MUST be copied exactly from "
-            "that question's OPTIONS list (same spelling). Never invent an option.\n"
+            "\nFor any question that lists OPTIONS, every chosen label MUST be copied exactly from "
+            "that question's OPTIONS list (same spelling). Never invent an option. For "
+            '"select ALL that apply" questions, put multiple labels in one answer string '
+            'separated by ", ".\n'
         )
     return (
         f"SAVED Q&A BANK:\n{bank_text}\n\n"
+        f"{_profile_contact_block(profile)}"
         f"{_resume_block(resume)}"
         f"COMPANY: {company or '(not provided)'}\n\n"
         "JOB DESCRIPTION:\n"

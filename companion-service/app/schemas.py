@@ -239,6 +239,10 @@ class BatchAnswerPromptRequest(BaseModel):
     # Parallel to questions: when an entry is a non-empty list, that question is a select/dropdown
     # pick and the model must choose one of those option labels. null/omitted = free-text answer.
     options_per_question: list[list[str] | None] | None = None
+    # Parallel to questions/options: True = checkbox multi-select ("select all that apply");
+    # answer may be several OPTIONS joined by ", ". Confirmed needed for Zoho Recruit
+    # screening checkboxes (technologies / design patterns).
+    multi_per_question: list[bool] | None = None
     resume: dict | None = None
 
 

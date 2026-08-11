@@ -168,7 +168,32 @@ DEFAULT_QA_ENTRIES: list[dict[str, str]] = [
     {"question": "Do you identify as transgender?", "answer": "No"},
     {"question": "Do you have a disability?", "answer": "No disability"},
     {"question": "Are you a veteran?", "answer": "Not a veteran"},
+    {"question": "What is your gender?", "answer": "Male"},
+    {"question": "Are you Hispanic or Latino?", "answer": "No"},
+    {"question": "Veteran status", "answer": "I am not a protected veteran"},
+    {
+        "question": "Disability status",
+        "answer": "No, I do not have a disability and have not had one in the past",
+    },
+    {"question": "Fluency in English", "answer": "Fluent"},
+    {"question": "What is your English level?", "answer": "Fluent"},
+    {"question": "English Language Skill Level", "answer": "Fluent"},
+    {"question": "Locations", "answer": "Europe"},
 ]
+
+
+def _merge_missing_default_qa(existing: list[QAEntry]) -> list[QAEntry]:
+    """Append any new DEFAULT_QA_ENTRIES the user doesn't already have (by exact question text)."""
+    have = {e.question.strip().lower() for e in existing}
+    merged = list(existing)
+    added = False
+    for item in DEFAULT_QA_ENTRIES:
+        q = item["question"].strip().lower()
+        if q not in have:
+            merged.append(QAEntry.model_validate(item))
+            have.add(q)
+            added = True
+    return merged if added else existing
 
 
 def get_qa(person: str | None = None) -> list[QAEntry]:
@@ -183,7 +208,18 @@ def get_qa(person: str | None = None) -> list[QAEntry]:
         save_qa(seeded, person)
         return seeded
     data = read_json(path)
-    return [QAEntry.model_validate(item) for item in data] if data else []
+    if not data:
+        # File exists but is empty (e.g. created before seeding logic, or cleared accidentally) —
+        # treat like a fresh profile so category defaults (work auth, sponsorship, EEO, etc.)
+        # are available for Auto Fill without requiring a manual Settings visit first.
+        seeded = [QAEntry.model_validate(item) for item in DEFAULT_QA_ENTRIES]
+        save_qa(seeded, person)
+        return seeded
+    entries = [QAEntry.model_validate(item) for item in data]
+    merged = _merge_missing_default_qa(entries)
+    if merged is not entries:
+        save_qa(merged, person)
+    return merged
 
 
 def save_qa(entries: list[QAEntry], person: str | None = None) -> None:
