@@ -3066,6 +3066,12 @@ unverified outside a live browser).
     at end of `runAutofillInPage`; Save Sample writes `*.console.log` beside HTML/JSON.
     Workflow doc: `extension/test-forms/PLATFORM_TESTING.md`.
 
+113. **Platform priority: Tier-1 major ATS first (Greenhouse, Workday, Lever, SR, Ashby,
+    BambooHR, Teamtailor).** `Author: Cursor`. ~185 unique Save Sample pages (~525 HTML incl.
+    frames); Tier-1 ≈ 93 (50%). Strategy: fix shared engine per platform, sweep all captures
+    for that host as regression suite — not 185 hand-fixes. Added `tools/platform-inventory.mjs`;
+    updated `PLATFORM_TESTING.md` with ordered queue and Tier-2 deferral (PeopleForce, SF, …).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
