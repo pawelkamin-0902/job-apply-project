@@ -2314,6 +2314,7 @@ async function runAutofillInPage(profile, qaBank) {
         // code (e.g. Romania +40 on a Polish +48 profile) untouched. Confirmed live on
         // manningglobal.zohorecruit.eu.
         if (document.querySelector("crux-phone-component, [lt-prop-user-value='dial_code']")) return phone;
+        if (element && element.closest && element.closest('[data-component="pf-phone-number"]')) return phone;
         // intl-tel-input (`.iti`, e.g. Greenhouse's own "Phone" field) auto-derives its own
         // embedded country flag by parsing the FULL "+CC…" string itself via setPhoneValue's
         // iti.setNumber() call — stripping the code away here first would leave it with no way
@@ -2328,6 +2329,10 @@ async function runAutofillInPage(profile, qaBank) {
     },
     { re: /linkedin/i, get: (p) => p.contact.linkedin },
     { re: /website|portfolio/i, get: (p) => p.contact.website },
+    {
+      re: /^links?\b/i,
+      get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
+    },
     // Split out from a single combined "city|location|address" -> location pattern after a
     // real form asked for "Address" and "City" as two separate fields, both of which got
     // filled with the same value ("Warsaw") since both matched the one combined pattern.
@@ -2418,6 +2423,13 @@ async function runAutofillInPage(profile, qaBank) {
         const value = get(profile, element);
         return { isStructuredCategory: true, value: value || null };
       }
+    }
+    // PeopleForce pf-phone-number: visible tel id uses brackets (`career_application_form[phone_numbers][]`)
+    // so label[for=id] never links — resolveOwnLabel usually recovers "Phone numbers", but when it
+    // doesn't (Vue mount timing), still treat any input inside the widget as the profile phone.
+    if (element && element.closest && element.closest('[data-component="pf-phone-number"]')) {
+      const phone = (profile.contact && profile.contact.phone) || "";
+      if (phone) return { isStructuredCategory: true, value: phone };
     }
     return { isStructuredCategory: false, value: null };
   }
@@ -4288,6 +4300,108 @@ async function runAutofillInPage(profile, qaBank) {
     return true;
   }
 
+  // PeopleForce <pf-phone-number> — dial-code picker (globe button + dialog) beside a visible
+  // tel input, plus a hidden sync input. Confirmed live on adroiti.peopleforce.io: plain
+  // nativeSet on the visible input left the widget empty because Vue never received the country
+  // pick; setPhoneValue's iti path doesn't apply here.
+  async function fillPeopleForcePhone(element, value) {
+    const mount = element.closest && element.closest('[data-component="pf-phone-number"]');
+    if (!mount) return false;
+    const phone = String(value || "").trim();
+    if (!phone) return false;
+
+    const visibleInput =
+      mount.querySelector('input[type="tel"]:not([hidden])') ||
+      [...mount.querySelectorAll('input[type="tel"]')].find((el) => !el.hasAttribute("hidden"));
+    if (!visibleInput) return false;
+
+    const digitsMatch = phone.match(/^\+(\d+)/);
+    if (!digitsMatch) {
+      nativeSet(visibleInput, phone);
+      return Boolean(String(visibleInput.value || "").trim());
+    }
+
+    const digits = digitsMatch[1];
+    let dialCodeLen = 0;
+    let dialCode = "";
+    for (let len = Math.min(4, digits.length); len >= 1; len--) {
+      dialCode = `+${digits.slice(0, len)}`;
+      dialCodeLen = len;
+      break;
+    }
+    const countryName = (profile.contact && profile.contact.country) || "";
+
+    const countryBtn =
+      mount.querySelector('button[aria-haspopup="dialog"]') ||
+      mount.querySelector('button[id^="reka-popover-trigger"]') ||
+      mount.querySelector("button");
+    if (countryBtn) {
+      simulateClick(countryBtn);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const scopes = [
+        document.querySelector('[role="dialog"][data-state="open"]'),
+        document.querySelector('[role="dialog"]'),
+        document.querySelector('[data-reka-popover-content]'),
+        document.body,
+      ].filter(Boolean);
+      let picked = false;
+      const matchesDial = (t) => {
+        for (let len = Math.min(4, digits.length); len >= 1; len--) {
+          const code = `+${digits.slice(0, len)}`;
+          if (t.includes(code) || new RegExp(`${code.replace("+", "\\+")}\\b`).test(t)) {
+            dialCodeLen = len;
+            dialCode = code;
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const scope of scopes) {
+        const option = [...scope.querySelectorAll("button, li, [role='option'], div, span, a")].find((el) => {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (!t || t.length > 80) return false;
+          if (matchesDial(t)) return true;
+          return countryName.length > 2 && t.toLowerCase().includes(countryName.toLowerCase());
+        });
+        if (option) {
+          simulateClick(option);
+          picked = true;
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          break;
+        }
+        const search = scope.querySelector('input[type="search"], input[type="text"]');
+        if (!picked && search && countryName) {
+          nativeSet(search, countryName);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const afterSearch = [...scope.querySelectorAll("button, li, [role='option'], div, span, a")].find((el) => {
+            const t = (el.textContent || "").toLowerCase();
+            return t.includes(countryName.toLowerCase()) || t.includes(dialCode);
+          });
+          if (afterSearch) {
+            simulateClick(afterSearch);
+            picked = true;
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            break;
+          }
+        }
+      }
+      if (!picked) {
+        const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+        document.dispatchEvent(new KeyboardEvent("keydown", esc));
+        document.dispatchEvent(new KeyboardEvent("keyup", esc));
+      }
+    }
+
+    const local = phone.slice(1 + dialCodeLen).trim();
+    nativeSet(visibleInput, local || phone.replace(/^\+\d+/, "").trim());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const hidden = mount.querySelector('input[type="tel"][hidden], input#career_application_form_phone_numbers');
+    if (hidden && hidden !== visibleInput) {
+      nativeSet(hidden, phone);
+    }
+    return Boolean(String(visibleInput.value || "").trim());
+  }
+
   async function fillSingle(element, value) {
     const tag = element.tagName.toLowerCase();
     if (tag === "select") return setSelectValue(element, value);
@@ -4297,6 +4411,7 @@ async function runAutofillInPage(profile, qaBank) {
     }
     // Zoho Recruit Mobile/phone widget — must run before the generic setPhoneValue/
     // combobox paths so the dial-code picker and local-number input stay in sync.
+    if (await fillPeopleForcePhone(element, value)) return true;
     if (await fillZohoCruxPhone(element, value)) return true;
     // Not gated on element.type === "tel" — many ATS implementations of intl-tel-input
     // render the visible input as type="text", not "tel" (confirmed live: a real Workable
@@ -6733,6 +6848,10 @@ function captureSampleInPage(profile, qaBank) {
     { re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|mobile|telephone)\b/i, get: (p) => p.contact.phone },
     { re: /linkedin/i, get: (p) => p.contact.linkedin },
     { re: /website|portfolio/i, get: (p) => p.contact.website },
+    {
+      re: /^links?\b/i,
+      get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
+    },
     // Split out from a single combined "city|location|address" -> location pattern after a
     // real form asked for "Address" and "City" as two separate fields, both of which got
     // filled with the same value ("Warsaw") since both matched the one combined pattern.
@@ -8129,7 +8248,7 @@ el("autofillBtn").addEventListener("click", async () => {
     const shouldReportNeedsHuman = (u) => {
       const lab = (u.label || "").trim();
       if (u.type === "password") return false;
-      if (/^(choose password|retype password|middle name|notification|hear more about career opportunities)$/i.test(lab)) {
+      if (/^(choose password|retype password|middle name|notification|hear more about career opportunities|powered by peopleforce)$/i.test(lab)) {
         return false;
       }
       return true;

@@ -3042,6 +3042,23 @@ unverified outside a live browser).
       category; `isPlausibleQaComboboxAnswer`; post-pass SF State re-scan after Country; trim
       `needsHuman` report noise. **Not yet confirmed live** on career55.sapsf.eu.
 
+111. **PeopleForce (adroiti.peopleforce.io): phone not filled; footer locale and salary
+    currency chrome in "need your input".** `Author: Cursor`.
+    Reported live: 4 filled, 4 need your input — `(no label)`, Links, `(no label)`, Powered by
+    PeopleForce — phone number left empty.
+    - **Root cause 1**: `pf-phone-number` widget splits country (globe dialog) + visible tel
+      input; plain `nativeSet`/`setPhoneValue` never committed to Vue. Visible tel id uses
+      brackets (`career_application_form[phone_numbers][]`) so `label[for=id]` fails when the
+      pf-phone label resolver misses.
+    - **Root cause 2**: Hidden sync `input[type=tel][hidden]`, readonly currency display
+      (`EUR - Euro`), and `#career_locale` footer picker still surfaced as bogus fields.
+    - **Fixed**: `fillPeopleForcePhone()` (dial-code dialog + local number + hidden sync);
+      `matchStructuredField` fallback for any `pf-phone-number` input; stronger label lookup;
+      exclude pf-phone hidden/button/currency/search/locale from detection. Links maps to
+      linkedin/website when present. **Verified offline** on
+      `adroiti-peopleforce-io-20260811T064457Z.html`: 6 real fields, phone labeled, locale/currency
+      gone. **Not yet confirmed live**.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

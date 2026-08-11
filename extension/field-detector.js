@@ -248,14 +248,16 @@ function resolveOwnLabel(element, host) {
   }
   // PeopleForce Vue phone widget: real label is on a sibling <label for="...phone_numbers">
   // outside the pf-phone-number mount; the inner <input type="tel"> has no label[for=id] link.
-  // Confirmed live on fotc.peopleforce.io apply form.
+  // Confirmed live on fotc.peopleforce.io and adroiti.peopleforce.io apply forms.
   if (element.closest && element.closest('[data-component="pf-phone-number"]')) {
+    const formRoot =
+      element.closest("#new_career_application_form, form[action*='career'], form") || document;
     const pfPhoneLabel =
-      document.querySelector('label[for="career_application_form_phone_numbers"]') ||
-      (element.closest("#new_career_application_form, .new_career_application_form") &&
-        element
-          .closest("#new_career_application_form, .new_career_application_form")
-          .querySelector('label[for*="phone_numbers"]'));
+      (formRoot.querySelector &&
+        (formRoot.querySelector('label[for="career_application_form_phone_numbers"]') ||
+          formRoot.querySelector('label[for*="phone_numbers"]') ||
+          formRoot.querySelector('label.required[for*="phone"]'))) ||
+      document.querySelector('label[for="career_application_form_phone_numbers"]');
     if (pfPhoneLabel && cleanedText(pfPhoneLabel)) return cleanedText(pfPhoneLabel);
   }
   if (element.id) {
@@ -487,6 +489,17 @@ function isVisible(element) {
   // proximity and surfaced as a bogus unmatched field, while real screening questions never
   // reached gpt-auto because `isRequiredField` missed PeopleForce's `label.required` class.
   if (element.id === "career_locale" || (element.name === "locale" && element.closest("footer"))) return false;
+  // PeopleForce pf-phone-number: hidden Vue sync input and country-picker button are not
+  // separate questions — only the visible tel input is fillable.
+  if (element.closest && element.closest('[data-component="pf-phone-number"]')) {
+    if (element.hasAttribute("hidden") || element.type === "hidden") return false;
+    if (element.tagName === "BUTTON") return false;
+  }
+  // Salary/currency display chrome (readonly "EUR - Euro" beside desired_salary) — not a field.
+  if (element.readOnly && element.classList && element.classList.contains("tw-pointer-events-none")) {
+    return false;
+  }
+  if (element.type === "search") return false;
   // Zoho Recruit's own phone-number widget (<crux-phone-component>) renders its country/dial-
   // code picker as a separate `<lyte-dropdown lt-prop-user-value="dial_code">` sibling of the
   // real number input, inside a plain `<div role="combobox">` with no label of its own anywhere
@@ -727,7 +740,8 @@ function collectNativeElements() {
     // were both ending up as separate `singles` entries for what's really one physical widget,
     // so it got processed twice. Excluding shadow-hosting elements here means the shadow-
     // internal input (the genuine fillable target) is the only entry collected for it.
-    .filter((el) => !el.shadowRoot);
+    .filter((el) => el.id !== "career_locale")
+    .filter((el) => !(el.name === "locale" && el.closest && el.closest("footer")))
 }
 
 // SmartRecruiters-style custom elements (<spl-input label="...">) with an open shadow root
