@@ -2913,9 +2913,12 @@ async function runAutofillInPage(profile, qaBank) {
               return null;
             }
           })()) ||
-        (el.closest && el.closest("li") && el.closest("li").querySelector("label.checkboxLabel, label"));
+        (el.closest && el.closest("li") && el.closest("li").querySelector("label.checkboxLabel, label")) ||
+        (el.closest && el.closest("label"));
       if (label) {
         label.click();
+      } else if (el.closest && el.closest('[role="radio"]')) {
+        el.closest('[role="radio"]').click();
       } else {
         // Confirmed live: setting `.checked = true` and THEN calling the real `.click()`
         // afterward used to unconditionally flip it right back to unchecked - a genuine

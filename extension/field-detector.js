@@ -833,10 +833,25 @@ function collectSplRadioGroups(claimed) {
 // Groups radio/checkbox inputs sharing a `name` into one question with N options, using the
 // nearest <fieldset>+<legend> or role="group" ancestor for the group's own label — covers both
 // single-select radio groups and multi-select checkbox groups (Teamtailor).
+function isRadioCheckboxGroupInput(el) {
+  if (!el || !el.name) return false;
+  const t = (el.type || "").toLowerCase();
+  if (t !== "radio" && t !== "checkbox") return false;
+  const group = el.closest && el.closest('fieldset[role="radiogroup"], [role="radiogroup"]');
+  if (!group) return isVisible(el);
+  // Workable hides native radios (aria-hidden on the <input>) and renders div[role="radio"]
+  // buttons instead — confirmed live on jobs.workable.com: seven required Yes/No screening
+  // questions were invisible to detection (groups=0) because isVisible rejected every input.
+  const gs = getComputedStyle(group);
+  if (gs.display === "none" || gs.visibility === "hidden") return false;
+  const rect = group.getBoundingClientRect();
+  return rect.width > 1 && rect.height > 1;
+}
+
 function collectRadioCheckboxGroups() {
   const byName = new Map();
   for (const el of document.querySelectorAll('input[type="radio"], input[type="checkbox"]')) {
-    if (!isVisible(el) || !el.name) continue;
+    if (!isRadioCheckboxGroupInput(el)) continue;
     if (!byName.has(el.name)) byName.set(el.name, []);
     byName.get(el.name).push(el);
   }
@@ -850,6 +865,15 @@ function collectRadioCheckboxGroups() {
       if (node.tagName === "FIELDSET") {
         const legend = node.querySelector("legend");
         if (legend && cleanedText(legend)) groupLabel = cleanedText(legend);
+        if (!groupLabel) {
+          // Workable (and others) use <fieldset role="radiogroup" aria-labelledby="…_label">
+          // with no <legend> — only YES/NO option labels live inside the fieldset.
+          const labelledby = node.getAttribute("aria-labelledby");
+          if (labelledby) {
+            const el = document.getElementById(labelledby.split(/\s+/)[0]);
+            if (el && cleanedText(el)) groupLabel = cleanedText(el);
+          }
+        }
         if (!groupLabel) {
           // Some ATSs (Ashby) skip <legend> entirely and put the question in a plain <label>
           // inside the <fieldset> instead — findable only by elimination: it's the one label
@@ -948,6 +972,10 @@ function collectRadioCheckboxGroups() {
               .filter(Boolean)
               .join(" ");
           }
+        }
+        if (!optionLabel && el.id) {
+          const workableOpt = document.getElementById(`radio_label_${el.id}`);
+          if (workableOpt && cleanedText(workableOpt)) optionLabel = cleanedText(workableOpt);
         }
         if (!optionLabel) optionLabel = resolveOwnLabel(el) || "";
         return { element: el, optionLabel: normalizeLabel(optionLabel) };
