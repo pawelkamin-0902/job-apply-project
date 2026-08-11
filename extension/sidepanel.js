@@ -2095,9 +2095,10 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
 // `canGenerate: true`; the side panel calls /generate-answer for those (a network call the
 // page's own CSP might block, so it has to happen in the panel, not here), then runs
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
-async function runAutofillInPage(profile, qaBank) {
+async function runAutofillInPage(profile, qaBank, options = {}) {
+  const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
   if (typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
-  console.info(`[Auto Fill][run] start ${location.href}`);
+  console.info(`[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""}`);
 
   // Label resolution, visibility checks, honeypot/combobox detection, and group/native/shadow
   // field collection (cleanedText, normalizeLabel, resolveOwnLabel, labelForElement, isVisible,
@@ -3549,6 +3550,44 @@ async function runAutofillInPage(profile, qaBank) {
     );
   }
 
+
+  async function dismissOpenGreenhouseComboboxes(exceptEl) {
+    for (const combo of document.querySelectorAll('[role="combobox"]')) {
+      if (exceptEl && combo === exceptEl) continue;
+      if (!combo.closest(".select-shell") && !combo.closest(".phone-input__country")) continue;
+      if (
+        exceptEl &&
+        exceptEl.closest &&
+        combo.closest(".select-shell") &&
+        exceptEl.closest(".select-shell") === combo.closest(".select-shell")
+      ) {
+        continue;
+      }
+      const control = combo.closest('[class*="__control"]');
+      const expanded =
+        combo.getAttribute("aria-expanded") === "true" ||
+        (control && control.getAttribute("aria-expanded") === "true");
+      if (!expanded) continue;
+      const init = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      combo.dispatchEvent(new KeyboardEvent("keydown", init));
+      combo.dispatchEvent(new KeyboardEvent("keyup", init));
+      combo.blur();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  }
+
+  function isDialCodeTargetReasonable(desiredText) {
+    const want = String(desiredText || "").trim();
+    if (!want) return false;
+    if (/^\+\d{1,4}$/.test(want)) return true;
+    if (/^(yes|no)$/i.test(want)) return true;
+    const country = ((profile && profile.contact && profile.contact.country) || "").trim();
+    if (!country) return true;
+    const w = want.toLowerCase();
+    const c = country.toLowerCase();
+    return w === c || w.startsWith(c) || c.startsWith(w) || c.includes(w) || w.includes(c);
+  }
+
   async function fillReactSelectByClick(element, desiredText) {
     // Diagnostic only (temporary, not a fix): the previous fix (closing this widget down after
     // its own commit) did NOT stop the phone/country picker from being changed by a LATER field's
@@ -3563,12 +3602,19 @@ async function runAutofillInPage(profile, qaBank) {
       console.warn(
         `[Auto Fill][phone-watch] fillReactSelectByClick called on the COUNTRY PICKER itself with desiredText="${desiredText}" (element id="${element.id || ""}")`
       );
+      if (!isDialCodeTargetReasonable(desiredText)) {
+        console.warn(
+          `[Auto Fill][phone-watch] refusing non-country value "${desiredText}" on dial-code picker (id="${element.id || ""}")`
+        );
+        return false;
+      }
     }
     if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
       return true;
     }
     if (isReactSelectAlreadySet(element, desiredText)) return true;
     if (element.closest && element.closest(".select-shell") && fillGreenhouseViaReactFiber(element, desiredText)) {
+      await dismissOpenGreenhouseComboboxes(element);
       return true;
     }
     const sfPick = isSuccessFactorsPicklist(element);
@@ -3650,7 +3696,10 @@ async function runAutofillInPage(profile, qaBank) {
       if (!element.closest || !element.closest(".select-shell")) return false;
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
-      if (fiberOk) return true;
+      if (fiberOk) {
+        await dismissOpenGreenhouseComboboxes(element);
+        return true;
+      }
       const norm = (s) => (s || "").toLowerCase().trim();
       const target = norm(desiredText);
       if (!target) return false;
@@ -3718,6 +3767,7 @@ async function runAutofillInPage(profile, qaBank) {
           await new Promise((resolve) => setTimeout(resolve, 200));
           if (comboboxValueCommitted(element, desiredText)) {
             console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll})`);
+            await dismissOpenGreenhouseComboboxes(element);
             return true;
           }
         }
@@ -3725,6 +3775,7 @@ async function runAutofillInPage(profile, qaBank) {
       console.info(
         `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
+      await dismissOpenGreenhouseComboboxes(element);
       element.focus();
       await ensureOpen();
       const seen = new Set();
@@ -3743,6 +3794,7 @@ async function runAutofillInPage(profile, qaBank) {
             await new Promise((resolve) => setTimeout(resolve, 200));
             if (comboboxValueCommitted(element, desiredText)) {
               console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} ArrowDown step(s))`);
+              await dismissOpenGreenhouseComboboxes(element);
               return true;
             }
           }
@@ -4870,8 +4922,11 @@ async function runAutofillInPage(profile, qaBank) {
   // overwrite every slot with one learned Roblox/bullet answer. Touched nodes are skipped
   // below so QA/generation don't fight this pass.
   const workExpTouched = new Set();
-  await fillWorkdayExperienceFromProfile(filled, workExpTouched);
+  if (!onlyPhoneCountry) {
+    await fillWorkdayExperienceFromProfile(filled, workExpTouched);
+  }
 
+  if (!onlyPhoneCountry) {
   for (const group of groups) {
     // Privacy/terms consent: auto-agree when a Yes/Agree-style option exists.
     if (isConsentField(group.label)) {
@@ -4945,8 +5000,10 @@ async function runAutofillInPage(profile, qaBank) {
     }
     unmatched.push({ label: group.label, type: group.kind, canGenerate: false });
   }
+  }
 
   for (let { element, host } of singles) {
+    if (onlyPhoneCountry && !isPhoneDialCodePicker(element)) continue;
     if (!element.isConnected) {
       const key = singleKeys.get(element);
       const relocated = key && collectFormFields().singles.find((s) => nearestNamedControlKey(s.element) === key);
@@ -5436,6 +5493,7 @@ async function runAutofillInPage(profile, qaBank) {
   // Ungrouped single checkboxes (no shared `name`, so not caught above) — e.g. a lone
   // "Subscribe to updates" checkbox. Privacy/terms consents are auto-checked; others match
   // yes/no against the QA bank only.
+  if (!onlyPhoneCountry) {
   for (const { element } of loneCheckboxes) {
     // tabindex="-1" marks a checkbox as non-focusable — in practice this means it's a
     // decorative native-form/ARIA proxy sitting alongside a custom-rendered control (e.g.
@@ -5460,6 +5518,7 @@ async function runAutofillInPage(profile, qaBank) {
     } else {
       unmatched.push({ label, type: element.type, canGenerate: false });
     }
+  }
   }
 
   // Ashby saves each text answer with a 500ms-debounced GraphQL mutation (flushed on blur).
@@ -6153,6 +6212,32 @@ async function fillGeneratedAnswersInPage(answers) {
     );
   }
 
+
+  async function dismissOpenGreenhouseComboboxes(exceptEl) {
+    for (const combo of document.querySelectorAll('[role="combobox"]')) {
+      if (exceptEl && combo === exceptEl) continue;
+      if (!combo.closest(".select-shell") && !combo.closest(".phone-input__country")) continue;
+      if (
+        exceptEl &&
+        exceptEl.closest &&
+        combo.closest(".select-shell") &&
+        exceptEl.closest(".select-shell") === combo.closest(".select-shell")
+      ) {
+        continue;
+      }
+      const control = combo.closest('[class*="__control"]');
+      const expanded =
+        combo.getAttribute("aria-expanded") === "true" ||
+        (control && control.getAttribute("aria-expanded") === "true");
+      if (!expanded) continue;
+      const init = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      combo.dispatchEvent(new KeyboardEvent("keydown", init));
+      combo.dispatchEvent(new KeyboardEvent("keyup", init));
+      combo.blur();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  }
+
   async function fillReactSelectByClick(element, desiredText) {
     // Diagnostic only (temporary, not a fix): the previous fix (closing this widget down after
     // its own commit) did NOT stop the phone/country picker from being changed by a LATER field's
@@ -6173,6 +6258,7 @@ async function fillGeneratedAnswersInPage(answers) {
     }
     if (isReactSelectAlreadySet(element, desiredText)) return true;
     if (element.closest && element.closest(".select-shell") && fillGreenhouseViaReactFiber(element, desiredText)) {
+      await dismissOpenGreenhouseComboboxes(element);
       return true;
     }
     const sfPick = isSuccessFactorsPicklist(element);
@@ -6254,7 +6340,10 @@ async function fillGeneratedAnswersInPage(answers) {
       if (!element.closest || !element.closest(".select-shell")) return false;
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
-      if (fiberOk) return true;
+      if (fiberOk) {
+        await dismissOpenGreenhouseComboboxes(element);
+        return true;
+      }
       const norm = (s) => (s || "").toLowerCase().trim();
       const target = norm(desiredText);
       if (!target) return false;
@@ -6322,6 +6411,7 @@ async function fillGeneratedAnswersInPage(answers) {
           await new Promise((resolve) => setTimeout(resolve, 200));
           if (comboboxValueCommitted(element, desiredText)) {
             console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll})`);
+            await dismissOpenGreenhouseComboboxes(element);
             return true;
           }
         }
@@ -6329,6 +6419,7 @@ async function fillGeneratedAnswersInPage(answers) {
       console.info(
         `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
+      await dismissOpenGreenhouseComboboxes(element);
       element.focus();
       await ensureOpen();
       const seen = new Set();
@@ -6347,6 +6438,7 @@ async function fillGeneratedAnswersInPage(answers) {
             await new Promise((resolve) => setTimeout(resolve, 200));
             if (comboboxValueCommitted(element, desiredText)) {
               console.info(`${tag} tier 3 keyboard-nav -> COMMITTED (matched "${text}" after ${keyboardSteps} ArrowDown step(s))`);
+              await dismissOpenGreenhouseComboboxes(element);
               return true;
             }
           }
@@ -8537,7 +8629,7 @@ el("autofillBtn").addEventListener("click", async () => {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: true },
           func: runAutofillInPage,
-          args: [profile, qaBank],
+          args: [profile, qaBank, { onlyPhoneCountry: true }],
         });
         const recheckResults = await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: true },
