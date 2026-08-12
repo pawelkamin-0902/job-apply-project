@@ -2736,6 +2736,38 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
   }
 
+  // Like nativeSet, but MUST NOT blur — Greenhouse Location (City) / Places cancels its
+  // async search on blur (confirmed live Tatari: type→blur→24s empty wait→close, never saw
+  // "Warsaw" stay in the box). Keep focus until an option is clicked.
+  function setComboboxFilterText(element, value, { keepFocus = false } = {}) {
+    const proto = element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
+    const str = value == null ? "" : String(value);
+    try {
+      element.focus();
+    } catch {
+      /* ignore */
+    }
+    if (setter) setter.call(element, str);
+    else element.value = str;
+    if (typeof InputEvent === "function") {
+      element.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+      );
+    } else {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
+    if (!keepFocus) {
+      try {
+        element.blur();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   // Same reasoning as nativeSet above, just for `checked` instead of `value` - React (and
   // similar) tracks a controlled checkbox/radio's checked state through its own overridden
   // property setter too, not just its own value setter. A plain `element.checked = x` write
@@ -3723,6 +3755,188 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return w === c || w.startsWith(c) || c.startsWith(w) || c.includes(w) || w.includes(c);
   }
 
+  // Greenhouse Location (City) / Google Places react-select:
+  // click → type query (keep focus) → wait until search finishes → pick top result → close.
+  // nativeSet blurs after typing which cancels Places (confirmed live: open/close with no
+  // visible "Warsaw" typing and empty waits).
+  async function fillGreenhouseLocationPlaces(element, desiredText, controlEl) {
+    const query = String(desiredText || "").trim();
+    const log = (step, extra) => {
+      console.info(`[Auto Fill][location] ${step}`, {
+        query,
+        id: element.id || "?",
+        expanded: element.getAttribute("aria-expanded"),
+        display: reactSelectDisplayValue(element),
+        inputValue: element.value || "",
+        ...(extra || {}),
+      });
+    };
+    if (!query) {
+      log("abort - empty query");
+      return false;
+    }
+    if (comboboxValueCommitted(element, query)) {
+      log("already committed");
+      return true;
+    }
+
+    const isUnusable = (text) => {
+      const t = (text || "").trim();
+      if (!t) return true;
+      return /^(loading(\.{0,3}|…)?|searching(\.{0,3}|…)?|no options?( found)?|no matches?( found)?|type to search|start typing)/i.test(t);
+    };
+    const isVisibleLocal = (node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const collectOpts = (root) => {
+      if (!root) return [];
+      return [...root.querySelectorAll('.select__option, [class*="__option"], [role="option"], [id*="-option-"]')].filter(
+        (node) => isVisibleLocal(node) && !isDisabledComboboxOption(node) && !isUnusable(node.textContent)
+      );
+    };
+    const readOptions = () => {
+      const shell = element.closest && element.closest(".select-shell");
+      if (shell) {
+        const inShell = collectOpts(shell);
+        if (inShell.length) return inShell;
+      }
+      const controlsId = element.getAttribute && element.getAttribute("aria-controls");
+      if (controlsId) {
+        const listbox = document.getElementById(controlsId);
+        if (listbox) {
+          const scoped = collectOpts(listbox.closest('[class*="__menu"]') || listbox);
+          if (scoped.length) return scoped;
+        }
+      }
+      if (element.getAttribute("aria-expanded") === "true") {
+        const comboId = element.id || "";
+        if (comboId) {
+          try {
+            const idOpts = [...document.querySelectorAll(`[id^="react-select-${CSS.escape(comboId)}-option-"]`)].filter(
+              (node) => isVisibleLocal(node) && !isDisabledComboboxOption(node) && !isUnusable(node.textContent)
+            );
+            if (idOpts.length) return idOpts;
+          } catch {
+            /* ignore */
+          }
+        }
+        const portaled = [];
+        for (const menu of document.querySelectorAll(
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+        )) {
+          const rect = menu.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          portaled.push(...collectOpts(menu));
+        }
+        if (portaled.length) return portaled;
+      }
+      return [];
+    };
+    const menuLoading = () => {
+      const el = document.querySelector(
+        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]'
+      );
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    log("1 open");
+    const toggle = controlEl || comboboxOpenTarget(element) || element;
+    try {
+      element.focus();
+    } catch {
+      /* ignore */
+    }
+    simulateClick(toggle);
+    await sleep(220);
+    if (element.getAttribute("aria-expanded") !== "true") {
+      log("1b not expanded - trustedClick");
+      await trustedClick(toggle);
+      await sleep(280);
+    }
+    log("1c after open");
+
+    log(`2 type "${query}" (keep focus, no blur)`);
+    setComboboxFilterText(element, "", { keepFocus: true });
+    await sleep(80);
+    setComboboxFilterText(element, query, { keepFocus: true });
+    log("3 waiting for search results");
+
+    let options = [];
+    let stable = 0;
+    let lastSig = "";
+    for (let poll = 0; poll < 40; poll++) {
+      await sleep(200);
+      if (menuLoading()) {
+        if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
+        stable = 0;
+        lastSig = "";
+        options = [];
+        continue;
+      }
+      const found = readOptions();
+      const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
+      if (!found.length) {
+        if (poll % 5 === 0) log(`3 poll#${poll} 0 options`);
+        stable = 0;
+        lastSig = "";
+        options = [];
+        continue;
+      }
+      if (sig === lastSig) {
+        stable += 1;
+        options = found;
+        if (stable >= 2) {
+          log(`3 poll#${poll} stable ${found.length} option(s)`, {
+            sample: found.slice(0, 5).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()),
+          });
+          break;
+        }
+      } else {
+        lastSig = sig;
+        stable = 1;
+        options = found;
+        log(`3 poll#${poll} saw ${found.length} option(s)`, {
+          sample: found.slice(0, 3).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()),
+        });
+      }
+    }
+
+    if (!options.length) {
+      log("FAILED - no options after wait; closing");
+      const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      element.dispatchEvent(new KeyboardEvent("keydown", esc));
+      element.dispatchEvent(new KeyboardEvent("keyup", esc));
+      setComboboxFilterText(element, "", { keepFocus: false });
+      return false;
+    }
+
+    const q = query.toLowerCase();
+    const cityOnly = q.split(",")[0].trim();
+    const match =
+      options.find((o) => (o.textContent || "").trim().toLowerCase() === q) ||
+      options.find((o) => {
+        const t = (o.textContent || "").trim().toLowerCase();
+        return t.startsWith(cityOnly + ",") || t.startsWith(cityOnly + " ");
+      }) ||
+      options.find((o) => (o.textContent || "").toLowerCase().includes(cityOnly)) ||
+      options[0];
+    const pickText = (match.textContent || "").replace(/\s+/g, " ").trim();
+    log(`4 selecting "${pickText}"`);
+    await commitComboboxOption(match, controlEl || element);
+    await sleep(350);
+    const display = reactSelectDisplayValue(element);
+    const ok =
+      comboboxValueCommitted(element, query) ||
+      (Boolean(display) && cityOnly && display.toLowerCase().includes(cityOnly));
+    log(ok ? `5 SUCCESS display="${display}"` : `5 FAILED verify display="${display}"`);
+    if (ok) await dismissOpenGreenhouseComboboxes(element);
+    return Boolean(ok);
+  }
+
   async function fillReactSelectByClick(element, desiredText) {
     // Diagnostic only (temporary, not a fix): the previous fix (closing this widget down after
     // its own commit) did NOT stop the phone/country picker from being changed by a LATER field's
@@ -4070,6 +4284,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const isGreenhouseSelect = Boolean(element.closest && element.closest(".select-shell"));
     // Original working ~0.5s profile for combobox pacing.
     const hasAriaListbox = Boolean(element.getAttribute && element.getAttribute("aria-controls"));
+
+    // Greenhouse Location (City) Places: dedicated path — click, type (no blur), wait, top result.
+    if (isGreenhouseSelect && isLocationAutocomplete) {
+      return await fillGreenhouseLocationPlaces(element, desiredText, controlEl);
+    }
+
     const pace = sfPick
       ? { open: 200, preType: 100, typeHead: 400, poll: 120, stable: 3, maxPolls: 50, trustedRetry: 25 }
       : isLocationAutocomplete
@@ -5894,6 +6114,36 @@ async function fillGeneratedAnswersInPage(answers) {
     }
   }
 
+  // Keep focus for Places location search — blur cancels Greenhouse Location (City) results.
+  function setComboboxFilterText(element, value, { keepFocus = false } = {}) {
+    const proto = element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
+    const str = value == null ? "" : String(value);
+    try {
+      element.focus();
+    } catch {
+      /* ignore */
+    }
+    if (setter) setter.call(element, str);
+    else element.value = str;
+    if (typeof InputEvent === "function") {
+      element.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+      );
+    } else {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
+    if (!keepFocus) {
+      try {
+        element.blur();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   // Same reasoning as nativeSet above, just for `checked` - React (and similar) tracks a
   // controlled checkbox/radio's checked state through its own overridden property setter too, a
   // plain `element.checked = x` write goes through that same override and gets silently ignored
@@ -6584,6 +6834,188 @@ async function fillGeneratedAnswersInPage(answers) {
     }
   }
 
+  // Greenhouse Location (City) / Google Places react-select:
+  // click → type query (keep focus) → wait until search finishes → pick top result → close.
+  // nativeSet blurs after typing which cancels Places (confirmed live: open/close with no
+  // visible "Warsaw" typing and empty waits).
+  async function fillGreenhouseLocationPlaces(element, desiredText, controlEl) {
+    const query = String(desiredText || "").trim();
+    const log = (step, extra) => {
+      console.info(`[Auto Fill][location] ${step}`, {
+        query,
+        id: element.id || "?",
+        expanded: element.getAttribute("aria-expanded"),
+        display: reactSelectDisplayValue(element),
+        inputValue: element.value || "",
+        ...(extra || {}),
+      });
+    };
+    if (!query) {
+      log("abort - empty query");
+      return false;
+    }
+    if (comboboxValueCommitted(element, query)) {
+      log("already committed");
+      return true;
+    }
+
+    const isUnusable = (text) => {
+      const t = (text || "").trim();
+      if (!t) return true;
+      return /^(loading(\.{0,3}|…)?|searching(\.{0,3}|…)?|no options?( found)?|no matches?( found)?|type to search|start typing)/i.test(t);
+    };
+    const isVisibleLocal = (node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const collectOpts = (root) => {
+      if (!root) return [];
+      return [...root.querySelectorAll('.select__option, [class*="__option"], [role="option"], [id*="-option-"]')].filter(
+        (node) => isVisibleLocal(node) && !isDisabledComboboxOption(node) && !isUnusable(node.textContent)
+      );
+    };
+    const readOptions = () => {
+      const shell = element.closest && element.closest(".select-shell");
+      if (shell) {
+        const inShell = collectOpts(shell);
+        if (inShell.length) return inShell;
+      }
+      const controlsId = element.getAttribute && element.getAttribute("aria-controls");
+      if (controlsId) {
+        const listbox = document.getElementById(controlsId);
+        if (listbox) {
+          const scoped = collectOpts(listbox.closest('[class*="__menu"]') || listbox);
+          if (scoped.length) return scoped;
+        }
+      }
+      if (element.getAttribute("aria-expanded") === "true") {
+        const comboId = element.id || "";
+        if (comboId) {
+          try {
+            const idOpts = [...document.querySelectorAll(`[id^="react-select-${CSS.escape(comboId)}-option-"]`)].filter(
+              (node) => isVisibleLocal(node) && !isDisabledComboboxOption(node) && !isUnusable(node.textContent)
+            );
+            if (idOpts.length) return idOpts;
+          } catch {
+            /* ignore */
+          }
+        }
+        const portaled = [];
+        for (const menu of document.querySelectorAll(
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+        )) {
+          const rect = menu.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) continue;
+          portaled.push(...collectOpts(menu));
+        }
+        if (portaled.length) return portaled;
+      }
+      return [];
+    };
+    const menuLoading = () => {
+      const el = document.querySelector(
+        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]'
+      );
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    log("1 open");
+    const toggle = controlEl || comboboxOpenTarget(element) || element;
+    try {
+      element.focus();
+    } catch {
+      /* ignore */
+    }
+    simulateClick(toggle);
+    await sleep(220);
+    if (element.getAttribute("aria-expanded") !== "true") {
+      log("1b not expanded - trustedClick");
+      await trustedClick(toggle);
+      await sleep(280);
+    }
+    log("1c after open");
+
+    log(`2 type "${query}" (keep focus, no blur)`);
+    setComboboxFilterText(element, "", { keepFocus: true });
+    await sleep(80);
+    setComboboxFilterText(element, query, { keepFocus: true });
+    log("3 waiting for search results");
+
+    let options = [];
+    let stable = 0;
+    let lastSig = "";
+    for (let poll = 0; poll < 40; poll++) {
+      await sleep(200);
+      if (menuLoading()) {
+        if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
+        stable = 0;
+        lastSig = "";
+        options = [];
+        continue;
+      }
+      const found = readOptions();
+      const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
+      if (!found.length) {
+        if (poll % 5 === 0) log(`3 poll#${poll} 0 options`);
+        stable = 0;
+        lastSig = "";
+        options = [];
+        continue;
+      }
+      if (sig === lastSig) {
+        stable += 1;
+        options = found;
+        if (stable >= 2) {
+          log(`3 poll#${poll} stable ${found.length} option(s)`, {
+            sample: found.slice(0, 5).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()),
+          });
+          break;
+        }
+      } else {
+        lastSig = sig;
+        stable = 1;
+        options = found;
+        log(`3 poll#${poll} saw ${found.length} option(s)`, {
+          sample: found.slice(0, 3).map((o) => (o.textContent || "").replace(/\s+/g, " ").trim()),
+        });
+      }
+    }
+
+    if (!options.length) {
+      log("FAILED - no options after wait; closing");
+      const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      element.dispatchEvent(new KeyboardEvent("keydown", esc));
+      element.dispatchEvent(new KeyboardEvent("keyup", esc));
+      setComboboxFilterText(element, "", { keepFocus: false });
+      return false;
+    }
+
+    const q = query.toLowerCase();
+    const cityOnly = q.split(",")[0].trim();
+    const match =
+      options.find((o) => (o.textContent || "").trim().toLowerCase() === q) ||
+      options.find((o) => {
+        const t = (o.textContent || "").trim().toLowerCase();
+        return t.startsWith(cityOnly + ",") || t.startsWith(cityOnly + " ");
+      }) ||
+      options.find((o) => (o.textContent || "").toLowerCase().includes(cityOnly)) ||
+      options[0];
+    const pickText = (match.textContent || "").replace(/\s+/g, " ").trim();
+    log(`4 selecting "${pickText}"`);
+    await commitComboboxOption(match, controlEl || element);
+    await sleep(350);
+    const display = reactSelectDisplayValue(element);
+    const ok =
+      comboboxValueCommitted(element, query) ||
+      (Boolean(display) && cityOnly && display.toLowerCase().includes(cityOnly));
+    log(ok ? `5 SUCCESS display="${display}"` : `5 FAILED verify display="${display}"`);
+    if (ok) await dismissOpenGreenhouseComboboxes(element);
+    return Boolean(ok);
+  }
+
   async function fillReactSelectByClick(element, desiredText) {
     // Diagnostic only (temporary, not a fix): the previous fix (closing this widget down after
     // its own commit) did NOT stop the phone/country picker from being changed by a LATER field's
@@ -6910,6 +7342,12 @@ async function fillGeneratedAnswersInPage(answers) {
     const isGreenhouseSelect = Boolean(element.closest && element.closest(".select-shell"));
     // Original working ~0.5s profile (kept in sync with runAutofillInPage).
     const hasAriaListbox = Boolean(element.getAttribute && element.getAttribute("aria-controls"));
+
+    // Greenhouse Location (City) Places: dedicated path — click, type (no blur), wait, top result.
+    if (isGreenhouseSelect && isLocationAutocomplete) {
+      return await fillGreenhouseLocationPlaces(element, desiredText, controlEl);
+    }
+
     const pace = sfPick
       ? { open: 200, preType: 100, typeHead: 400, poll: 120, stable: 3, maxPolls: 50, trustedRetry: 25 }
       : isLocationAutocomplete
