@@ -4162,9 +4162,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       return false;
     };
-    // Greenhouse option lists (EEO, custom Yes/No, etc.): click the GPT/profile label directly.
-    // Typing into the filter often opens then reverts with no pick on the GPT second-pass path.
-    if (desiredText && isGreenhouseSelect) {
+    // Greenhouse option lists: click the GPT/profile label directly. Skip for location/Places
+    // typeaheads — those have no options until text is typed (click → type → wait → top result).
+    if (desiredText && isGreenhouseSelect && !isLocationAutocomplete) {
       if (await tryDirectOptionPick(pace.maxPolls)) return true;
       if (isGreenhouseStatic && !isGreenhouseSearchable) {
         element.blur();
@@ -4358,9 +4358,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         return /agree|accept|consent/i.test(t) && !/do not|don't|decline|not agree/i.test(t);
       });
     }
-    // SmartRecruiters (and similar) city autocomplete: after typing, the right UX is to pick
-    // the first suggestion when nothing matched more specifically — confirmed live on
-    // jobs.smartrecruiters.com oneclick-ui: options appeared but no click was committed.
+    // Location / Places typeahead: after typing + search finishes, pick the top suggestion
+    // (confirmed live Greenhouse candidate-location: "Warsaw" → "Warsaw, Mazowieckie, Poland").
+    if (!match && options.length && isLocationAutocomplete) {
+      match = options[0];
+      console.info(
+        `[Auto Fill][location] top result for "${desiredText}" -> "${(match.textContent || "").replace(/\s+/g, " ").trim()}"`
+      );
+    }
     if (
       !match &&
       options.length &&
@@ -4376,7 +4381,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return false;
     }
     await commitComboboxOption(match, controlEl || element);
-    return comboboxValueCommitted(element, desiredText);
+    const committed = comboboxValueCommitted(element, desiredText);
+    if (committed && isLocationAutocomplete) {
+      console.info(
+        `[Auto Fill][location] committed "${reactSelectDisplayValue(element)}" for query "${desiredText}"`
+      );
+    }
+    return committed;
   }
 
   // discoverComboboxOptions opens the widget the same way fillReactSelectByClick does, reads
@@ -6391,6 +6402,46 @@ async function fillGeneratedAnswersInPage(answers) {
     return cur.includes(target) || target.includes(cur);
   }
 
+  // Required by tryGreenhouseRemixSelect — missing here caused every GPT combobox fill to throw
+  // ReferenceError: comboboxFieldLabel is not defined (confirmed live Oportun Greenhouse).
+  function comboboxFieldLabel(element) {
+    return (
+      (element && element.getAttribute && element.getAttribute("data-af-label")) ||
+      (element && element.id) ||
+      ""
+    );
+  }
+
+  function comboboxHasDisplayValue(element) {
+    const display = reactSelectDisplayValue(element);
+    return Boolean(display && !isGenericSelectPlaceholder(display));
+  }
+
+  function comboboxTrace(element, event, detail) {
+    const label = comboboxFieldLabel(element) || "(no label)";
+    const id = (element && element.id) || "?";
+    const display = reactSelectDisplayValue(element);
+    console.info(`[Auto Fill][combobox] "${label}" id=${id} ${event}`, { display, ...(detail || {}) });
+  }
+
+  function watchComboboxDisplay(element, reason) {
+    const label = comboboxFieldLabel(element) || "(no label)";
+    let lastSeen = reactSelectDisplayValue(element);
+    let watchTicks = 0;
+    comboboxTrace(element, `watch start (${reason})`, { displayBefore: lastSeen });
+    const watchId = setInterval(() => {
+      watchTicks++;
+      const now = reactSelectDisplayValue(element);
+      if (now !== lastSeen) {
+        console.warn(
+          `[Auto Fill][combobox] "${label}" display changed during watch (${reason}): "${lastSeen}" -> "${now}" (~${watchTicks * 400}ms)`
+        );
+        lastSeen = now;
+      }
+      if (watchTicks >= 300) clearInterval(watchId);
+    }, 400);
+  }
+
   function comboboxOpenTarget(element) {
     if (isSuccessFactorsPicklist(element)) return successFactorsPicklistOpenTarget(element);
     const control = element.closest && element.closest('[class*="__control"]');
@@ -6942,8 +6993,9 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return false;
     };
-    // Greenhouse option lists: click the GPT/profile label directly (any option, not Yes/No-only).
-    if (desiredText && isGreenhouseSelect) {
+    // Greenhouse option lists: click the GPT/profile label directly. Skip for location/Places
+    // typeaheads — those have no options until text is typed (click → type → wait → top result).
+    if (desiredText && isGreenhouseSelect && !isLocationAutocomplete) {
       if (await tryDirectOptionPick(pace.maxPolls)) return true;
       if (isGreenhouseStatic && !isGreenhouseSearchable) {
         element.blur();
@@ -7108,6 +7160,13 @@ async function fillGeneratedAnswersInPage(answers) {
         return /agree|accept|consent/i.test(t) && !/do not|don't|decline|not agree/i.test(t);
       });
     }
+    // Location / Places typeahead: after typing + search finishes, pick the top suggestion.
+    if (!match && options.length && isLocationAutocomplete) {
+      match = options[0];
+      console.info(
+        `[Auto Fill][location] top result for "${desiredText}" -> "${(match.textContent || "").replace(/\s+/g, " ").trim()}"`
+      );
+    }
     // Kept in sync with runAutofillInPage — SmartRecruiters location autocomplete: click first
     // suggestion when nothing matched more specifically.
     if (
@@ -7125,7 +7184,13 @@ async function fillGeneratedAnswersInPage(answers) {
       return false;
     }
     await commitComboboxOption(match, controlEl || element);
-    return comboboxValueCommitted(element, desiredText);
+    const committed = comboboxValueCommitted(element, desiredText);
+    if (committed && isLocationAutocomplete) {
+      console.info(
+        `[Auto Fill][location] committed "${reactSelectDisplayValue(element)}" for query "${desiredText}"`
+      );
+    }
+    return committed;
   }
 
   let count = 0;
