@@ -3419,9 +3419,26 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return "";
     }
     const control = element && element.closest && element.closest('[class*="__control"]');
-    if (!control) return "";
-    const single = control.querySelector('[class*="__single-value"]');
-    return single && cleanedText(single) ? cleanedText(single) : "";
+    if (control) {
+      const single = control.querySelector('[class*="__single-value"]');
+      if (single && cleanedText(single)) return cleanedText(single);
+    }
+    // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
+    // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
+    // comboboxValueCommitted always saw "" and discovery retry tried every years-band for ~7s
+    // each while the menu stayed open (confirmed live).
+    if (element && element.getAttribute && element.getAttribute("role") === "combobox") {
+      const own = cleanedText(element);
+      if (
+        own &&
+        !isGenericSelectPlaceholder(own) &&
+        !/^(select|choose)(\s+\.{0,3})?$/i.test(own.trim())
+      ) {
+        const ariaLabel = ((element.getAttribute("aria-label") || "") + "").trim();
+        if (!ariaLabel || own.toLowerCase() !== ariaLabel.toLowerCase()) return own;
+      }
+    }
+    return "";
   }
 
   function comboboxValueCommitted(element, desiredText) {
@@ -5312,26 +5329,31 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   function pickExperienceYearsOption(totalYears, optionLabels) {
     if (totalYears == null || !optionLabels || !optionLabels.length) return null;
+    const parseNum = (s) => {
+      const n = parseFloat(String(s).replace(/,/g, ""));
+      return Number.isFinite(n) ? n : null;
+    };
     const parsed = optionLabels
       .map((label) => {
         const text = String(label || "").trim();
-        const plus = text.match(/(\d+)\s*\+/);
-        if (plus) return { label: text, min: parseInt(plus[1], 10), max: Infinity };
-        const range = text.match(/(\d+)\s*[-–]\s*(\d+)/);
-        if (range) return { label: text, min: parseInt(range[1], 10), max: parseInt(range[2], 10) };
-        const single = text.match(/^(\d+)$/);
+        const plus = text.match(/(\d+(?:\.\d+)?)\s*\+/);
+        if (plus) return { label: text, min: parseNum(plus[1]), max: Infinity };
+        // "0 - 3 Years", "8–10", and Rippling "8 to 10 Years" / "5 to 7.11 Years"
+        const range = text.match(/(\d+(?:\.\d+)?)\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?)/i);
+        if (range) return { label: text, min: parseNum(range[1]), max: parseNum(range[2]) };
+        const single = text.match(/^(\d+(?:\.\d+)?)$/);
         if (single) {
-          const n = parseInt(single[1], 10);
+          const n = parseNum(single[1]);
           return { label: text, min: n, max: n };
         }
-        const embedded = text.match(/\b(\d+)\b/);
+        const embedded = text.match(/\b(\d+(?:\.\d+)?)\b/);
         if (embedded) {
-          const n = parseInt(embedded[1], 10);
+          const n = parseNum(embedded[1]);
           return { label: text, min: n, max: n };
         }
         return null;
       })
-      .filter(Boolean);
+      .filter((p) => p && p.min != null && p.max != null);
     if (!parsed.length) return null;
     const allPlainDigits = parsed.every((p) => p.min === p.max && p.max <= 30);
     if (allPlainDigits) {
@@ -5381,19 +5403,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (cat === "years_experience") {
       const total = computeTotalYearsExperience();
       const bucket = pickExperienceYearsOption(total, optionLabels);
+      // Only the best matching band — confirmed live Rippling: dumping every option where
+      // parseInt(label) <= total tried 7 fill cycles (~7s each) and left the menu open.
       if (bucket === "5+" && optionLabels.includes("5")) {
         add("5");
         add("5+");
-      } else {
+      } else if (bucket) {
         add(bucket);
-      }
-      if (total != null) {
-        for (const o of optionLabels) {
-          const text = String(o).trim();
-          if (text === "5+" || text === "5") continue;
-          const n = parseInt(text, 10);
-          if (!Number.isNaN(n) && n <= total) add(text);
-        }
+      } else if (total != null && optionLabels.some((o) => /^(\d+)$/.test(String(o).trim()))) {
+        // Plain digit option lists only (e.g. 1/2/3/4/5+) — keep the old "highest ≤ total" pick.
+        const digitOpts = optionLabels
+          .map((o) => String(o).trim())
+          .filter((t) => /^\d+\+?$/.test(t))
+          .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+        const fit = [...digitOpts].reverse().find((t) => parseInt(t, 10) <= total);
+        add(fit || digitOpts[digitOpts.length - 1]);
       }
     }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
@@ -5880,10 +5904,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // + select-pick against real option labels instead.
     const salaryBandCombobox =
       detectCategory(label) === "salary_expectations" && looksLikeComboboxPick(element);
+    // Bare QA numbers like "10" aren't Rippling/"8 to 10 Years" option labels — confirmed live:
+    // first-pass QA fill with "10" then discovery retried every band for ~7s each. Defer to
+    // discovery so pickExperienceYearsOption can map onto the real option text.
+    const yearsExpCombobox =
+      detectCategory(label) === "years_experience" && looksLikeComboboxPick(element);
     if (
       qaAnswerUsable &&
       looksLikeComboboxPick(element) &&
       !salaryBandCombobox &&
+      !yearsExpCombobox &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
       if (comboboxHasDisplayValue(element)) {
@@ -5920,6 +5950,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       comboboxTrace(
         element,
         `salary band combobox - deferring QA "${qaMatch.answer}" to discovery/select-pick`,
+        {}
+      );
+    }
+    if (yearsExpCombobox && qaAnswerUsable) {
+      qaComboboxFailed = true;
+      comboboxTrace(
+        element,
+        `years-experience combobox - deferring QA "${qaMatch.answer}" to discovery bucket pick`,
         {}
       );
     }
@@ -6692,9 +6730,26 @@ async function fillGeneratedAnswersInPage(answers) {
       return "";
     }
     const control = element && element.closest && element.closest('[class*="__control"]');
-    if (!control) return "";
-    const single = control.querySelector('[class*="__single-value"]');
-    return single && cleanedText(single) ? cleanedText(single) : "";
+    if (control) {
+      const single = control.querySelector('[class*="__single-value"]');
+      if (single && cleanedText(single)) return cleanedText(single);
+    }
+    // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
+    // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
+    // comboboxValueCommitted always saw "" and discovery retry tried every years-band for ~7s
+    // each while the menu stayed open (confirmed live).
+    if (element && element.getAttribute && element.getAttribute("role") === "combobox") {
+      const own = cleanedText(element);
+      if (
+        own &&
+        !isGenericSelectPlaceholder(own) &&
+        !/^(select|choose)(\s+\.{0,3})?$/i.test(own.trim())
+      ) {
+        const ariaLabel = ((element.getAttribute("aria-label") || "") + "").trim();
+        if (!ariaLabel || own.toLowerCase() !== ariaLabel.toLowerCase()) return own;
+      }
+    }
+    return "";
   }
 
   function isReactSelectAlreadySet(element, desiredText) {
