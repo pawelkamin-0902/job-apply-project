@@ -2524,16 +2524,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // plain word-overlap can never bridge them. Matched by category via regex instead, same
   // idea as STRUCTURED_PATTERNS but for QA-bank lookups.
   const CATEGORY_PATTERNS = [
-    // Excludes "worked with" specifically - confirmed live, "Which cloud platforms have you
-    // worked with?" (a technology-experience checklist, nothing to do with prior employment)
-    // was matching this boilerplate "have you ever worked here before" category purely on
-    // unanchored substring overlap ("have you...worked" is present in both), which then let
-    // category-match short-circuit past word-overlap scoring entirely and pull in an unrelated
-    // saved "No" answer from a genuine worked-here-before question. Real boilerplate phrasing
-    // ("worked here", "worked at this company", "been employed by X") never says "worked with" -
-    // that phrasing specifically signals collaborating with a tool/technology/person, not being
-    // employed by an entity.
-    { key: "worked_here_before", re: /have you.{0,40}(worked(?!\s+with\b)|been employed)\b/i },
+    // Employment-at-this-company only — requires at/for/here/employed-by, NOT "worked with"
+    // (tech/tool) or bare "worked on". Confirmed live: "Have you worked with AI?" must not
+    // reuse a saved "worked at this company → No".
+    {
+      key: "worked_here_before",
+      re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
+    },
     { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
     // "Eligible to work" confirmed live as a real wording variant (Globalization Partners'
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
@@ -2546,7 +2543,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       key: "salary_expectations",
       re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
     },
-    { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
+    // Broadened beyond "related to anyone|relative…(at|with|of)" — confirmed live Oportun:
+    // "Do you have any relatives employed by Oportun or Digit?" never category-matched, so it
+    // stayed in "need your input" instead of reusing the default No.
+    {
+      key: "related_to_employee",
+      re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
+    },
+    // Screening: "Have you ever lived in the US/Canada for more than 6 months…"
+    { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
       re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
@@ -2609,6 +2614,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (typeof isGenericSelectPlaceholder === "function" && isGenericSelectPlaceholder(a)) return false;
     if (/^-*\s*none\s*-*$/i.test(a)) return false;
     if (a.length > 120) return false;
+    // Residence "Country" must never reuse a phone dial-code ("+48") learned from Greenhouse's
+    // phone-input Country picker — confirmed live Oportun question_* Country ArrowDown thrash.
+    if (/^country\b/i.test(String(label || "").trim()) && /^\+\d{1,4}$/.test(a)) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
@@ -3418,11 +3426,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
 
   function comboboxFieldLabel(element) {
-    return (
-      (element && element.getAttribute && element.getAttribute("data-af-label")) ||
-      (element && element.id) ||
-      ""
-    );
+    if (!element) return "";
+    const af = element.getAttribute && element.getAttribute("data-af-label");
+    if (af) return af;
+    const labelledBy = element.getAttribute && element.getAttribute("aria-labelledby");
+    if (labelledBy && typeof document !== "undefined") {
+      const id = String(labelledBy).split(/\s+/).find(Boolean);
+      const node = id && document.getElementById(id);
+      const text = node && (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+      if (text) return text;
+    }
+    return (element.id || "") + "";
   }
 
   function comboboxHasDisplayValue(element) {
@@ -3972,6 +3986,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return true;
     }
     comboboxTrace(element, `open/fill attempt -> "${desiredText}"`, { displayBefore: displayAtStart });
+    // Residence Country must never try a phone dial-code — opens the list and ArrowDowns
+    // through unrelated options (confirmed live Oportun question_* Country with "+48").
+    if (
+      /^\+\d{1,4}$/.test(String(desiredText || "").trim()) &&
+      !isPhoneDialCodePicker(element) &&
+      /^country\b/i.test(String(comboboxFieldLabel(element) || "").trim())
+    ) {
+      comboboxTrace(element, `skip dial-code on residence Country -> "${desiredText}"`, {
+        displayBefore: displayAtStart,
+      });
+      return false;
+    }
     if (element.closest && element.closest(".select-shell") && fillGreenhouseViaReactFiber(element, desiredText)) {
       const displayAfter = reactSelectDisplayValue(element);
       comboboxTrace(element, `fiber committed -> "${desiredText}"`, { displayBefore: displayAtStart, displayAfter });
@@ -5313,6 +5339,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (cat === "reasonable_accommodation") {
       add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
     }
+    if (
+      cat === "worked_here_before" ||
+      cat === "currently_employed_here" ||
+      cat === "related_to_employee" ||
+      cat === "lived_abroad"
+    ) {
+      add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
+    }
     if (cat === "b2b_contract") {
       add(optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || "Yes");
     }
@@ -5491,16 +5525,23 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let structuredValue = structured.value;
     // SmartRecruiters / Greenhouse location autocomplete — prefer a full place query
     // ("Warsaw, Poland") over bare city so Places-style menus can match a real option.
+    // Do NOT key off every Greenhouse `.select-shell` — confirmed live Oportun: bare required
+    // "Country" (question_*) is also a select-shell, so Poland was overwritten with the city/
+    // location string, then ArrowDown-thrashed a 249-country list looking for "Warsaw"/dial codes.
+    const isLocationAutocompleteField =
+      /location\s*\(city\)/i.test(ownLabel) ||
+      /^(location|city)\b|\bcity\s*$/i.test(ownLabel) ||
+      (element.id && /location/i.test(element.id)) ||
+      (element.closest &&
+        element.closest(
+          "spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test=\"location-autocomplete\"]"
+        ));
     if (
       structuredValue &&
       looksLikeComboboxPick(element) &&
-      (/location\s*\(city\)/i.test(ownLabel) ||
-        /location|city/i.test(ownLabel) ||
-        (element.id && /location/i.test(element.id)) ||
-        (element.closest &&
-          element.closest(
-            'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"], .select-shell'
-          )))
+      isLocationAutocompleteField &&
+      !/^country\b/i.test(ownLabel) &&
+      !/\bnationality\b/i.test(ownLabel)
     ) {
       const full = profileLocationQuery();
       if (full) structuredValue = full;
@@ -6661,11 +6702,17 @@ async function fillGeneratedAnswersInPage(answers) {
   // Required by tryGreenhouseRemixSelect — missing here caused every GPT combobox fill to throw
   // ReferenceError: comboboxFieldLabel is not defined (confirmed live Oportun Greenhouse).
   function comboboxFieldLabel(element) {
-    return (
-      (element && element.getAttribute && element.getAttribute("data-af-label")) ||
-      (element && element.id) ||
-      ""
-    );
+    if (!element) return "";
+    const af = element.getAttribute && element.getAttribute("data-af-label");
+    if (af) return af;
+    const labelledBy = element.getAttribute && element.getAttribute("aria-labelledby");
+    if (labelledBy && typeof document !== "undefined") {
+      const id = String(labelledBy).split(/\s+/).find(Boolean);
+      const node = id && document.getElementById(id);
+      const text = node && (node.textContent || "").replace(/\s*\*\s*$/, "").trim();
+      if (text) return text;
+    }
+    return (element.id || "") + "";
   }
 
   function comboboxHasDisplayValue(element) {
@@ -8158,16 +8205,12 @@ function captureSampleInPage(profile, qaBank) {
   // plain word-overlap can never bridge them. Matched by category via regex instead, same
   // idea as STRUCTURED_PATTERNS but for QA-bank lookups.
   const CATEGORY_PATTERNS = [
-    // Excludes "worked with" specifically - confirmed live, "Which cloud platforms have you
-    // worked with?" (a technology-experience checklist, nothing to do with prior employment)
-    // was matching this boilerplate "have you ever worked here before" category purely on
-    // unanchored substring overlap ("have you...worked" is present in both), which then let
-    // category-match short-circuit past word-overlap scoring entirely and pull in an unrelated
-    // saved "No" answer from a genuine worked-here-before question. Real boilerplate phrasing
-    // ("worked here", "worked at this company", "been employed by X") never says "worked with" -
-    // that phrasing specifically signals collaborating with a tool/technology/person, not being
-    // employed by an entity.
-    { key: "worked_here_before", re: /have you.{0,40}(worked(?!\s+with\b)|been employed)\b/i },
+    // Employment-at-this-company only — requires at/for/here/employed-by, NOT "worked with"
+    // (tech/tool). Kept in sync with runAutofillInPage's CATEGORY_PATTERNS.
+    {
+      key: "worked_here_before",
+      re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
+    },
     { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
     // "Eligible to work" confirmed live as a real wording variant (Globalization Partners'
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
@@ -8180,7 +8223,11 @@ function captureSampleInPage(profile, qaBank) {
       key: "salary_expectations",
       re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
     },
-    { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
+    {
+      key: "related_to_employee",
+      re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
+    },
+    { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
       re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
@@ -8241,6 +8288,7 @@ function captureSampleInPage(profile, qaBank) {
     if (typeof isGenericSelectPlaceholder === "function" && isGenericSelectPlaceholder(a)) return false;
     if (/^-*\s*none\s*-*$/i.test(a)) return false;
     if (a.length > 120) return false;
+    if (/^country\b/i.test(String(label || "").trim()) && /^\+\d{1,4}$/.test(a)) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
@@ -8576,7 +8624,7 @@ function wordOverlapScoreSimple(a, b) {
 const MATCH_CATEGORY_PATTERNS = [
   {
     key: "worked_here_before",
-    re: /have you.{0,40}(worked(?!\s+with\b)|been employed)\b/i,
+    re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
   },
   { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
   // Kept in sync with runAutofillInPage's own CATEGORY_PATTERNS - "eligible to work" confirmed
@@ -8589,7 +8637,11 @@ const MATCH_CATEGORY_PATTERNS = [
     key: "salary_expectations",
     re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
   },
-  { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
+  {
+    key: "related_to_employee",
+    re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
+  },
+  { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
   {
     key: "notice_period",
     re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,

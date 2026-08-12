@@ -117,6 +117,10 @@ def build_answer_system_prompt() -> str:
         "application-form response, not a cover letter.\n\n"
         "Answer exactly the question asked, using only the parts of the profile that are actually relevant "
         "to it - don't pull in unrelated profile details just because they're available.\n\n"
+        "Prior employment / relatives at THIS employer (any company name): answer No unless the profile "
+        "or Q&A clearly says otherwise. \"Have you worked with X\" about a technology/tool/skill "
+        "(e.g. AI, React): answer from resume/skills — never treat it like \"worked at this company\". "
+        "Lived-in-US/Canada-style residency screens: No when the profile only shows Poland/EU residence.\n\n"
         f"{_ANSWER_SCHEMA_CONTRACT}"
     )
 
@@ -178,6 +182,8 @@ def build_select_pick_system_prompt() -> str:
         "- You may ONLY choose a value that appears verbatim in OPTIONS. Never invent, paraphrase, "
         "or translate an option into something that is not in the list.\n"
         "- Prefer facts grounded in the profile/resume (nationality, years of experience, etc.).\n"
+        "- Prior employment / relatives at this employer → No unless profile/Q&A says otherwise. "
+        "Tech \"worked with …\" questions → pick from resume/skills, not company-employment No.\n"
         "- If none of the options genuinely fit, or you are not confident, set answerable to false "
         "and answer to null rather than guessing.\n\n"
         f"{_SELECT_PICK_SCHEMA_CONTRACT}"
@@ -237,6 +243,14 @@ def build_batch_answer_system_prompt() -> str:
         "paste a long canned notice-period essay.\n\n"
         "Do not reuse a single canned salary or notice answer across differently worded fields — answer "
         "each one for that field's unit and currency.\n\n"
+        "Prior employment / relatives at THIS employer (any company name filled into "
+        "\"worked at / employed by / relatives at …\"): answer No unless the saved Q&A or resume "
+        "clearly says the candidate did work there or has relatives there.\n\n"
+        "\"Have you worked with X\" about a technology, tool, skill, language, or methodology "
+        "(AI, React, AWS, Python, etc.): answer from the resume/skills — never reuse a "
+        "\"worked at this company → No\" answer for those.\n\n"
+        "Lived in the US / Canada / another country for N months: use contact/location history; "
+        "if the profile only shows Poland/EU residence and nothing else, answer No.\n\n"
         f"{_BATCH_ANSWER_SCHEMA_CONTRACT}"
     )
 

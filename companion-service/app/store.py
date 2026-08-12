@@ -155,6 +155,9 @@ def save_settings(settings: Settings) -> None:
 DEFAULT_QA_ENTRIES: list[dict[str, str]] = [
     {"question": "Have you ever worked at this company before?", "answer": "No"},
     {"question": "Are you currently working at this company?", "answer": "No"},
+    {"question": "Do you have any relatives employed by this company?", "answer": "No"},
+    {"question": "Have you ever lived in the US for more than 6 months?", "answer": "No"},
+    {"question": "Have you ever lived in Canada for more than 6 months?", "answer": "No"},
     {"question": "Are you eligible to work in this country?", "answer": "Yes"},
     {"question": "Will you now or in the future require sponsorship for this role?", "answer": "No"},
     {"question": "What is your nationality?", "answer": "Polish"},
