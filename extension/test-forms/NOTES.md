@@ -3072,6 +3072,51 @@ unverified outside a live browser).
     for that host as regression suite — not 185 hand-fixes. Added `tools/platform-inventory.mjs`;
     updated `PLATFORM_TESTING.md` with ordered queue and Tier-2 deferral (PeopleForce, SF, …).
 
+114. **ChatGPT batch-answer replies with stray trailing text after otherwise-valid JSON crashed
+    the whole batch.** `Author: Claude`. Reported live on 3m-consultancy Zoho: raw reply
+    `{"answers":[...]}_]().`  - `JSON.parse` rejects the WHOLE string the instant anything
+    follows the closing brace, discarding a fully-correct batch of answers over a few stray
+    trailing characters. A prior fix (`Author: Cursor`, plain `indexOf("{")`/`lastIndexOf("}")`
+    slice) handles this exact shape but breaks if any answer string itself contains a literal
+    `{`/`}` (an answer mentioning code, JSON, etc.) - `lastIndexOf` would grab the wrong brace
+    entirely. Replaced with `extractFirstJsonValue` (new helper near `stripJsonFences`): scans
+    from the first `{`/`[`, tracks real bracket depth while ignoring anything inside string
+    literals, and returns the first balanced span regardless of what either the JSON content or
+    the trailing garbage contains. Applied at both call sites that parse a raw ChatGPT reply
+    (resume-generation and batch-answer). Not yet confirmed live against the exact repro.
+
+115. **`chrome.debugger.attach()` in `background.js`'s `TRUSTED_CLICK` handler had NO timeout at
+    all - a regression of an earlier, already-fixed bug.** `Author: Claude`. Reported live on
+    3m-consultancy Zoho: single combobox fill attempts taking 60-90+ seconds each (multiple
+    minutes total across a handful of fields), with no error ever surfacing anywhere. Root
+    cause: `attach()` can hang INDEFINITELY rather than reject when it hits Chrome's own
+    concurrent-debugger-session limit (this exact failure mode was found and fixed earlier in
+    this project's history with a timeout race, but that fix is absent from the current
+    `background.js` - lost in a later rewrite, not something removed deliberately). Fixed by
+    racing `attach()` against a 4s timeout; on timeout, falls back to `sidepanel.js`'s own
+    non-trusted-click paths (fast, normal failure) instead of hanging silently for minutes with
+    nothing to show for it. Best-effort cleanup attempt if a late attach lands after the race
+    already gave up. Not yet confirmed live.
+
+116. **Optional combobox/picklist fields were still getting the full slow multi-tier retry
+    treatment via the structured-profile-value path, bypassing the "skip if optional" guard
+    entirely.** `Author: Claude`. Reported live on the SAME 3m-consultancy Zoho page (user:
+    "filling unrequired field, why?"): the optional "Current Job Title" picklist (real options:
+    `-None-`/`Fresher`/`Project-Lead`/`Project-Manager`) got the profile's own free-text headline
+    ("Senior Software Engineer at Endava") thrown at it via `fillSingle` - which for any
+    combobox-shaped element unconditionally calls the full `fillReactSelectByClick` retry chain
+    regardless of required status. That guessed value obviously matched none of the 4 real
+    options, so it burned through every fallback tier (including a live debugger-attach
+    `trustedClick` cycle, see #115) before settling on `-None-` anyway - for a field the
+    applicant didn't need filled at all. An existing guard (`Author: Cursor`,
+    `!isRequiredField(...) && !qaAnswerUsable`, its own code comment references this same
+    3m-consultancy Zoho repro) already protects the LATER discovery-and-stamp-for-AI branch, but
+    that guard runs after this earlier structured-value attempt, so it never got a chance to
+    prevent it. Fixed by skipping the structured-value attempt entirely when `looksLikeComboboxPick(element)
+    && !isRequiredField(element, host)` - a free-text profile value can only ever match a fixed
+    option list by coincidence, so there's no reason to force a guess into an optional field.
+    Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

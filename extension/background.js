@@ -86,8 +86,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   (async () => {
+    // chrome.debugger.attach() can HANG INDEFINITELY rather than reject when it hits Chrome's
+    // own concurrent-debugger-session limit (confirmed live: with several tabs' side panels
+    // each independently doing their own trustedClick work, attach() calls piled up and just
+    // never resolved at all - not an error, a genuine hang - reported as combobox fills taking
+    // multiple minutes each with no error surfaced anywhere). Racing it against a timeout turns
+    // that into a normal, fast failure (falls back to sidepanel.js's own non-trusted-click
+    // paths) instead of a silent multi-minute stall with nothing to show for it.
+    let attached = false;
     try {
-      await chrome.debugger.attach({ tabId }, "1.3");
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("chrome.debugger.attach timed out (likely hit Chrome's concurrent debugger-session limit)")), 4000)
+      );
+      await Promise.race([chrome.debugger.attach({ tabId }, "1.3"), timeout]);
+      attached = true;
       try {
         const clickArgs = { x: message.x, y: message.y, button: "left", clickCount: 1 };
         await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type: "mousePressed", ...clickArgs });
@@ -97,6 +109,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse({ ok: true });
     } catch (err) {
+      // If attach() eventually resolves AFTER the timeout already gave up, it can leave a real,
+      // now-orphaned debugger session attached with nothing to ever detach it - best-effort
+      // cleanup attempt, not guaranteed (the late attach may not have landed yet at all).
+      if (!attached) {
+        chrome.debugger.detach({ tabId }).catch(() => {});
+      }
       sendResponse({ ok: false, error: err.message });
     }
   })();

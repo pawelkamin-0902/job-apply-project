@@ -5218,6 +5218,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       structuredValue = (profile.contact && (profile.contact.location || profile.contact.city)) || structuredValue;
     }
+    // Skip the structured-value attempt entirely for OPTIONAL combobox/picklist-style widgets -
+    // a free-text profile value (a job title, a headline, etc.) can only ever match one of a
+    // FIXED set of real options by coincidence, and there's no reason to force a wrong guess
+    // into a field that doesn't even need to be filled. Confirmed live on 3m-consultancy Zoho:
+    // the optional "Current Job Title" picklist (real options: -None-/Fresher/Project-Lead/
+    // Project-Manager) got the profile's own free-text headline ("Senior Software Engineer at
+    // Endava") thrown at it, which obviously matched none of them, then burned through
+    // fillReactSelectByClick's full retry chain - including a live debugger-attach trustedClick
+    // cycle - before settling on "-None-" anyway. For an optional field, none of that needed to
+    // happen at all; the later "skip optional combobox" guard below only protects the
+    // discovery-and-stamp-for-AI path, not this earlier structured-value attempt.
+    if (structuredValue && looksLikeComboboxPick(element) && !isRequiredField(element, host)) {
+      structuredValue = null;
+    }
     if (structuredValue && (await fillSingle(element, structuredValue))) {
       filled.push({ label, value: String(structuredValue), source: "profile" });
       // Diagnostic only (temporary, not a fix): reported live that an intl-tel-input-wrapped
@@ -8365,7 +8379,17 @@ el("generateBtn").addEventListener("click", async () => {
 
       let parsed;
       try {
-        parsed = JSON.parse(sanitizeJsonControlChars(stripJsonFences(rawResponse)));
+        const cleaned = sanitizeJsonControlChars(stripJsonFences(rawResponse));
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch (firstErr) {
+          // ChatGPT sometimes appends stray trailing text after otherwise-valid JSON (confirmed
+          // live on a different call site: `{"answers":[...]}_]().` ) - extractFirstJsonValue
+          // recovers just the balanced JSON value instead of discarding an otherwise-good reply.
+          const extracted = extractFirstJsonValue(cleaned);
+          if (extracted === cleaned) throw firstErr;
+          parsed = JSON.parse(extracted);
+        }
       } catch (err) {
         throw new Error(`ChatGPT's reply wasn't valid JSON (${err.message}). Raw reply: ${rawResponse.slice(0, 300)}`);
       }
@@ -8702,12 +8726,19 @@ el("autofillBtn").addEventListener("click", async () => {
           try {
             parsed = JSON.parse(cleaned);
           } catch (firstErr) {
-            // ChatGPT sometimes appends junk after valid JSON (confirmed live Zoho batch:
-            // `...}]}_]().`). Recover the first complete {...} object.
-            const start = cleaned.indexOf("{");
-            const end = cleaned.lastIndexOf("}");
-            if (start < 0 || end <= start) throw firstErr;
-            parsed = JSON.parse(cleaned.slice(start, end + 1));
+            // ChatGPT sometimes appends stray trailing text after otherwise-valid JSON
+            // (confirmed live Zoho batch: `...}]}_]().` ). Recovering via a plain
+            // indexOf("{")/lastIndexOf("}") slice (an earlier version of this fix) works for
+            // that exact shape, but breaks if any answer string itself contains a literal "{"
+            // or "}" (e.g. an answer mentioning code or JSON) - lastIndexOf would grab a LATER
+            // brace than the real closing one, or an EARLIER one if the trailing garbage itself
+            // contains one, either way slicing wrong. extractFirstJsonValue tracks actual
+            // bracket depth (ignoring anything inside string literals) instead of guessing from
+            // raw character positions, so it recovers the real balanced value regardless of what
+            // either the JSON content or the trailing garbage happens to contain.
+            const extracted = extractFirstJsonValue(cleaned);
+            if (extracted === cleaned) throw firstErr;
+            parsed = JSON.parse(extracted);
           }
           answers = parsed.answers;
           if (!Array.isArray(answers)) throw new Error('Expected an "answers" array');
