@@ -2617,6 +2617,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // expectation...?" both got silently filled with a saved "What is your preferred messenger?
   // Please provide your ID/name" answer this way. Excluded explicitly since neither is filtered
   // by length alone (both 4 chars).
+
   const MATCH_QA_STOPWORDS = new Set(["what", "your"]);
   function matchQaBank(label, element) {
     const normLabel = normalizeForMatch(label);
@@ -5507,9 +5508,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         {}
       );
     }
-    if (qaAnswerUsable && !qaComboboxFailed && (await fillSingle(element, qaMatch.answer))) {
-      filled.push({ label, value: qaMatch.answer, source: "learned" });
-      continue;
+    if (qaAnswerUsable && !qaComboboxFailed) {
+      const coerced = coerceAnswerForField(label, element, qaMatch.answer);
+      if (coerced == null) {
+        console.info(
+          `[Auto Fill][coerce] "${label}" refused QA "${qaMatch.answer}" for ${isNumericInputField(element) ? "numeric" : "text"} field`
+        );
+      } else {
+        if (coerced !== String(qaMatch.answer).trim()) {
+          console.info(`[Auto Fill][coerce] "${label}" "${qaMatch.answer}" -> "${coerced}"`);
+        }
+        if (await fillSingle(element, coerced)) {
+          filled.push({ label, value: coerced, source: "learned" });
+          continue;
+        }
+      }
     }
     const tag = element.tagName.toLowerCase();
 
@@ -5905,6 +5918,10 @@ async function fillGeneratedAnswersInPage(answers) {
       element.classList.contains("iti__selected-country") ||
       (element.closest && element.closest(".iti__flag-container"))
     ) {
+      return false;
+    }
+    // Zoho lyte-autocomplete Zip/City/State — plain text fill, not combobox pick (see field-detector).
+    if (element.closest && element.closest("lyte-autocomplete")) {
       return false;
     }
     return (
@@ -7190,7 +7207,7 @@ async function fillGeneratedAnswersInPage(answers) {
     return String(element.value || "").trim() === want;
   }
 
-  for (const { idx, value, label } of answers) {
+  for (let { idx, value, label } of answers) {
     let el = document.querySelector(`[data-af-idx="${idx}"]`);
     if (!el && label) {
       el = findElementByLabel(label);
@@ -7200,6 +7217,15 @@ async function fillGeneratedAnswersInPage(answers) {
       }
     }
     if (!el) continue;
+    // Coerce GPT/QA text into what the control accepts (₹ salary number, notice days, etc.).
+    if (typeof coerceAnswerForField === "function") {
+      const coerced = coerceAnswerForField(label || el.getAttribute("data-af-label") || "", el, value);
+      if (coerced == null) continue;
+      if (String(coerced) !== String(value == null ? "" : value).trim()) {
+        console.info(`[Auto Fill][coerce] "${label}" "${value}" -> "${coerced}"`);
+      }
+      value = coerced;
+    }
     // Confirmed live: an exception thrown anywhere in ONE field's fill logic below (a
     // Greenhouse combobox interaction, in particular - see fillReactSelectByClick's own
     // React-Fiber/trusted-click/keyboard-nav fallbacks) used to propagate uncaught out of this

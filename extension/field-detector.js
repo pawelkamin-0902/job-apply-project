@@ -1207,3 +1207,160 @@ function collectFormFields() {
 
   return { groups: [...splGroups, ...rcGroups, ...buttonGroups], singles, loneCheckboxes, claimed };
 }
+
+// ---- Answer coercion for typed controls (shared by Auto Fill + GPT fill) ----
+// Zoho crux-number-component / type=number: only digits are valid. Confirmed live on
+// exavalu.zohorecruit.in — QA dumped "5,000-6,000 EUR/month" into ₹ salary fields and
+// "Immediately / ASAP - up to 1 week notice." into Notice Period (maxlength 9).
+function isNumericInputField(element) {
+  if (!element) return false;
+  const t = (element.type || "").toLowerCase();
+  if (t === "number") return true;
+  const mode = (element.getAttribute("inputmode") || element.inputMode || "").toLowerCase();
+  if (mode === "numeric" || mode === "decimal") return true;
+  if (element.closest && element.closest("crux-number-component")) return true;
+  return false;
+}
+
+function fieldCurrencyCode(element) {
+  if (!element || !element.closest) return null;
+  const host = element.closest("crux-number-component, [cx-prop-currency-code], [currency-symbol]");
+  if (!host) return null;
+  const code = (host.getAttribute("cx-prop-currency-code") || "").trim().toUpperCase();
+  if (code) return code;
+  const sym = (host.getAttribute("currency-symbol") || "").trim();
+  if (sym === "₹" || sym === "Rs" || sym === "Rs.") return "INR";
+  if (sym === "€") return "EUR";
+  if (sym === "£") return "GBP";
+  if (sym === "$" || sym === "US$") return "USD";
+  const lab = host.querySelector && host.querySelector(".lyteLabel, label.lyteLabel");
+  const labText = lab ? (lab.textContent || "").trim() : "";
+  if (labText === "₹") return "INR";
+  if (labText === "€") return "EUR";
+  if (labText === "£") return "GBP";
+  if (labText === "$") return "USD";
+  return null;
+}
+
+const FX_TO_USD = {
+  USD: 1,
+  EUR: 1.08,
+  GBP: 1.27,
+  INR: 0.012,
+  PLN: 0.25,
+  AUD: 0.65,
+  CAD: 0.74,
+  CHF: 1.12,
+  JPY: 0.0067,
+  SGD: 0.74,
+  AED: 0.27,
+};
+
+function convertCurrencyAmount(amount, fromCode, toCode) {
+  const from = String(fromCode || "").toUpperCase();
+  const to = String(toCode || "").toUpperCase();
+  if (!from || !to || from === to) return amount;
+  const fromRate = FX_TO_USD[from];
+  const toRate = FX_TO_USD[to];
+  if (!fromRate || !toRate) return amount;
+  return (amount * fromRate) / toRate;
+}
+
+function parseSalaryBlob(text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  const currencyMatch = s.match(/\b(USD|EUR|GBP|INR|PLN|AUD|CAD|CHF|JPY|SGD|AED)\b|(?:^|[\s])([€£$₹])/i);
+  let currency = null;
+  if (currencyMatch) {
+    currency = (currencyMatch[1] || "").toUpperCase() || null;
+    if (!currency) {
+      const sym = currencyMatch[2];
+      currency = sym === "€" ? "EUR" : sym === "£" ? "GBP" : sym === "₹" ? "INR" : sym === "$" ? "USD" : null;
+    }
+  }
+  const period = /\b(year|yearly|annual|annum|\/\s*yr|p\.?\s*a\.?)\b/i.test(s)
+    ? "year"
+    : /\b(month|monthly|\/\s*mo|p\.?\s*m\.?)\b/i.test(s)
+      ? "month"
+      : /\b(hour|hourly|\/\s*hr)\b/i.test(s)
+        ? "hour"
+        : null;
+  const nums = [...s.replace(/,/g, "").matchAll(/(\d+(?:\.\d+)?)/g)].map((m) => Number(m[1])).filter((n) => !Number.isNaN(n) && n > 0);
+  if (!nums.length) return null;
+  return { min: Math.min(...nums), max: Math.max(...nums), currency, period };
+}
+
+function parseNoticePeriodDays(text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  if (/^\d{1,4}$/.test(s)) return parseInt(s, 10);
+  const week = s.match(/(\d+)\s*weeks?\b/i);
+  if (week) return parseInt(week[1], 10) * 7;
+  const month = s.match(/(\d+)\s*months?\b/i);
+  if (month) return parseInt(month[1], 10) * 30;
+  const day = s.match(/(\d+)\s*days?\b/i);
+  if (day) return parseInt(day[1], 10);
+  if (/\b(a|one)\s+week\b/i.test(s) || /\bup to\s+(a|one)\s+week\b/i.test(s)) return 7;
+  if (/\b(a|one)\s+month\b/i.test(s)) return 30;
+  if (/^(immediate(ly)?|asap|available\s+now|no\s+notice)\b/i.test(s)) return 0;
+  if (/\bimmediately\b|\basap\b/i.test(s) && !/\d/.test(s) && !/\bweek\b|\bmonth\b|\bday\b/i.test(s)) return 0;
+  return null;
+}
+
+function fieldSalaryPeriod(label) {
+  const t = String(label || "");
+  if (/\b(year|yearly|annual|annum|p\.?\s*a\.?|ctc|lpa)\b/i.test(t)) return "year";
+  if (/\b(month|monthly|p\.?\s*m\.?)\b/i.test(t)) return "month";
+  if (/\b(hour|hourly)\b/i.test(t)) return "hour";
+  return null;
+}
+
+function coerceAnswerForField(label, element, answer) {
+  const raw = String(answer == null ? "" : answer).trim();
+  if (!raw) return raw;
+  const numeric = isNumericInputField(element);
+  const maxLen = element && element.maxLength > 0 ? element.maxLength : null;
+  const fit = (s) => {
+    const out = String(s);
+    if (maxLen && out.length > maxLen) return null;
+    return out;
+  };
+
+  if (/notice\s*period/i.test(label) || (/notice/i.test(label) && numeric)) {
+    const days = parseNoticePeriodDays(raw);
+    if (days == null) return numeric ? null : raw;
+    return fit(String(days));
+  }
+
+  if (/\b(salary|ctc|compensation|remuneration)\b/i.test(label)) {
+    const parsed = parseSalaryBlob(raw);
+    if (!parsed) {
+      if (numeric) {
+        const m = raw.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+        return m ? fit(m[0]) : null;
+      }
+      return raw;
+    }
+    let amount = parsed.max != null ? parsed.max : parsed.min;
+    const wantPeriod = fieldSalaryPeriod(label);
+    if (wantPeriod === "year" && parsed.period === "month") amount *= 12;
+    else if (wantPeriod === "month" && parsed.period === "year") amount = Math.round(amount / 12);
+    else if (wantPeriod === "year" && parsed.period === "hour") amount = Math.round(amount * 2080);
+    else if (wantPeriod === "month" && parsed.period === "hour") amount = Math.round(amount * 160);
+
+    const targetCur = fieldCurrencyCode(element);
+    if (targetCur && parsed.currency && targetCur !== parsed.currency) {
+      amount = convertCurrencyAmount(amount, parsed.currency, targetCur);
+    }
+    amount = Math.round(amount);
+    if (numeric) return fit(String(amount));
+    if (!targetCur && parsed.currency) return `${amount} ${parsed.currency}`;
+    return String(amount);
+  }
+
+  if (numeric) {
+    const m = raw.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+    return m ? fit(m[0]) : null;
+  }
+  return raw;
+}
