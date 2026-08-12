@@ -1,4 +1,4 @@
-// Loaded once into the target page (via chrome.scripting.executeScript's `files:` option)
+// Loaded into the target page (via chrome.scripting.executeScript's `files:` option)
 // BEFORE either runAutofillInPage or runLearnInPage runs there - every function here becomes a
 // global (window.foo) in that page, so both entry points can call the SAME collectFormFields()
 // instead of each carrying its own independently-drifting copy of label resolution, visibility
@@ -13,6 +13,10 @@
 // Still must be self-contained in the sense that it has no build step / imports - it's plain
 // script loaded via a <script> tag (or chrome.scripting.executeScript's files:), so it can only
 // rely on browser globals (document, window), same as any other injected script.
+//
+// Idempotent on re-inject: Auto Fill / Learn / Save Sample / phone re-pass call injectPageScripts
+// repeatedly on the same tab. Top-level `const`/`let` would throw SyntaxError on the second
+// inject ("Identifier has already been declared") — use `var` / function declarations only.
 
 // ---- shared label/text helpers ----
 // Decorative icons (an inline <svg><desc><p>SVGs not supported...</p></desc></svg> fallback,
@@ -1242,7 +1246,8 @@ function fieldCurrencyCode(element) {
   return null;
 }
 
-const FX_TO_USD = {
+// `var` (not `const`): this file is re-injected on the same page; redeclaring const throws.
+var FX_TO_USD = {
   USD: 1,
   EUR: 1.08,
   GBP: 1.27,
