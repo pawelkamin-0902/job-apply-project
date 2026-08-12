@@ -2596,6 +2596,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (/one or more results available|press (up or down|alt \+|enter to select)|resize the selection list/i.test(a)) {
       return false;
     }
+    // Zoho "-None-" / generic empty picklist defaults are not answers — confirmed live:
+    // optional Current Job Title QA-matched to "-None-" and still opened the dropdown twice.
+    if (typeof isGenericSelectPlaceholder === "function" && isGenericSelectPlaceholder(a)) return false;
+    if (/^-*\s*none\s*-*$/i.test(a)) return false;
     if (a.length > 120) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
@@ -7607,6 +7611,10 @@ function captureSampleInPage(profile, qaBank) {
     if (/one or more results available|press (up or down|alt \+|enter to select)|resize the selection list/i.test(a)) {
       return false;
     }
+    // Zoho "-None-" / generic empty picklist defaults are not answers — confirmed live:
+    // optional Current Job Title QA-matched to "-None-" and still opened the dropdown twice.
+    if (typeof isGenericSelectPlaceholder === "function" && isGenericSelectPlaceholder(a)) return false;
+    if (/^-*\s*none\s*-*$/i.test(a)) return false;
     if (a.length > 120) return false;
     const cat = detectCategory(label);
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {

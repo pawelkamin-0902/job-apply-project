@@ -200,10 +200,16 @@ function findHeadingInAncestors(host) {
 // "Country United States" - the currently selected value, genuinely useful) since this requires
 // the WHOLE trimmed string to be just the generic verb/phrase and nothing else.
 function isGenericSelectPlaceholder(text) {
+  const t = (text || "").trim();
   return (
-    /^-*\s*(please\s+)?(select|choose)(\s+(one|an\s+option))?\s*\.{0,3}-*$/i.test((text || "").trim()) ||
-    /^no\s+selection$/i.test((text || "").trim()) ||
-    /^select\s+option$/i.test((text || "").trim())
+    /^-*\s*(please\s+)?(select|choose)(\s+(one|an\s+option))?\s*\.{0,3}-*$/i.test(t) ||
+    /^no\s+selection$/i.test(t) ||
+    /^select\s+option$/i.test(t) ||
+    // Zoho Recruit picklists use "-None-" as the empty/default option (Salutation, Current Job
+    // Title). Treating it as a real answer made Auto Fill open the dropdown twice just to
+    // "select" the already-default empty value — confirmed live on 3m-consultancy.
+    /^-+\s*none\s*-+$/i.test(t) ||
+    /^none$/i.test(t)
   );
 }
 
