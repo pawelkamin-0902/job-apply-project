@@ -2544,12 +2544,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
-      re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+      re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
     },
     { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -2587,6 +2587,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return null;
   }
 
+  // Salary / notice / available-from answers are form-specific (currency, monthly vs yearly,
+  // days vs date). Never reuse the Q&A bank for them — GPT answers each field for that form,
+  // and Learn never persists those values.
+  function isFormSpecificCompField(label) {
+    const cat = detectCategory(label);
+    return cat === "salary_expectations" || cat === "notice_period";
+  }
+
   function isPlausibleQaComboboxAnswer(label, answer) {
     const a = String(answer || "").trim();
     if (!a) return false;
@@ -2620,6 +2628,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   const MATCH_QA_STOPWORDS = new Set(["what", "your"]);
   function matchQaBank(label, element) {
+    if (isFormSpecificCompField(label)) return null;
     const normLabel = normalizeForMatch(label);
     if (normLabel === "country" && element && element.closest && element.closest(".phone-input__country")) {
       return null;
@@ -2629,6 +2638,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let best = null;
     let bestScore = 0;
     for (const entry of qaBank) {
+      // Never reuse salary/notice bank entries even if another label somehow category-matched.
+      if (isFormSpecificCompField(entry.question)) continue;
       const normQuestion = normalizeForMatch(entry.question);
       // Exact match (after normalizing) always wins outright — this is what makes a
       // legitimately short label like "Country" matchable against a QA-bank entry also
@@ -5693,7 +5704,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       !structured.isStructuredCategory &&
       !looksLikeComboboxPick(element) &&
       fieldRequired;
-    const canGenerate = gptBatchEligible && !isConsequential(label);
+    // Salary/notice are consequential (don't invent via accidental QA reuse) but MUST be
+    // GPT-answered per form so currency/period/days match the field — exception to the block.
+    const canGenerate = gptBatchEligible && (!isConsequential(label) || isFormSpecificCompField(label));
     // Stamped for every unmatched field (including selects above) — the side panel tries an
     // AI-based QA-bank match first, then free-text generation / select option-picking.
     const idx = stampIdx(element, label);
@@ -5712,7 +5725,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       type: element.type || tag,
       canGenerate,
       gptBatchEligible,
-      skipQaMatch: isPhoneDialCodePicker(element),
+      skipQaMatch: isPhoneDialCodePicker(element) || isFormSpecificCompField(label),
     });
   }
 
@@ -7606,12 +7619,12 @@ function captureSampleInPage(profile, qaBank) {
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
-      re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+      re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
     },
     { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -7649,6 +7662,12 @@ function captureSampleInPage(profile, qaBank) {
     return null;
   }
 
+  // Same policy as runAutofillInPage — salary/notice never reuse Q&A.
+  function isFormSpecificCompField(label) {
+    const cat = detectCategory(label);
+    return cat === "salary_expectations" || cat === "notice_period";
+  }
+
   function isPlausibleQaComboboxAnswer(label, answer) {
     const a = String(answer || "").trim();
     if (!a) return false;
@@ -7681,6 +7700,7 @@ function captureSampleInPage(profile, qaBank) {
   // by length alone (both 4 chars).
   const MATCH_QA_STOPWORDS = new Set(["what", "your"]);
   function matchQaBank(label, element) {
+    if (isFormSpecificCompField(label)) return null;
     const normLabel = normalizeForMatch(label);
     if (normLabel === "country" && element && element.closest && element.closest(".phone-input__country")) {
       return null;
@@ -7690,6 +7710,8 @@ function captureSampleInPage(profile, qaBank) {
     let best = null;
     let bestScore = 0;
     for (const entry of qaBank) {
+      // Never reuse salary/notice bank entries even if another label somehow category-matched.
+      if (isFormSpecificCompField(entry.question)) continue;
       const normQuestion = normalizeForMatch(entry.question);
       // Exact match (after normalizing) always wins outright — this is what makes a
       // legitimately short label like "Country" matchable against a QA-bank entry also
@@ -7904,7 +7926,16 @@ function runLearnInPage() {
         )
         .map(({ optionLabel }) => optionLabel);
     }
-    if (chosen.length) learned.push({ question: group.label, answer: chosen.join(", ") });
+    if (chosen.length) {
+      if (
+        /\bsalary\b|\bcompensation\b|\bremuneration\b|\bnotice period\b|\bavailable from\b|when can you start/i.test(
+          group.label || ""
+        )
+      ) {
+        continue;
+      }
+      learned.push({ question: group.label, answer: chosen.join(", ") });
+    }
   }
 
   for (const { element, host } of singles) {
@@ -7939,6 +7970,16 @@ function runLearnInPage() {
     }
     const label = labelForElement(element, host);
     if (label && value && String(value).trim()) {
+      // Never Learn salary/notice/available-from — those must stay form-specific via GPT.
+      const cat = typeof detectCategory === "function" ? detectCategory(label) : null;
+      if (cat === "salary_expectations" || cat === "notice_period") continue;
+      if (
+        /\bsalary\b|\bcompensation\b|\bremuneration\b|\bnotice period\b|\bavailable from\b|when can you start/i.test(
+          label
+        )
+      ) {
+        continue;
+      }
       learned.push({ question: label, answer: String(value).trim() });
     }
   }
@@ -7987,12 +8028,12 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
   {
     key: "salary_expectations",
-    re: /\bsalary\b|\bcompensation\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+net\b/i,
+    re: /\bsalary\b|\bcompensation\b|\bremuneration\b|\b(?:pay|rate)\b.{0,20}\bexpect|\bmonthly\s*rate\b|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b/i,
   },
   { key: "related_to_employee", re: /related to anyone|relative.{0,20}(at|with|of)\b/i },
   {
     key: "notice_period",
-    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b/i,
+    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
   },
   { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
   { key: "nationality", re: /\bnationality\b/i },
@@ -8030,10 +8071,16 @@ function detectMatchCategory(text) {
   return null;
 }
 
+function isFormSpecificCompQuestion(text) {
+  const cat = detectMatchCategory(text);
+  return cat === "salary_expectations" || cat === "notice_period";
+}
+
 // Same matcher as runAutofillInPage's matchQaBank — duplicated here because that function lives
 // inside the injected page script closure. Used for gpt-auto's second-pass QA match before GPT.
 const MATCH_QA_BANK_STOPWORDS = new Set(["what", "your"]);
 function matchQaBankEntry(label, qaBank) {
+  if (isFormSpecificCompQuestion(label)) return null;
   const norm = (t) => (t || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
   const normLabel = norm(label);
   const labelWords = new Set(normLabel.split(" ").filter((w) => w.length > 2 && !MATCH_QA_BANK_STOPWORDS.has(w)));
@@ -8041,6 +8088,7 @@ function matchQaBankEntry(label, qaBank) {
   let best = null;
   let bestScore = 0;
   for (const entry of qaBank || []) {
+    if (isFormSpecificCompQuestion(entry.question)) continue;
     const normQuestion = norm(entry.question);
     if (normLabel && normLabel === normQuestion) return entry;
     if (labelCategory && detectMatchCategory(entry.question) === labelCategory) return entry;
@@ -8083,6 +8131,10 @@ const QA_MATCH_STOPWORDS = new Set(["what", "your"]);
 
 function isPlausibleQaMatch(newQuestion, matchedQuestion) {
   if (!matchedQuestion) return false;
+  // Salary/notice must never reuse bank answers — even if categories would otherwise match.
+  if (isFormSpecificCompQuestion(newQuestion) || isFormSpecificCompQuestion(matchedQuestion)) {
+    return false;
+  }
   const newCategory = detectMatchCategory(newQuestion);
   if (newCategory && newCategory === detectMatchCategory(matchedQuestion)) return true;
   const norm = (t) => (t || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
@@ -8133,8 +8185,9 @@ function isNearDuplicateQuestion(a, b) {
 }
 
 function mergeQaEntries(existing, newPairs) {
-  const merged = [...existing];
+  const merged = existing.filter((e) => !isFormSpecificCompQuestion(e.question));
   for (const pair of newPairs) {
+    if (isFormSpecificCompQuestion(pair.question)) continue;
     const matchIndex = merged.findIndex((e) => isNearDuplicateQuestion(e.question, pair.question));
     if (matchIndex === -1) {
       merged.push(pair);

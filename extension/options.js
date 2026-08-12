@@ -669,12 +669,8 @@ const DEFAULT_QA = [
   { question: "Are you currently working at this company?", answer: "No" },
   { question: "Are you eligible to work in this country?", answer: "Yes" },
   { question: "Will you now or in the future require sponsorship for this role?", answer: "No" },
-  {
-    question: "What are your salary expectations?",
-    answer:
-      "5,000-6,000 EUR/month (or equivalent, e.g. ~30-35 USD/hour or ~60,000-72,000 EUR/year) - open to discussing based on the full package. If no range was mentioned in the posting, 5,000 USD/month is my minimum.",
-  },
-  { question: "When can you start? What is your notice period?", answer: "Immediately / ASAP - up to 1 week notice." },
+  // Salary / notice intentionally omitted — form-specific (currency, monthly vs yearly, days
+  // vs date); Auto Fill asks GPT per field and Learn never saves those answers.
   { question: "What is your nationality?", answer: "Polish" },
   { question: "What is your race or ethnicity?", answer: "White" },
   { question: "What is your sexual orientation?", answer: "Straight / heterosexual" },

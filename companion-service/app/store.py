@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -148,20 +149,14 @@ def save_settings(settings: Settings) -> None:
 # the Q&A tab's "+ Add common defaults" button offers manually, just seeded automatically the
 # first time a profile's QA bank is read, so a fresh profile isn't a strictly worse starting
 # point than one where someone remembered to click through Settings first.
+# Intentionally omitted: salary / compensation and notice / available-from.
+# Those answers are form-specific (currency, monthly vs yearly, days vs date) and must be
+# generated per field — never seeded or reused from a canned Q&A bank entry.
 DEFAULT_QA_ENTRIES: list[dict[str, str]] = [
     {"question": "Have you ever worked at this company before?", "answer": "No"},
     {"question": "Are you currently working at this company?", "answer": "No"},
     {"question": "Are you eligible to work in this country?", "answer": "Yes"},
     {"question": "Will you now or in the future require sponsorship for this role?", "answer": "No"},
-    {
-        "question": "What are your salary expectations?",
-        "answer": (
-            "5,000-6,000 EUR/month (or equivalent, e.g. ~30-35 USD/hour or ~60,000-72,000 "
-            "EUR/year) - open to discussing based on the full package. If no range was "
-            "mentioned in the posting, 5,000 USD/month is my minimum."
-        ),
-    },
-    {"question": "When can you start? What is your notice period?", "answer": "Immediately / ASAP - up to 1 week notice."},
     {"question": "What is your nationality?", "answer": "Polish"},
     {"question": "What is your race or ethnicity?", "answer": "White"},
     {"question": "What is your sexual orientation?", "answer": "Straight / heterosexual"},
@@ -180,6 +175,23 @@ DEFAULT_QA_ENTRIES: list[dict[str, str]] = [
     {"question": "English Language Skill Level", "answer": "Fluent"},
     {"question": "Locations", "answer": "Europe"},
 ]
+
+# Drop salary/notice entries on read/write so old seeded answers cannot keep poisoning fills.
+_FORM_SPECIFIC_COMP_QA_RE = re.compile(
+    r"\bsalary\b|\bcompensation\b|\bremuneration\b|"
+    r"\b(?:pay|rate)\b.{0,20}\bexpect|\bdesired\s+(?:net|pay)\b|\bexpected\s+(?:pay|salary)\b|"
+    r"\bmonthly\s*rate\b|\bnotice\s*period\b|when can you start|"
+    r"earliest (?:start|availability)|\bavailable from\b|\bavailable to start\b",
+    re.I,
+)
+
+
+def is_form_specific_comp_question(question: str) -> bool:
+    return bool(_FORM_SPECIFIC_COMP_QA_RE.search(question or ""))
+
+
+def _strip_form_specific_comp_qa(entries: list[QAEntry]) -> list[QAEntry]:
+    return [e for e in entries if not is_form_specific_comp_question(e.question)]
 
 
 def _merge_missing_default_qa(existing: list[QAEntry]) -> list[QAEntry]:
@@ -215,7 +227,10 @@ def get_qa(person: str | None = None) -> list[QAEntry]:
         seeded = [QAEntry.model_validate(item) for item in DEFAULT_QA_ENTRIES]
         save_qa(seeded, person)
         return seeded
-    entries = [QAEntry.model_validate(item) for item in data]
+    entries = _strip_form_specific_comp_qa([QAEntry.model_validate(item) for item in data])
+    if len(entries) != len(data):
+        # Persist the purge so stale salary/notice seeds cannot keep matching forever.
+        save_qa(entries, person)
     merged = _merge_missing_default_qa(entries)
     if merged is not entries:
         save_qa(merged, person)
@@ -225,6 +240,7 @@ def get_qa(person: str | None = None) -> list[QAEntry]:
 def save_qa(entries: list[QAEntry], person: str | None = None) -> None:
     person = person or get_settings().person
     ensure_person_dirs(person)
+    entries = _strip_form_specific_comp_qa(list(entries))
     write_json(qa_file(person), [entry.model_dump() for entry in entries])
 
 

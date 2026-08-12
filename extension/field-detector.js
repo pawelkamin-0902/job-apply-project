@@ -1284,7 +1284,9 @@ function parseSalaryBlob(text) {
       ? "month"
       : /\b(hour|hourly|\/\s*hr)\b/i.test(s)
         ? "hour"
-        : null;
+        : /\b(day|daily|\/\s*day|day\s*rate)\b/i.test(s)
+          ? "day"
+          : null;
   const nums = [...s.replace(/,/g, "").matchAll(/(\d+(?:\.\d+)?)/g)].map((m) => Number(m[1])).filter((n) => !Number.isNaN(n) && n > 0);
   if (!nums.length) return null;
   return { min: Math.min(...nums), max: Math.max(...nums), currency, period };
@@ -1312,6 +1314,7 @@ function fieldSalaryPeriod(label) {
   if (/\b(year|yearly|annual|annum|p\.?\s*a\.?|ctc|lpa)\b/i.test(t)) return "year";
   if (/\b(month|monthly|p\.?\s*m\.?)\b/i.test(t)) return "month";
   if (/\b(hour|hourly)\b/i.test(t)) return "hour";
+  if (/\b(day|daily|day\s*rate)\b/i.test(t)) return "day";
   return null;
 }
 
@@ -1326,7 +1329,7 @@ function coerceAnswerForField(label, element, answer) {
     return out;
   };
 
-  if (/notice\s*period/i.test(label) || (/notice/i.test(label) && numeric)) {
+  if (/notice\s*period/i.test(label) || (/notice/i.test(label) && numeric) || (/\bavailable from\b|\bavailable to start\b/i.test(label) && numeric)) {
     const days = parseNoticePeriodDays(raw);
     if (days == null) return numeric ? null : raw;
     return fit(String(days));
@@ -1354,8 +1357,17 @@ function coerceAnswerForField(label, element, answer) {
     }
     amount = Math.round(amount);
     if (numeric) return fit(String(amount));
-    if (!targetCur && parsed.currency) return `${amount} ${parsed.currency}`;
-    return String(amount);
+    // Free-text salary fields (Personio "Expected salary", etc.) need an explicit period when
+    // the label doesn't name one — otherwise "6000 EUR" is ambiguous monthly vs yearly.
+    const cur = targetCur || parsed.currency || null;
+    const period = wantPeriod || parsed.period || null;
+    let out = String(amount);
+    if (cur) out += ` ${cur}`;
+    if (period === "month") out += " per month";
+    else if (period === "year") out += " per year";
+    else if (period === "hour") out += " per hour";
+    else if (period === "day") out += " per day";
+    return fit(out);
   }
 
   if (numeric) {
