@@ -8076,6 +8076,12 @@ function isFormSpecificCompQuestion(text) {
   return cat === "salary_expectations" || cat === "notice_period";
 }
 
+// Defense in depth: even if companion still serves stale salary/notice seeds, never hand
+// them to Auto Fill / GPT matching.
+function filterQaBankForAutofill(qaBank) {
+  return (qaBank || []).filter((e) => !isFormSpecificCompQuestion(e.question));
+}
+
 // Same matcher as runAutofillInPage's matchQaBank — duplicated here because that function lives
 // inside the injected page script closure. Used for gpt-auto's second-pass QA match before GPT.
 const MATCH_QA_BANK_STOPWORDS = new Set(["what", "your"]);
