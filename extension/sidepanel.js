@@ -4094,13 +4094,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       isLocationAutocomplete ||
       isCountryOrPhonePicker ||
       /current country|country of residence|current residence|\bresidence\b|\bstate\b|location\s*\(city\)/i.test(fieldHint);
+    const isYesNoDesired = /^(yes|no)$/i.test(String(desiredText || "").trim());
     if (isGreenhouseSelect) {
-      if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
-        return true;
-      }
-      if (!isGreenhouseSearchable) {
-        element.blur();
-        return false;
+      // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
+      // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
+      if (!isLocationAutocomplete) {
+        if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
+          return true;
+        }
+        // Confirmed live Tatari Greenhouse: GPT returned Yes for "live in Poland or Ukraine?" but
+        // remix tiers failed, then this early-return skipped the Yes/No direct-pick path below —
+        // so a generated answer never got committed. Always fall through for Yes/No.
+        if (!isGreenhouseSearchable && !isYesNoDesired) {
+          element.blur();
+          return false;
+        }
       }
     }
 
@@ -4159,9 +4167,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     };
     // Static Greenhouse remix react-select (EEO Yes/No, privacy "I agree", etc.): click the
     // option directly — typing into the filter opens then reverts with no pick on the GPT path.
-    if (/^(yes|no)$/i.test(String(desiredText).trim()) || isGreenhouseStatic) {
-      if (await tryDirectOptionPick(isGreenhouseStatic ? pace.maxPolls : 15)) return true;
-      if (isGreenhouseStatic) {
+    if (isYesNoDesired || isGreenhouseStatic) {
+      if (await tryDirectOptionPick(isGreenhouseStatic || isYesNoDesired ? pace.maxPolls : 15)) return true;
+      if (isGreenhouseStatic && !isYesNoDesired) {
         element.blur();
         return false;
       }
@@ -5020,6 +5028,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return best.label;
   }
 
+  // Yes/No live-in inference removed — those answers come from GPT/select-pick; the bug was
+  // failing to commit the generated Yes/No into Greenhouse react-select, not missing a value.
+
+  function profileLocationQuery() {
+    const c = (profile && profile.contact) || {};
+    const loc = String(c.location || "").trim();
+    if (loc) return loc;
+    return [c.city, c.country]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+
   function comboboxRetryCandidates(label, optionLabels, qaAnswer) {
     const candidates = [];
     const add = (v) => {
@@ -5234,17 +5255,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let structured = matchStructuredField(ownLabel, element);
     if (structured.value == null && label !== ownLabel) structured = matchStructuredField(label, element);
     let structuredValue = structured.value;
-    // SmartRecruiters location autocomplete is labeled "City" but wants a full place pick —
-    // prefer contact.location ("Warsaw, Poland") over bare city when available.
+    // SmartRecruiters / Greenhouse location autocomplete — prefer a full place query
+    // ("Warsaw, Poland") over bare city so Places-style menus can match a real option.
     if (
       structuredValue &&
-      /^city\b/i.test(ownLabel) &&
-      element.closest &&
-      element.closest(
-        'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
-      )
+      looksLikeComboboxPick(element) &&
+      (/location\s*\(city\)/i.test(ownLabel) ||
+        /location|city/i.test(ownLabel) ||
+        (element.id && /location/i.test(element.id)) ||
+        (element.closest &&
+          element.closest(
+            'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"], .select-shell'
+          )))
     ) {
-      structuredValue = (profile.contact && (profile.contact.location || profile.contact.city)) || structuredValue;
+      const full = profileLocationQuery();
+      if (full) structuredValue = full;
     }
     // Skip the structured-value attempt entirely for OPTIONAL combobox/picklist-style widgets -
     // a free-text profile value (a job title, a headline, etc.) can only ever match one of a
@@ -6855,13 +6880,21 @@ async function fillGeneratedAnswersInPage(answers) {
       isLocationAutocomplete ||
       isCountryOrPhonePicker ||
       /current country|country of residence|current residence|\bresidence\b|\bstate\b|location\s*\(city\)/i.test(fieldHint);
+    const isYesNoDesired = /^(yes|no)$/i.test(String(desiredText || "").trim());
     if (isGreenhouseSelect) {
-      if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
-        return true;
-      }
-      if (!isGreenhouseSearchable) {
-        element.blur();
-        return false;
+      // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
+      // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
+      if (!isLocationAutocomplete) {
+        if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
+          return true;
+        }
+        // Confirmed live Tatari Greenhouse: GPT returned Yes for "live in Poland or Ukraine?" but
+        // remix tiers failed, then this early-return skipped the Yes/No direct-pick path below —
+        // so a generated answer never got committed. Always fall through for Yes/No.
+        if (!isGreenhouseSearchable && !isYesNoDesired) {
+          element.blur();
+          return false;
+        }
       }
     }
 
@@ -6915,9 +6948,9 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return false;
     };
-    if (/^(yes|no)$/i.test(String(desiredText).trim()) || isGreenhouseStatic) {
-      if (await tryDirectOptionPick(isGreenhouseStatic ? pace.maxPolls : 15)) return true;
-      if (isGreenhouseStatic) {
+    if (isYesNoDesired || isGreenhouseStatic) {
+      if (await tryDirectOptionPick(isGreenhouseStatic || isYesNoDesired ? pace.maxPolls : 15)) return true;
+      if (isGreenhouseStatic && !isYesNoDesired) {
         element.blur();
         return false;
       }
@@ -7362,10 +7395,24 @@ async function fillGeneratedAnswersInPage(answers) {
       if (match) match.click();
       else ok = false;
     } else if (looksLikeComboboxPick(el)) {
+      console.info(`[Auto Fill][gpt-fill] idx=${idx} combobox "${label}" -> "${value}"`);
       ok = await fillReactSelectByClick(el, value);
-      if (/greenhouse\.io$/i.test(location.hostname || "") || (el.closest && el.closest(".select-shell"))) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        ok = comboboxValueCommitted(el, value);
+      if (
+        ok &&
+        (/greenhouse\.io$/i.test(location.hostname || "") || (el.closest && el.closest(".select-shell")))
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (!comboboxValueCommitted(el, value)) {
+          // Confirmed live Tatari: fillReactSelectByClick returned true for Yes/No then a 250ms
+          // re-check wiped ok=false (display lag), so GPT's answer looked generated but never
+          // counted as filled. Retry once before giving up.
+          console.warn(
+            `[Auto Fill][gpt-fill] commit verify missed for "${label}" value="${value}" (display="${reactSelectDisplayValue(el)}"), retrying`
+          );
+          ok = await fillReactSelectByClick(el, value);
+          await new Promise((resolve) => setTimeout(resolve, 350));
+          ok = comboboxValueCommitted(el, value) || ok;
+        }
       }
     } else {
       nativeSet(el, value);
@@ -7381,7 +7428,11 @@ async function fillGeneratedAnswersInPage(answers) {
       // shows the actual thrown error in DevTools instead of just "opens and closes" with no
       // trace of why - the Greenhouse combobox fallback chain is elaborate enough that guessing
       // which step failed from the symptom alone hasn't been reliable.
-      console.error(`[Auto Fill] failed to fill field ${idx} ("${label}"):`, err);
+      // Stringify message/stack: Save Sample's console capture turns Error objects into "{}".
+      console.error(
+        `[Auto Fill] failed to fill field ${idx} ("${label}"): ${err && err.message ? err.message : String(err)}`,
+        err && err.stack ? err.stack : err
+      );
     }
   }
   document.querySelectorAll("[data-af-idx]").forEach((el) => el.removeAttribute("data-af-idx"));
@@ -8660,7 +8711,8 @@ el("autofillBtn").addEventListener("click", async () => {
   resultEl.textContent = "Detecting fields...";
   el("autofillBtn").disabled = true;
   try {
-    const [profile, qaBank, settings] = await Promise.all([apiFetch("/profile"), apiFetch("/qa"), apiFetch("/settings")]);
+    const [profile, qaBankRaw, settings] = await Promise.all([apiFetch("/profile"), apiFetch("/qa"), apiFetch("/settings")]);
+    const qaBank = filterQaBankForAutofill(qaBankRaw);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     // field-detector.js defines the shared DETECT logic (label resolution, visibility,
     // group/combobox collection) as page globals - runAutofillInPage and runLearnInPage both
@@ -9143,7 +9195,8 @@ el("saveSampleBtn").addEventListener("click", async () => {
   resultEl.textContent = "Capturing...";
   el("saveSampleBtn").disabled = true;
   try {
-    const [profile, qaBank] = await Promise.all([apiFetch("/profile"), apiFetch("/qa")]);
+    const [profile, qaBankRaw] = await Promise.all([apiFetch("/profile"), apiFetch("/qa")]);
+    const qaBank = filterQaBankForAutofill(qaBankRaw);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     // Same shared field-detector.js Auto Fill/Learn use (see their handlers) - a captured
     // sample previously ran its own separately-drifting copy of detection, so it could report
