@@ -2462,6 +2462,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { re: /^first\s*name|^given\s*name|\bname\s*-\s*first\b|^first$/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^preferred(\s+first)?\s*name/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^last\s*name|^family\s*name|^surname\b|\bname\s*-\s*last\b|^last$/i, get: (p) => (p.contact.name || "").split(" ").slice(1).join(" ") },
+    // Greenhouse Oportun-style: "Please add your Legal Name (first and middle)…" / Legal Last Name /
+    // preferred name — none of the anchored first/last patterns match these long labels.
+    {
+      re: /\blegal\s+name\b|\blegal\s+first\b|\bpreferred\s+name\b|\bname in use\b/i,
+      get: (p) => {
+        const parts = String(p.contact.name || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return null;
+        // Legal/preferred "first and middle" → everything except the last token.
+        return parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0];
+      },
+    },
+    {
+      re: /\blegal\s+last\s*name\b|\bpreferred\s+last\s*name\b|\bpaternal\s+surname\b/i,
+      get: (p) => {
+        const parts = String(p.contact.name || "").trim().split(/\s+/).filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : null;
+      },
+    },
     // Excludes referral/nomination-context questions - confirmed live, a real Greenhouse form's
     // "Enter the full name of our employee who suggested this job opportunity" (explicitly
     // described as "Only if the job opportunity was suggested to you by one of our employees")
@@ -5546,6 +5564,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const full = profileLocationQuery();
       if (full) structuredValue = full;
     }
+    // Bare residence Country must stay the profile country — never city/location/dial-code.
+    if (
+      /^country\b/i.test(ownLabel) &&
+      !isPhoneDialCodePicker(element) &&
+      profile &&
+      profile.contact &&
+      profile.contact.country
+    ) {
+      structuredValue = profile.contact.country;
+    }
     // Skip the structured-value attempt entirely for OPTIONAL combobox/picklist-style widgets -
     // a free-text profile value (a job title, a headline, etc.) can only ever match one of a
     // FIXED set of real options by coincidence, and there's no reason to force a wrong guess
@@ -5766,6 +5794,28 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       if (consentDone) continue;
     }
+    // Company-employment / relatives / lived-abroad screens: default No before QA/discovery.
+    // Confirmed live Oportun: relatives + lived-in-US/Canada stayed unmatched when category
+    // QA / discovery retries didn't fire — while "worked at … before?" already filled No.
+    if (looksLikeComboboxPick(element) && !isPhoneDialCodePicker(element)) {
+      const screenCat = detectCategory(label);
+      if (
+        screenCat === "worked_here_before" ||
+        screenCat === "currently_employed_here" ||
+        screenCat === "related_to_employee" ||
+        screenCat === "lived_abroad"
+      ) {
+        if (comboboxHasDisplayValue(element)) {
+          const cur = reactSelectDisplayValue(element);
+          filled.push({ label, value: cur, source: "already-set" });
+          continue;
+        }
+        if (await fillReactSelectByClick(element, "No")) {
+          filled.push({ label, value: "No", source: "learned" });
+          continue;
+        }
+      }
+    }
     const qaMatch = matchQaBank(label, element);
     let qaComboboxFailed = false;
     const qaAnswerUsable = qaMatch && isPlausibleQaComboboxAnswer(label, qaMatch.answer);
@@ -5889,7 +5939,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (
       looksLikeComboboxPick(element) &&
       !isPhoneDialCodePicker(element) &&
-      (!qaMatch || qaComboboxFailed) &&
+      (!qaMatch || !qaAnswerUsable || qaComboboxFailed) &&
       (isRequiredField(element, host) || qaComboboxFailed)
     ) {
       // Optional Zoho/Lyte picklists (Salutation, Current Job Title) with no usable QA answer:
@@ -8160,6 +8210,24 @@ function captureSampleInPage(profile, qaBank) {
     { re: /^first\s*name|^given\s*name|\bname\s*-\s*first\b|^first$/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^preferred(\s+first)?\s*name/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^last\s*name|^family\s*name|^surname\b|\bname\s*-\s*last\b|^last$/i, get: (p) => (p.contact.name || "").split(" ").slice(1).join(" ") },
+    // Greenhouse Oportun-style: "Please add your Legal Name (first and middle)…" / Legal Last Name /
+    // preferred name — none of the anchored first/last patterns match these long labels.
+    {
+      re: /\blegal\s+name\b|\blegal\s+first\b|\bpreferred\s+name\b|\bname in use\b/i,
+      get: (p) => {
+        const parts = String(p.contact.name || "").trim().split(/\s+/).filter(Boolean);
+        if (!parts.length) return null;
+        // Legal/preferred "first and middle" → everything except the last token.
+        return parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0];
+      },
+    },
+    {
+      re: /\blegal\s+last\s*name\b|\bpreferred\s+last\s*name\b|\bpaternal\s+surname\b/i,
+      get: (p) => {
+        const parts = String(p.contact.name || "").trim().split(/\s+/).filter(Boolean);
+        return parts.length ? parts[parts.length - 1] : null;
+      },
+    },
     // Excludes referral/nomination-context questions - confirmed live, a real Greenhouse form's
     // "Enter the full name of our employee who suggested this job opportunity" (explicitly
     // described as "Only if the job opportunity was suggested to you by one of our employees")
