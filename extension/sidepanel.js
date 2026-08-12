@@ -4096,7 +4096,6 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       isLocationAutocomplete ||
       isCountryOrPhonePicker ||
       /current country|country of residence|current residence|\bresidence\b|\bstate\b|location\s*\(city\)/i.test(fieldHint);
-    const isYesNoDesired = /^(yes|no)$/i.test(String(desiredText || "").trim());
     if (isGreenhouseSelect) {
       // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
       // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
@@ -4104,13 +4103,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
           return true;
         }
-        // Confirmed live Tatari Greenhouse: GPT returned Yes for "live in Poland or Ukraine?" but
-        // remix tiers failed, then this early-return skipped the Yes/No direct-pick path below —
-        // so a generated answer never got committed. Always fall through for Yes/No.
-        if (!isGreenhouseSearchable && !isYesNoDesired) {
-          element.blur();
-          return false;
-        }
+        // Do NOT return early here. GPT select-pick already chose an option label — fall through
+        // and click that label in the open menu (confirmed live Tatari: early-return after remix
+        // failure left generated answers uncommitted).
       }
     }
 
@@ -4167,11 +4162,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       return false;
     };
-    // Static Greenhouse remix react-select (EEO Yes/No, privacy "I agree", etc.): click the
-    // option directly — typing into the filter opens then reverts with no pick on the GPT path.
-    if (isYesNoDesired || isGreenhouseStatic) {
-      if (await tryDirectOptionPick(isGreenhouseStatic || isYesNoDesired ? pace.maxPolls : 15)) return true;
-      if (isGreenhouseStatic && !isYesNoDesired) {
+    // Greenhouse option lists (EEO, custom Yes/No, etc.): click the GPT/profile label directly.
+    // Typing into the filter often opens then reverts with no pick on the GPT second-pass path.
+    if (desiredText && isGreenhouseSelect) {
+      if (await tryDirectOptionPick(pace.maxPolls)) return true;
+      if (isGreenhouseStatic && !isGreenhouseSearchable) {
         element.blur();
         return false;
       }
@@ -6884,7 +6879,6 @@ async function fillGeneratedAnswersInPage(answers) {
       isLocationAutocomplete ||
       isCountryOrPhonePicker ||
       /current country|country of residence|current residence|\bresidence\b|\bstate\b|location\s*\(city\)/i.test(fieldHint);
-    const isYesNoDesired = /^(yes|no)$/i.test(String(desiredText || "").trim());
     if (isGreenhouseSelect) {
       // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
       // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
@@ -6892,13 +6886,9 @@ async function fillGeneratedAnswersInPage(answers) {
         if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
           return true;
         }
-        // Confirmed live Tatari Greenhouse: GPT returned Yes for "live in Poland or Ukraine?" but
-        // remix tiers failed, then this early-return skipped the Yes/No direct-pick path below —
-        // so a generated answer never got committed. Always fall through for Yes/No.
-        if (!isGreenhouseSearchable && !isYesNoDesired) {
-          element.blur();
-          return false;
-        }
+        // Do NOT return early here. GPT select-pick already chose an option label — fall through
+        // and click that label in the open menu (confirmed live Tatari: early-return after remix
+        // failure left generated answers uncommitted).
       }
     }
 
@@ -6952,9 +6942,10 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return false;
     };
-    if (isYesNoDesired || isGreenhouseStatic) {
-      if (await tryDirectOptionPick(isGreenhouseStatic || isYesNoDesired ? pace.maxPolls : 15)) return true;
-      if (isGreenhouseStatic && !isYesNoDesired) {
+    // Greenhouse option lists: click the GPT/profile label directly (any option, not Yes/No-only).
+    if (desiredText && isGreenhouseSelect) {
+      if (await tryDirectOptionPick(pace.maxPolls)) return true;
+      if (isGreenhouseStatic && !isGreenhouseSearchable) {
         element.blur();
         return false;
       }
@@ -7407,9 +7398,7 @@ async function fillGeneratedAnswersInPage(answers) {
       ) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         if (!comboboxValueCommitted(el, value)) {
-          // Confirmed live Tatari: fillReactSelectByClick returned true for Yes/No then a 250ms
-          // re-check wiped ok=false (display lag), so GPT's answer looked generated but never
-          // counted as filled. Retry once before giving up.
+          // Display can lag after a real pick — retry once before treating GPT's option as unfilled.
           console.warn(
             `[Auto Fill][gpt-fill] commit verify missed for "${label}" value="${value}" (display="${reactSelectDisplayValue(el)}"), retrying`
           );
