@@ -4068,13 +4068,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       ? { open: 200, preType: 100, typeHead: 400, poll: 120, stable: 3, maxPolls: 50, trustedRetry: 25 }
       : isLocationAutocomplete
       ? {
-          open: 120,
-          preType: 80,
-          typeHead: hasAriaListbox ? 600 : 450,
-          poll: hasAriaListbox ? 150 : 120,
-          stable: 3,
-          maxPolls: hasAriaListbox ? 60 : 50,
-          trustedRetry: hasAriaListbox ? 30 : 25,
+          open: 150,
+          preType: 100,
+          // Greenhouse Places menus often need >1s after typing before options appear
+          // (confirmed live Tatari Location City: 400ms type-head saw []).
+          typeHead: hasAriaListbox || isGreenhouseSelect ? 1200 : 450,
+          poll: hasAriaListbox || isGreenhouseSelect ? 180 : 120,
+          stable: 2,
+          maxPolls: hasAriaListbox || isGreenhouseSelect ? 70 : 50,
+          trustedRetry: hasAriaListbox || isGreenhouseSelect ? 35 : 25,
         }
       : isCountryOrPhonePicker
         ? { open: 150, preType: 80, typeHead: 280, poll: 100, stable: 2, maxPolls: 40, trustedRetry: 15 }
@@ -6854,13 +6856,15 @@ async function fillGeneratedAnswersInPage(answers) {
       ? { open: 200, preType: 100, typeHead: 400, poll: 120, stable: 3, maxPolls: 50, trustedRetry: 25 }
       : isLocationAutocomplete
       ? {
-          open: 120,
-          preType: 80,
-          typeHead: hasAriaListbox ? 600 : 450,
-          poll: hasAriaListbox ? 150 : 120,
-          stable: 3,
-          maxPolls: hasAriaListbox ? 60 : 50,
-          trustedRetry: hasAriaListbox ? 30 : 25,
+          open: 150,
+          preType: 100,
+          // Greenhouse Places menus often need >1s after typing before options appear
+          // (confirmed live Tatari Location City: 400ms type-head saw []).
+          typeHead: hasAriaListbox || isGreenhouseSelect ? 1200 : 450,
+          poll: hasAriaListbox || isGreenhouseSelect ? 180 : 120,
+          stable: 2,
+          maxPolls: hasAriaListbox || isGreenhouseSelect ? 70 : 50,
+          trustedRetry: hasAriaListbox || isGreenhouseSelect ? 35 : 25,
         }
       : isCountryOrPhonePicker
         ? { open: 150, preType: 80, typeHead: 280, poll: 100, stable: 2, maxPolls: 40, trustedRetry: 15 }
