@@ -171,7 +171,7 @@ DEFAULT_QA_ENTRIES: list[dict[str, str]] = [
     {"question": "Veteran status", "answer": "I am not a protected veteran"},
     {
         "question": "Disability status",
-        "answer": "No, I do not have a disability and have not had one in the past",
+        "answer": "No, I don't have a disability, or a history/record of having a disability",
     },
     {"question": "Fluency in English", "answer": "Fluent"},
     {"question": "What is your English level?", "answer": "Fluent"},

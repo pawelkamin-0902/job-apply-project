@@ -4196,6 +4196,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.info(
         `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
+      // Don't ArrowDown when the desired string isn't any visible option (confirmed live:
+      // "No disability" vs OFCCP long labels — keyboard-nav just walks Yes/No/Decline uselessly).
+      {
+        const visible = liveOptions();
+        if (visible.length && !matchOption(visible)) {
+          console.info(
+            `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
+          );
+          await dismissOpenGreenhouseComboboxes(element);
+          return false;
+        }
+      }
       await dismissOpenGreenhouseComboboxes(element);
       element.focus();
       await ensureOpen();
@@ -5219,9 +5231,44 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return opts.every((o) => /^(yes|no|true|false|prefer not to say|n\/a|not applicable)$/.test(o));
   }
 
+  // Maps short QA phrases ("No disability") onto the real Greenhouse/OFCCP option labels.
+  // Must live inside this injected function — page world cannot call side-panel helpers.
+  function coerceDemographicSelectAnswer(answer, optionLabels) {
+    if (!answer || !optionLabels || !optionLabels.length) return null;
+    const low = String(answer).toLowerCase().trim();
+    if (!low) return null;
+    const opts = optionLabels.map((o) => String(o || "").trim()).filter(Boolean);
+    if (!opts.length) return null;
+    if (opts.some((o) => /disabilit/i.test(o))) {
+      if (/wish to disclose|prefer not|decline to|do not wish/i.test(low)) {
+        return opts.find((o) => /disclose|prefer not|decline/i.test(o)) || null;
+      }
+      const isNo =
+        (/no disabilit|don'?t have a disabilit|do not have a disabilit|no,\s*i don'?t|without a disabilit/i.test(low) ||
+          /^no$/i.test(low)) &&
+        !/^yes\b/i.test(low);
+      if (isNo) {
+        return (
+          opts.find((o) => /don'?t have a disabilit|do not have a disabilit|no,\s*i don'?t have/i.test(o)) ||
+          opts.find((o) => /\bno\b/i.test(o) && /disabilit/i.test(o) && !/^yes\b/i.test(o)) ||
+          null
+        );
+      }
+      if (/^yes\b|have a disabilit|have a history\/record/i.test(low) && !/don'?t have|do not have/i.test(low)) {
+        return opts.find((o) => /^yes\b/i.test(o) && /disabilit/i.test(o)) || null;
+      }
+    }
+    if (opts.some((o) => /veteran/i.test(o)) && /not a veteran|am not a veteran|no.*veteran|not a protected veteran/i.test(low)) {
+      return opts.find((o) => /not a veteran|am not a veteran|not a protected veteran/i.test(o)) || null;
+    }
+    return null;
+  }
+
   function coerceComboboxAnswerForOptions(label, answer, optionLabels) {
     const desired = String(answer || "").trim();
     if (!desired || !optionLabels || !optionLabels.length) return desired;
+    const demo = coerceDemographicSelectAnswer(desired, optionLabels);
+    if (demo) return demo;
     if (!isYesNoOptionSet(optionLabels)) return desired;
     const cat = detectCategory(label);
     const low = desired.toLowerCase();
@@ -5367,6 +5414,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (cat === "b2b_contract") {
       add(optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || "Yes");
+    }
+    if (cat === "disability_status" || cat === "veteran_status") {
+      const mapped = coerceDemographicSelectAnswer(
+        qaAnswer || (cat === "disability_status" ? "No disability" : "Not a veteran"),
+        optionLabels
+      );
+      if (mapped) add(mapped);
     }
     return candidates;
   }
@@ -7309,6 +7363,18 @@ async function fillGeneratedAnswersInPage(answers) {
       console.info(
         `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
+      // Don't ArrowDown when the desired string isn't any visible option (confirmed live:
+      // "No disability" vs OFCCP long labels — keyboard-nav just walks Yes/No/Decline uselessly).
+      {
+        const visible = liveOptions();
+        if (visible.length && !matchOption(visible)) {
+          console.info(
+            `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
+          );
+          await dismissOpenGreenhouseComboboxes(element);
+          return false;
+        }
+      }
       await dismissOpenGreenhouseComboboxes(element);
       element.focus();
       await ensureOpen();
@@ -9300,6 +9366,47 @@ function getTailoredResumeIfAny() {
   }
 }
 
+function coerceDemographicSelectAnswer(answer, options) {
+  // Maps short QA-bank phrases ("No disability", "Not a veteran") onto the long OFCCP /
+  // Greenhouse option labels. Confirmed live Aura: "No disability" matched none of
+  // "No, I don't have a disability, or a history/record of having a disability" and burned
+  // ArrowDown keyboard-nav looking for a string that never appears.
+  if (!answer || !options || !options.length) return null;
+  const low = String(answer).toLowerCase().trim();
+  if (!low) return null;
+  const opts = options.map((o) => String(o || "").trim()).filter(Boolean);
+  if (!opts.length) return null;
+
+  const hasDisabilityOpts = opts.some((o) => /disabilit/i.test(o));
+  if (hasDisabilityOpts) {
+    if (/wish to disclose|prefer not|decline to|do not wish/i.test(low)) {
+      return opts.find((o) => /disclose|prefer not|decline/i.test(o)) || null;
+    }
+    const isNo =
+      (/no disabilit|don'?t have a disabilit|do not have a disabilit|no,\s*i don'?t|without a disabilit/i.test(low) ||
+        /^no$/i.test(low)) &&
+      !/^yes\b/i.test(low);
+    if (isNo) {
+      return (
+        opts.find((o) => /don'?t have a disabilit|do not have a disabilit|no,\s*i don'?t have/i.test(o)) ||
+        opts.find((o) => /\bno\b/i.test(o) && /disabilit/i.test(o) && !/^yes\b/i.test(o)) ||
+        null
+      );
+    }
+    if (/^yes\b|have a disabilit|have a history\/record/i.test(low) && !/don'?t have|do not have/i.test(low)) {
+      return opts.find((o) => /^yes\b/i.test(o) && /disabilit/i.test(o)) || null;
+    }
+  }
+
+  const hasVeteranOpts = opts.some((o) => /veteran/i.test(o));
+  if (hasVeteranOpts && /not a veteran|am not a veteran|no.*veteran|not a protected veteran/i.test(low)) {
+    return (
+      opts.find((o) => /not a veteran|am not a veteran|not a protected veteran/i.test(o)) || null
+    );
+  }
+  return null;
+}
+
 function coerceSelectAnswer(answer, options) {
   if (!answer || !options || !options.length) return null;
   const target = String(answer).trim();
@@ -9308,6 +9415,8 @@ function coerceSelectAnswer(answer, options) {
   const lower = target.toLowerCase();
   const ci = options.find((o) => o.toLowerCase() === lower);
   if (ci) return ci;
+  const demo = coerceDemographicSelectAnswer(target, options);
+  if (demo) return demo;
   return options.find((o) => o.toLowerCase().includes(lower) || lower.includes(o.toLowerCase())) || null;
 }
 
@@ -9404,7 +9513,7 @@ el("autofillBtn").addEventListener("click", async () => {
       qaBank.length &&
       (settings.answer_provider === "gpt-auto" || settings.answer_provider === "gpt-auto-headless")
     ) {
-      const localMatched = new Set();
+      const localMatchedKeys = new Set();
       for (const item of idxEligible) {
         // skipQaMatch marks fields (currently just Greenhouse's phone dial-code picker) whose
         // only correct value comes directly from the profile, never from a saved/learned QA-bank
@@ -9413,18 +9522,36 @@ el("autofillBtn").addEventListener("click", async () => {
         if (item.skipQaMatch) continue;
         const entry = matchQaBankEntry(item.label, qaBank);
         if (entry && isPlausibleQaMatch(item.label, entry.question)) {
+          let value = entry.answer;
+          // Select/combobox: only reuse a QA answer that maps onto a REAL option label.
+          // Confirmed live Aura Disability Status: bank "No disability" is not in OPTIONS
+          // ("No, I don't have a disability…") — filling the short phrase ArrowDown-thrashes,
+          // then GPT (still wrongly kept as a candidate — see key bug below) fills the real one.
+          const opts = realSelectOptions(item.options);
+          if (opts.length > 1) {
+            const picked = coerceSelectAnswers(value, opts, Boolean(item.multi));
+            if (!picked.length) continue;
+            value = picked.join(", ");
+          }
           finalFills.push({
             frameId: item.frameId,
             idx: item.idx,
-            value: entry.answer,
+            value,
             kind: "matched",
             label: item.label,
           });
-          localMatched.add(item);
+          // Key by frame+idx — selectPickCandidates are object copies from .map(), so a Set of
+          // the original idxEligible object refs never removed them (Disability got QA short
+          // answer AND a GPT pass).
+          localMatchedKeys.add(`${item.frameId}:${item.idx}`);
         }
       }
-      generationCandidates = generationCandidates.filter((item) => !localMatched.has(item));
-      selectPickCandidates = selectPickCandidates.filter((item) => !localMatched.has(item));
+      generationCandidates = generationCandidates.filter(
+        (item) => !localMatchedKeys.has(`${item.frameId}:${item.idx}`)
+      );
+      selectPickCandidates = selectPickCandidates.filter(
+        (item) => !localMatchedKeys.has(`${item.frameId}:${item.idx}`)
+      );
     }
 
     // gpt-auto has no automatic AI-semantic QA-bank match (no server-side model call for it

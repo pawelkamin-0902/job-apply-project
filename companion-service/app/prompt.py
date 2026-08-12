@@ -290,7 +290,9 @@ def build_batch_answer_user_message(
     if options_per_question and any(options_per_question):
         select_note = (
             "\nFor any question that lists OPTIONS, every chosen label MUST be copied exactly from "
-            "that question's OPTIONS list (same spelling). Never invent an option. For "
+            "that question's OPTIONS list (same spelling). Never invent an option. Never paste a "
+            "short Q&A-bank phrase (e.g. \"No disability\") when OPTIONS has a longer official "
+            "wording — pick the OPTIONS row that means the same thing. For "
             '"select ALL that apply" questions, put multiple labels in one answer string '
             'separated by ", ".\n'
         )
