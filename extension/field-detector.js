@@ -667,6 +667,14 @@ function looksLikeComboboxPick(element) {
   ) {
     return false;
   }
+  // Zoho Recruit lyte-autocomplete (Zip/City/State): free-text inputs with a suggestion list
+  // that opens on focus (`lt-prop-open-on-focus="true"`). Treating them as combobox picks made
+  // Auto Fill open/close the dropdown on every fill — confirmed live on 3m-consultancy after
+  // the decorative role=combobox chrome was already excluded. Typed profile values (postal,
+  // city name) are correct as plain text; do not run fillReactSelectByClick.
+  if (element.closest && element.closest("lyte-autocomplete")) {
+    return false;
+  }
   return (
     element.getAttribute("role") === "combobox" ||
     element.getAttribute("aria-autocomplete") === "list" ||

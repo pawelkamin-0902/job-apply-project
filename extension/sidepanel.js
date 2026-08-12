@@ -2679,10 +2679,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // required field" until the user clicked each field once (focus) and submitted again
     // (blur). Without this focus/blur, the mutation never ran and server-side validation
     // still saw empty values.
-    try {
-      element.focus();
-    } catch {
-      /* not focusable */
+    // Exception: Zoho Recruit <lyte-autocomplete> (Zip/City/State) opens its suggestion list
+    // on focus (`lt-prop-open-on-focus="true"`). Focusing here caused visible open/close
+    // churn on every address field fill — confirmed live on 3m-consultancy after the fake
+    // combobox chrome was already excluded. Skip focus; set value + events is enough.
+    const zohoAutocomplete = element.closest && element.closest("lyte-autocomplete");
+    if (!zohoAutocomplete) {
+      try {
+        element.focus();
+      } catch {
+        /* not focusable */
+      }
     }
     if (setter) setter.call(element, str);
     else element.value = str;
@@ -2705,6 +2712,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // doesn't specifically listen for it) covers this without needing to know the exact
     // framework or which key it expects.
     element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
+    if (zohoAutocomplete) {
+      const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      element.dispatchEvent(new KeyboardEvent("keydown", esc));
+      element.dispatchEvent(new KeyboardEvent("keyup", esc));
+    }
     try {
       element.blur();
     } catch {
@@ -5768,10 +5780,14 @@ async function fillGeneratedAnswersInPage(answers) {
     const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
     const str = value == null ? "" : String(value);
     // Kept in sync with runAutofillInPage.nativeSet — Ashby (and similar) only persist on blur.
-    try {
-      element.focus();
-    } catch {
-      /* not focusable */
+    // Zoho lyte-autocomplete: skip focus (opens suggestion list on focus).
+    const zohoAutocomplete = element.closest && element.closest("lyte-autocomplete");
+    if (!zohoAutocomplete) {
+      try {
+        element.focus();
+      } catch {
+        /* not focusable */
+      }
     }
     const prev = element.value;
     const tracker = element._valueTracker;
@@ -5801,6 +5817,11 @@ async function fillGeneratedAnswersInPage(answers) {
     // doesn't specifically listen for it) covers this without needing to know the exact
     // framework or which key it expects.
     element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
+    if (zohoAutocomplete) {
+      const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+      element.dispatchEvent(new KeyboardEvent("keydown", esc));
+      element.dispatchEvent(new KeyboardEvent("keyup", esc));
+    }
     try {
       element.blur();
     } catch {
