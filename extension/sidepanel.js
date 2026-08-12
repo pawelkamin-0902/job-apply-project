@@ -3840,7 +3840,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // several fallback tiers instead of committing on the first one. Tagged per call with the
       // desired text so parallel/sequential attempts (e.g. dial-code retry then country-name
       // retry) can be told apart in the console.
-      const fieldLabel = comboboxFieldLabel(element);
+      const fieldLabel =
+        (typeof comboboxFieldLabel === "function" && comboboxFieldLabel(element)) ||
+        (element && element.getAttribute && element.getAttribute("data-af-label")) ||
+        (element && element.id) ||
+        "?";
       const tag = `[Auto Fill][combobox-retry field="${fieldLabel}" id=${element.id || "?"} -> "${desiredText}"]`;
       if (!element.closest || !element.closest(".select-shell")) return false;
       const displayBefore = reactSelectDisplayValue(element);
@@ -3848,7 +3852,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         console.info(`${tag} skip - already committed (display="${displayBefore}")`);
         return true;
       }
-      comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
+      if (typeof comboboxTrace === "function") {
+        comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
+      }
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
       if (fiberOk) {
@@ -6676,7 +6682,11 @@ async function fillGeneratedAnswersInPage(answers) {
       // several fallback tiers instead of committing on the first one. Tagged per call with the
       // desired text so parallel/sequential attempts (e.g. dial-code retry then country-name
       // retry) can be told apart in the console.
-      const fieldLabel = comboboxFieldLabel(element);
+      const fieldLabel =
+        (typeof comboboxFieldLabel === "function" && comboboxFieldLabel(element)) ||
+        (element && element.getAttribute && element.getAttribute("data-af-label")) ||
+        (element && element.id) ||
+        "?";
       const tag = `[Auto Fill][combobox-retry field="${fieldLabel}" id=${element.id || "?"} -> "${desiredText}"]`;
       if (!element.closest || !element.closest(".select-shell")) return false;
       const displayBefore = reactSelectDisplayValue(element);
@@ -6684,7 +6694,9 @@ async function fillGeneratedAnswersInPage(answers) {
         console.info(`${tag} skip - already committed (display="${displayBefore}")`);
         return true;
       }
-      comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
+      if (typeof comboboxTrace === "function") {
+        comboboxTrace(element, `tier start -> "${desiredText}"`, { displayBefore });
+      }
       const fiberOk = fillGreenhouseViaReactFiber(element, desiredText);
       console.info(`${tag} tier 1 (React fiber direct) -> ${fiberOk ? "COMMITTED" : "no match/failed"}`);
       if (fiberOk) {
