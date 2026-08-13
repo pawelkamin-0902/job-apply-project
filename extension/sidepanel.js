@@ -3991,6 +3991,40 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return Boolean(listbox.closest && listbox.closest(".iti, .iti--container"));
   }
 
+  // Pinpoint Address Country often ships with a wrong default (Poland) while profile is Romania.
+  // react-select will not type-to-filter until the existing chip is cleared — confirmed live
+  // careers-pod-point-com-20260813T184058Z: open/fill "Romania" left display "Poland", then
+  // discovery wrongly treated Poland as already-set.
+  function clearReactSelectSelection(element) {
+    if (!element || !element.closest) return false;
+    let node = element;
+    for (let depth = 0; depth < 8 && node; depth++, node = node.parentElement) {
+      const clearBtn =
+        node.querySelector &&
+        node.querySelector(
+          '[class*="clear-indicator"], [class*="__clear-indicator"], [aria-label*="clear" i]'
+        );
+      if (clearBtn) {
+        simulateClick(clearBtn);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function findPinpointCountryNativeSelect(element) {
+    if (!element || !element.closest) return null;
+    const wrap =
+      element.closest("#address-country") ||
+      element.closest("[id*='Form::Address']") ||
+      (element.closest(".react-select") && element.closest(".react-select").parentElement);
+    if (!wrap) return null;
+    const selects = [...wrap.querySelectorAll("select")];
+    return (
+      selects.find((s) => /country/i.test(`${s.id || ""} ${s.name || ""}`)) || selects[0] || null
+    );
+  }
+
   function reactSelectDisplayValue(element) {
     if (isSuccessFactorsPicklist(element)) {
       const title = (element.getAttribute && element.getAttribute("title")) || "";
@@ -4864,6 +4898,36 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (hearAboutField && element.setAttribute) element.setAttribute("data-af-hear-about-tried", "1");
     comboboxTrace(element, `open/fill attempt -> "${desiredText}"`, { displayBefore: displayAtStart });
+    // Wrong chip already selected (Pinpoint Country default Poland vs profile Romania): clear
+    // first — otherwise type-to-filter never replaces the single-value.
+    if (
+      displayAtStart &&
+      !isGenericSelectPlaceholder(displayAtStart) &&
+      !comboboxValueCommitted(element, desiredText) &&
+      !isPhoneDialCodePicker(element)
+    ) {
+      if (clearReactSelectSelection(element)) {
+        comboboxTrace(element, `cleared existing "${displayAtStart}" before "${desiredText}"`, {});
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+    }
+    // Pinpoint Address: native <select class="hide-at-sm-block"> mirrors Country — set it when
+    // the label is residence Country so React/hidden input can sync even if the menu path fails.
+    if (
+      /^country\b/i.test(String(comboboxFieldLabel(element) || "").trim()) &&
+      !isPhoneDialCodePicker(element)
+    ) {
+      const nativeSel = findPinpointCountryNativeSelect(element);
+      if (nativeSel && setSelectValue(nativeSel, desiredText)) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        if (comboboxValueCommitted(element, desiredText) || isReactSelectAlreadySet(element, desiredText)) {
+          comboboxTrace(element, `pinpoint native <select> committed -> "${desiredText}"`, {
+            displayAfter: reactSelectDisplayValue(element),
+          });
+          return true;
+        }
+      }
+    }
     // Residence Country must never try a phone dial-code — opens the list and ArrowDowns
     // through unrelated options (confirmed live Oportun question_* Country with "+48").
     if (
@@ -6013,7 +6077,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       return true;
     }
-    if (looksLikeComboboxPick(element)) return await fillReactSelectByClick(element, value);
+    if (looksLikeComboboxPick(element)) {
+      const comboOk = await fillReactSelectByClick(element, value);
+      return comboOk === true;
+    }
     nativeSet(element, value);
     return true;
   }
@@ -6512,6 +6579,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         const exact = optionLabels.find((o) => String(o).trim().toLowerCase() === country.toLowerCase());
         add(exact || country);
       }
+    }
+    // Bare "Country" (Pinpoint Address) — same profile country, not dial-code.
+    if (/^country\b/i.test(String(label || "").trim()) && profile && profile.contact && profile.contact.country) {
+      const country = String(profile.contact.country).trim();
+      const exact = (optionLabels || []).find((o) => String(o).trim().toLowerCase() === country.toLowerCase());
+      add(exact || country);
     }
     if (/acknowledg|gdpr|privacy|consent/i.test(String(label || ""))) {
       const confirm =
@@ -7587,11 +7660,40 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       if (comboboxHasDisplayValue(element)) {
         const cur = reactSelectDisplayValue(element);
-        comboboxTrace(element, `skip discovery - already has display`, { current: cur });
-        filled.push({ label, value: cur, source: "already-set" });
-        continue;
+        const desiredForDisplay =
+          (structuredValue && String(structuredValue).trim()) ||
+          (qaAnswerUsable && qaMatch && String(qaMatch.answer || "").trim()) ||
+          (isResidenceCountryField &&
+            profile &&
+            profile.contact &&
+            String(profile.contact.country || "").trim()) ||
+          "";
+        // Wrong pre-filled value (Poland vs Romania) must not count as already-set —
+        // careers-pod-point-com-20260813T184058Z.
+        if (
+          desiredForDisplay &&
+          !comboboxValueCommitted(element, desiredForDisplay) &&
+          !(typeof answerCouldMatchOptions === "function" && answerCouldMatchOptions(desiredForDisplay, [cur]))
+        ) {
+          comboboxTrace(element, `discovery - display "${cur}" != desired "${desiredForDisplay}", retrying`, {});
+          if (clearReactSelectSelection(element)) {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+          }
+        } else {
+          comboboxTrace(element, `skip discovery - already has display`, { current: cur });
+          filled.push({ label, value: cur, source: "already-set" });
+          continue;
+        }
       }
       let optionLabels = findRadixHiddenSelectOptions(element);
+      if (!optionLabels.length && isResidenceCountryField) {
+        const nativeCountry = findPinpointCountryNativeSelect(element);
+        if (nativeCountry) {
+          optionLabels = [...nativeCountry.options]
+            .map((o) => cleanedText(o).trim())
+            .filter((t) => t && !isGenericSelectPlaceholder(t));
+        }
+      }
       if (!optionLabels.length) {
         optionLabels = await discoverComboboxOptions(element);
       }
