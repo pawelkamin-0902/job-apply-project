@@ -6761,8 +6761,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       typeof isSmartRecruitersRequiredField === "function" && groupEl
         ? isSmartRecruitersRequiredField(groupEl, groupHost)
         : null;
-    // Optional SR radios (reside in Germany) must not land in "need your input".
-    if (srGroupReq === false) continue;
+    // Optional SR radios (reside in Germany) must not land in "need your input" — and must
+    // not be filled at all when definition says required:false.
+    if (srGroupReq === false) {
+      console.info(`[Auto Fill] skip optional SmartRecruiters group "${group.label}"`);
+      continue;
+    }
     // Stamp the first option element so a later AI pick can click the matching sibling(s).
     if (optionLabels.length > 1 && group.options[0] && group.options[0].element) {
       const idx = stampIdx(group.options[0].element, group.label);
@@ -6802,6 +6806,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // of pattern order, filling City/Neighborhood/Municipality/... with the street address
     // instead of their own real values.
     const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+    // SmartRecruiters screening: when definition says required:false (GitHub, reside in
+    // Germany, …), leave the field blank — do not profile/QA/GPT fill. Radios already skip
+    // via srGroupReq === false; singles still filled optional GitHub from profile.
+    if (typeof isSmartRecruitersRequiredField === "function") {
+      const srOpt = isSmartRecruitersRequiredField(element, host);
+      if (srOpt === false) {
+        console.info(`[Auto Fill] skip optional SmartRecruiters field "${label}"`);
+        continue;
+      }
+    }
     // Optional demographic / EEO comboboxes: never open/fill (even with QA).
     if (shouldSkipOptionalDemographic(ownLabel, element, host) || shouldSkipOptionalDemographic(label, element, host)) {
       if (looksLikeComboboxPick(element) || /equality_monitoring/i.test(element.id || "")) {
@@ -10219,6 +10233,13 @@ async function fillGeneratedAnswersInPage(answers) {
     ) {
       console.info(`[Auto Fill][gpt-fill] skip optional demographic idx=${idx} "${label || ""}"`);
       continue;
+    }
+    if (typeof isSmartRecruitersRequiredField === "function") {
+      const srOpt = isSmartRecruitersRequiredField(el, el);
+      if (srOpt === false) {
+        console.info(`[Auto Fill][gpt-fill] skip optional SmartRecruiters idx=${idx} "${label || ""}"`);
+        continue;
+      }
     }
     // Coerce GPT/QA text into what the control accepts (₹ salary number, notice days, etc.).
     if (typeof coerceAnswerForField === "function") {

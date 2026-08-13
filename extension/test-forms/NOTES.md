@@ -3387,6 +3387,13 @@ unverified outside a live browser).
       even when QA has Male/White — no open/close. Required Disability Confident still
       fills. Not yet confirmed live.
 
+135. **SmartRecruiters: do not fill optional screening fields.** `Author: Cursor`.
+    User request: optional SR fields need not be filled. Definition already marks GitHub /
+    "reside in Germany?" as `required:false` — radios were skipped from "need your input"
+    but optional singles (e.g. GitHub) could still get a profile URL. Fixed: when
+    `isSmartRecruitersRequiredField === false`, skip profile/QA/GPT for that single or
+    group entirely. Required English / EU eligibility still fill. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
