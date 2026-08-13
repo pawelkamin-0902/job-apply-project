@@ -2383,6 +2383,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // required by default), since a false "not required" just means one fewer generation call,
   // while a false "required" spends GPU time on a field the applicant didn't need filled.
   function isRequiredField(element, host) {
+    // SmartRecruiters screening: GitHub is required:false (no asterisk, aria-required=false)
+    // while English/EU eligibility are required:true. Check that JSON/host flag BEFORE
+    // native/error-chrome heuristics — an empty required select shows "Value is required"
+    // which must not mark a neighbouring optional field, and must not be ignored on the
+    // required one. Confirmed live jobs-smartrecruiters-com-20260813T160201Z.
+    if (typeof isSmartRecruitersRequiredField === "function") {
+      const srReq = isSmartRecruitersRequiredField(element, host);
+      if (srReq === true) return true;
+      if (srReq === false) return false;
+    }
     if (element.required) return true;
     if (element.getAttribute && element.getAttribute("aria-required") === "true") return true;
     if (host && host !== element && host.getAttribute && host.getAttribute("aria-required") === "true") return true;
@@ -6683,6 +6693,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         continue;
       }
     }
+    const groupEl = group.options[0] && group.options[0].element;
+    const groupHost =
+      (groupEl && groupEl.closest && groupEl.closest("spl-radio-group")) || groupEl;
+    const srGroupReq =
+      typeof isSmartRecruitersRequiredField === "function" && groupEl
+        ? isSmartRecruitersRequiredField(groupEl, groupHost)
+        : null;
+    // Optional SR radios (reside in Germany) must not land in "need your input".
+    if (srGroupReq === false) continue;
     // Stamp the first option element so a later AI pick can click the matching sibling(s).
     if (optionLabels.length > 1 && group.options[0] && group.options[0].element) {
       const idx = stampIdx(group.options[0].element, group.label);

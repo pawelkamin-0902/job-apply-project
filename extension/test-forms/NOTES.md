@@ -3336,6 +3336,17 @@ unverified outside a live browser).
       `name=""`. Group by `spl-radio-group`. "Eligible to work in the EU?" (Poland → Yes)
       and "reside in Germany?" (Poland → No). Not yet confirmed live.
 
+131. **SmartRecruiters required vs optional was wrong.** `Author: Cursor`. Same Redcare
+    capture. GitHub and "reside in Germany?" are `required: false` in
+    `sr-screening-questions-form` `definition` (no `required=""`, no `*`,
+    `aria-required="false"`). English level and EU eligibility are `required: true`.
+    `isRequiredField` never read that JSON or the host `required` attribute — optional
+    GitHub still went to "need your input" via structured-null, and Save Sample labeled
+    the empty English select `"Value is"` from the `"Value is required"` error slot.
+    Fixed: `isSmartRecruitersRequiredField` uses definition JSON first, then host
+    `required` / asterisk / fieldset `aria-required`; optional SR radios are not stamped;
+    ignore `"Value is required"` chrome as a label. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

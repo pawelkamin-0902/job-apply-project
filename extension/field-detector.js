@@ -111,13 +111,13 @@ function findSmartRecruitersQuestionLabel(host) {
     return slotLabel && cleanedText(slotLabel) ? cleanedText(slotLabel) : "";
   };
   const fromWidget = readSlot(widget);
-  if (fromWidget) return fromWidget;
+  if (fromWidget && !isSmartRecruitersErrorChrome(fromWidget)) return fromWidget;
   const fromContainer = readSlot(container);
-  if (fromContainer) return fromContainer;
+  if (fromContainer && !isSmartRecruitersErrorChrome(fromContainer)) return fromContainer;
   const ariaHost = closestCrossingShadow(host, "spl-autocomplete") || widget;
   if (ariaHost && ariaHost.getAttribute) {
     const aria = stripSmartRecruitersSelectPrefix((ariaHost.getAttribute("aria-label") || "").trim());
-    if (aria && !isGenericSelectPlaceholder(aria)) return aria;
+    if (aria && !isGenericSelectPlaceholder(aria) && !isSmartRecruitersErrorChrome(aria)) return aria;
   }
   const radioGroup =
     closestCrossingShadow(host, "spl-radio-group") ||
@@ -169,6 +169,78 @@ function githubValueFromProfile(profile, label) {
 
 function stripSmartRecruitersSelectPrefix(text) {
   return (text || "").replace(/^select\s+/i, "").trim();
+}
+
+function isSmartRecruitersErrorChrome(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  return /^value is( required)?$/i.test(t) || /^this field is required$/i.test(t);
+}
+
+function parseSmartRecruitersScreeningQuestions() {
+  const form = document.querySelector("sr-screening-questions-form[definition]");
+  if (!form) return [];
+  try {
+    const def = JSON.parse(form.getAttribute("definition") || "{}");
+    return Array.isArray(def.questions) ? def.questions : [];
+  } catch {
+    return [];
+  }
+}
+
+function splFieldHost(el) {
+  if (!el) return null;
+  return closestCrossingShadow(
+    el,
+    "spl-autocomplete, spl-input, spl-textarea, spl-radio-group, spl-checkbox, sr-question-field-select, sr-question-field-text, sr-question-field-textarea, sr-question-field-radio, sr-question-field-autocomplete"
+  );
+}
+
+function uuidFromSmartRecruitersNode(node) {
+  if (!node) return "";
+  for (const attr of ["id", "name"]) {
+    const v = (node.getAttribute && node.getAttribute(attr)) || "";
+    const m = String(v).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+    if (m) return m[1].toLowerCase();
+  }
+  return "";
+}
+
+// Authoritative required flag for SmartRecruiters oneclick-ui screening.
+// `definition` JSON on <sr-screening-questions-form> is the source of truth
+// (GitHub `required:false` vs English/EU `required:true`). Host `required=""` /
+// `.c-spl-form-field-required-mark` / fieldset aria-required back it up.
+// Returns true / false / null (not an SR field — caller falls through).
+function isSmartRecruitersRequiredField(element, host) {
+  const widget = splFieldHost(host) || splFieldHost(element);
+  const questions = parseSmartRecruitersScreeningQuestions();
+  if (questions.length) {
+    const ids = [uuidFromSmartRecruitersNode(element), uuidFromSmartRecruitersNode(host), uuidFromSmartRecruitersNode(widget)].filter(Boolean);
+    for (const id of ids) {
+      const q = questions.find((x) => x && String(x.id || "").toLowerCase() === id);
+      if (q && typeof q.required === "boolean") return q.required;
+    }
+    const label = findSmartRecruitersQuestionLabel(host || widget || element) || "";
+    if (label && !isSmartRecruitersErrorChrome(label)) {
+      const want = String(label).replace(/\s+/g, " ").trim().toLowerCase();
+      const q = questions.find((x) => {
+        const got = String((x && x.label) || "").replace(/\s+/g, " ").trim().toLowerCase();
+        return got && (got === want || want.startsWith(got) || got.startsWith(want));
+      });
+      if (q && typeof q.required === "boolean") return q.required;
+    }
+  }
+  if (!widget) return null;
+  if (widget.hasAttribute("required")) return true;
+  if ((widget.getAttribute("aria-required") || "").toLowerCase() === "true") return true;
+  const root = widget.shadowRoot;
+  if (root) {
+    if (root.querySelector("fieldset[aria-required='true']")) return true;
+    if (root.querySelector(".c-spl-form-field-required-mark")) return true;
+    const inner = root.querySelector("spl-internal-form-field");
+    if (inner && inner.shadowRoot && inner.shadowRoot.querySelector(".c-spl-form-field-required-mark")) return true;
+  }
+  if ((widget.getAttribute("aria-required") || "").toLowerCase() === "false") return false;
+  return null;
 }
 
 // Climbs from `host` looking for a <label> that belongs specifically to it, stopping once an
