@@ -2648,17 +2648,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
     {
-      re: /github\s*(user\s*name|username|handle|profile|url|link)|please enter your github|^github\s*$/i,
-      get: (p) => {
-        const c = (p && p.contact) || {};
-        for (const raw of [c.github, c.website]) {
-          if (!raw) continue;
-          const m = String(raw).match(/github\.com\/+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/i);
-          if (m && !/^(orgs|settings|topics|features|marketplace|explore)$/i.test(m[1])) return m[1];
-          if (!/[./:\s]/.test(String(raw).trim())) return String(raw).trim();
-        }
-        return null;
-      },
+      re: /github\s*(user\s*name|username|handle|profile|url|link)|please (enter|add) your github|^github\s*$/i,
+      get: (p, _el, fieldLabel) =>
+        (typeof githubValueFromProfile === "function" && githubValueFromProfile(p, fieldLabel)) || null,
     },
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
@@ -2817,10 +2809,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (re.test(label)) {
         // Greenhouse phone widget: bare "Country" is the dial-code picker, not residence.
         if (/^country\b/i.test(label) && isPhoneDialCodePicker(element)) continue;
-        const value = get(profile, element);
+        const value = get(profile, element, label);
         if (hearAbout && value && (/^https?:\/\//i.test(String(value)) || /linkedin\.com\/in\//i.test(String(value)))) {
           continue;
         }
+        // GitHub is structured only when the profile actually has a handle/URL. A null
+        // match used to set isStructuredCategory and block GPT (Redcare SR screening
+        // "Please add your GitHub link" → need your input).
+        if (!value && /github/i.test(label || "")) continue;
         return { isStructuredCategory: true, value: value || null };
       }
     }
@@ -2858,7 +2854,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
     { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
-    { key: "eligible_to_work", re: /^eligible to work$/i },
+    { key: "eligible_to_work", re: /eligible to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
@@ -4305,31 +4301,44 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (cxOpts.length) return cxOpts;
     }
 
+    const collectSrOptions = (root, requireFresh) => {
+      const vis = isVisibleLocal;
+      const raw = querySelectorAllDeep(
+        "spl-select-option, spl-dropdown-item, .c-spl-dropdown-item, .c-spl-autocomplete-default-option",
+        root
+      ).filter((el) => (!requireFresh || !before.has(el)) && !isDisabledComboboxOption(el));
+      const hosts = [];
+      const seen = new Set();
+      for (const o of raw) {
+        const clickable = resolveOptionClickTarget(o);
+        if (seen.has(clickable) || isDisabledComboboxOption(clickable)) continue;
+        if (!vis(clickable) && !vis(o)) continue;
+        seen.add(clickable);
+        hosts.push(clickable);
+      }
+      return hosts;
+    };
+
     const ownMenu = element && reactSelectMenuForElement(element);
     if (ownMenu) {
       const scoped = [...ownMenu.querySelectorAll('[class*="__option"], [role="option"]')].filter(isFreshAndVisible);
       if (scoped.length) return scoped;
+      // SmartRecruiters <spl-select-option> puts role=option in shadow, so the light-DOM
+      // query above is empty. Menu is often already open (not "fresh"). Without this,
+      // aria-expanded early-return yielded 0 options (jobs-smartrecruiters-com-20260813T160201Z).
+      const srInMenu = collectSrOptions(ownMenu, false);
+      if (srInMenu.length) return srInMenu;
+      const isSrCombo =
+        (element.closest && element.closest("spl-autocomplete")) ||
+        (typeof closestCrossingShadow === "function" && closestCrossingShadow(element, "spl-autocomplete"));
       // Async react-select menus (Greenhouse Location/City): listbox exists but options load
       // after typing — keep polling instead of falling through to another field's listbox.
-      if (element.getAttribute("aria-expanded") === "true") return [];
+      if (element.getAttribute("aria-expanded") === "true" && !isSrCombo) return [];
     }
 
     // Prefer SmartRecruiters autocomplete rows before generic leaf heuristics.
-    const srRaw = querySelectorAllDeep(
-      "spl-select-option, spl-dropdown-item, .c-spl-dropdown-item, .c-spl-autocomplete-default-option"
-    ).filter(isFreshAndVisible);
-    if (srRaw.length) {
-      const hosts = [];
-      const seen = new Set();
-      for (const o of srRaw) {
-        const clickable = resolveOptionClickTarget(o);
-        if (seen.has(clickable) || isDisabledComboboxOption(clickable)) continue;
-        if (!isVisibleLocal(clickable) && !isVisibleLocal(o)) continue;
-        seen.add(clickable);
-        hosts.push(clickable);
-      }
-      if (hosts.length) return hosts;
-    }
+    const srRaw = collectSrOptions(null, true);
+    if (srRaw.length) return srRaw;
 
     if (prefix) {
       for (const menu of querySelectorAllDeep(`[class*="${prefix}__menu"]`)) {
@@ -6408,11 +6417,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         add(fit || digitOpts[digitOpts.length - 1]);
       }
     }
-    if (cat === "english_proficiency" || cat === "polish_proficiency") {
+    if (
+      cat === "english_proficiency" ||
+      cat === "polish_proficiency" ||
+      (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label))
+    ) {
       if (qaAnswer) {
         const mapped = coerceLanguageLevelForOptions(qaAnswer, optionLabels);
         if (mapped) add(mapped);
       }
+      const fluent =
+        coerceLanguageLevelForOptions("Fluent", optionLabels) ||
+        optionLabels.find((o) => /^fluent$/i.test(String(o).trim())) ||
+        optionLabels.find((o) => /fluent/i.test(String(o)));
+      if (fluent) add(fluent);
     }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
       const linkedInOpt = hearAboutLinkedInOption(optionLabels);
@@ -6474,6 +6492,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         add(optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || "Yes");
       }
     }
+    if (optionLabels.some((o) => /^(yes|no)$/i.test(String(o).trim()))) {
+      const residePick = inferResideInPlaceYesNo(label);
+      if (residePick) add(optionLabels.find((o) => new RegExp(`^${residePick}$`, "i").test(String(o).trim())) || residePick);
+      const eligiblePick = inferEligibleToWorkYesNo(label);
+      if (eligiblePick) add(optionLabels.find((o) => new RegExp(`^${eligiblePick}$`, "i").test(String(o).trim())) || eligiblePick);
+    }
     return candidates;
   }
 
@@ -6488,6 +6512,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       return "Yes";
     }
+    return null;
+  }
+
+  // "Do you currently reside in Germany?" / "Are you currently based in Poland?"
+  // from profile.contact.country/city — jobs-smartrecruiters-com-20260813T160201Z.
+  function inferResideInPlaceYesNo(label) {
+    const raw = String(label || "");
+    const m =
+      raw.match(/\b(?:do you|are you).{0,40}(?:currently\s+)?(?:reside|live|based)\s+in\s+(.+?)\s*\??$/i) ||
+      raw.match(/\b(?:reside|live|based)\s+in\s+([A-Za-z][A-Za-z\s.-]+?)\s*\??$/i);
+    if (!m) return null;
+    const asked = m[1].replace(/\?+$/, "").trim().toLowerCase();
+    if (!asked || asked.length > 48) return null;
+    const c = (profile && profile.contact) || {};
+    const facts = [c.country, c.city, c.location].map((s) => String(s || "").toLowerCase()).filter(Boolean);
+    if (!facts.length) return null;
+    const hit = facts.some((f) => asked.includes(f) || f.includes(asked));
+    return hit ? "Yes" : "No";
+  }
+
+  function inferEligibleToWorkYesNo(label) {
+    const raw = String(label || "");
+    if (!/eligible to work|authori[sz]ed to work/i.test(raw)) return null;
+    const country = String((profile && profile.contact && profile.contact.country) || "").toLowerCase();
+    if (!country) return null;
+    const inEu = /\b(the\s+)?(eu|e\.u\.|europe|european union)\b/i.test(raw);
+    const inPoland = /\bpoland\b/i.test(raw);
+    const polish = /poland|polska/.test(country);
+    if ((inEu || inPoland) && polish) return "Yes";
     return null;
   }
 
@@ -6617,6 +6670,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const skillPick = inferSkillExperienceYesNo(group.label);
       if (skillPick && clickGroupOption(group.options, skillPick)) {
         filled.push({ label: group.label, value: skillPick, source: "profile" });
+        continue;
+      }
+      const residePick = inferResideInPlaceYesNo(group.label);
+      if (residePick && clickGroupOption(group.options, residePick)) {
+        filled.push({ label: group.label, value: residePick, source: "profile" });
+        continue;
+      }
+      const eligiblePick = inferEligibleToWorkYesNo(group.label);
+      if (eligiblePick && clickGroupOption(group.options, eligiblePick)) {
+        filled.push({ label: group.label, value: eligiblePick, source: "profile" });
         continue;
       }
     }
@@ -8618,28 +8681,38 @@ async function fillGeneratedAnswersInPage(answers) {
       if (cxOpts.length) return cxOpts;
     }
 
+    const collectSrOptions = (root, requireFresh) => {
+      const vis = isVisible;
+      const raw = querySelectorAllDeep(
+        "spl-select-option, spl-dropdown-item, .c-spl-dropdown-item, .c-spl-autocomplete-default-option",
+        root
+      ).filter((el) => (!requireFresh || !before.has(el)) && !isDisabledComboboxOption(el));
+      const hosts = [];
+      const seen = new Set();
+      for (const o of raw) {
+        const clickable = resolveOptionClickTarget(o);
+        if (seen.has(clickable) || isDisabledComboboxOption(clickable)) continue;
+        if (!vis(clickable) && !vis(o)) continue;
+        seen.add(clickable);
+        hosts.push(clickable);
+      }
+      return hosts;
+    };
+
     const ownMenu = element && reactSelectMenuForElement(element);
     if (ownMenu) {
       const scoped = [...ownMenu.querySelectorAll('[class*="__option"], [role="option"]')].filter(isFreshAndVisible);
       if (scoped.length) return scoped;
-      if (element.getAttribute("aria-expanded") === "true") return [];
+      const srInMenu = collectSrOptions(ownMenu, false);
+      if (srInMenu.length) return srInMenu;
+      const isSrCombo =
+        (element.closest && element.closest("spl-autocomplete")) ||
+        (typeof closestCrossingShadow === "function" && closestCrossingShadow(element, "spl-autocomplete"));
+      if (element.getAttribute("aria-expanded") === "true" && !isSrCombo) return [];
     }
 
-    const srRaw = querySelectorAllDeep(
-      "spl-select-option, spl-dropdown-item, .c-spl-dropdown-item, .c-spl-autocomplete-default-option"
-    ).filter(isFreshAndVisible);
-    if (srRaw.length) {
-      const hosts = [];
-      const seen = new Set();
-      for (const o of srRaw) {
-        const clickable = resolveOptionClickTarget(o);
-        if (seen.has(clickable) || isDisabledComboboxOption(clickable)) continue;
-        if (!isVisible(clickable) && !isVisible(o)) continue;
-        seen.add(clickable);
-        hosts.push(clickable);
-      }
-      if (hosts.length) return hosts;
-    }
+    const srRaw = collectSrOptions(null, true);
+    if (srRaw.length) return srRaw;
 
     // Kept in sync with runAutofillInPage's own findComboboxOptions — this copy previously
     // lacked the same-page-multiple-comboboxes freshness check entirely (unscoped
@@ -10418,17 +10491,9 @@ function captureSampleInPage(profile, qaBank) {
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
     {
-      re: /github\s*(user\s*name|username|handle|profile|url|link)|please enter your github|^github\s*$/i,
-      get: (p) => {
-        const c = (p && p.contact) || {};
-        for (const raw of [c.github, c.website]) {
-          if (!raw) continue;
-          const m = String(raw).match(/github\.com\/+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/i);
-          if (m && !/^(orgs|settings|topics|features|marketplace|explore)$/i.test(m[1])) return m[1];
-          if (!/[./:\s]/.test(String(raw).trim())) return String(raw).trim();
-        }
-        return null;
-      },
+      re: /github\s*(user\s*name|username|handle|profile|url|link)|please (enter|add) your github|^github\s*$/i,
+      get: (p, _el, fieldLabel) =>
+        (typeof githubValueFromProfile === "function" && githubValueFromProfile(p, fieldLabel)) || null,
     },
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
@@ -10538,7 +10603,7 @@ function captureSampleInPage(profile, qaBank) {
       /\b(how|where) did you hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
     for (const { re, get } of STRUCTURED_PATTERNS) {
       if (re.test(label)) {
-        const value = get(profile);
+        const value = get(profile, null, label);
         if (hearAbout && value && (/^https?:\/\//i.test(String(value)) || /linkedin\.com\/in\//i.test(String(value)))) {
           continue;
         }
@@ -10571,7 +10636,7 @@ function captureSampleInPage(profile, qaBank) {
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
     { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
-    { key: "eligible_to_work", re: /^eligible to work$/i },
+    { key: "eligible_to_work", re: /eligible to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
       key: "salary_expectations",
@@ -11052,7 +11117,7 @@ const MATCH_CATEGORY_PATTERNS = [
   // live as a real wording variant (Globalization Partners' Greenhouse form) alongside
   // "authorized to work".
   { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
-  { key: "eligible_to_work", re: /^eligible to work$/i },
+  { key: "eligible_to_work", re: /eligible to work/i },
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
   {
     key: "salary_expectations",

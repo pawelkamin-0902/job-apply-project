@@ -66,33 +66,64 @@ function normalizeLabel(raw) {
   return text.replace(/\s+/g, " ").trim();
 }
 
+// Element.closest() stops at a shadow root. SmartRecruiters nests <spl-input> inside
+// <spl-autocomplete>'s open shadow, so a climb from that inner host never sees the light-DOM
+// <sr-question-field-select> or its <span slot="label-content">. Confirmed live
+// jobs-smartrecruiters-com-20260813T160201Z: English-level select resolved as "(no label)".
+function closestCrossingShadow(el, selector) {
+  let node = el;
+  for (let i = 0; i < 12 && node; i++) {
+    if (node.nodeType === 1 && node.matches && node.matches(selector)) return node;
+    if (node.closest) {
+      const hit = node.closest(selector);
+      if (hit) return hit;
+    }
+    const root = node.getRootNode && node.getRootNode();
+    if (root && root !== document && root.host) {
+      node = root.host;
+      continue;
+    }
+    break;
+  }
+  return null;
+}
+
 // SmartRecruiters oneclick-ui screening questions: real question text lives in a
 // `<span slot="label-content">` on the spl-* host (spl-input, spl-textarea, spl-radio-group),
 // inside `[data-test="question-container"]` — not on the inner shadow <input>/<textarea> and
 // not on the host's empty `label=""` / `inlinelabelcontent` attribute. Confirmed live on
 // jobs.smartrecruiters.com/.../screening: without this, Yes/No spl-radio questions were
 // invisible to group detection and text fields inherited the wrong sibling question text.
+// Select questions put that slot on the *container* (`sr-question-field-select`), not on
+// `spl-autocomplete` (which has `label=""` and aria-label="Select What is your …?").
 function findSmartRecruitersQuestionLabel(host) {
   if (!host || !host.closest) return null;
-  const container =
-    host.closest('[data-test="question-container"]') ||
-    host.closest(
-      "sr-question-field-radio, sr-question-field-text, sr-question-field-textarea, sr-question-field-select, sr-question-field-autocomplete"
-    );
-  if (!container) return null;
+  const container = closestCrossingShadow(
+    host,
+    "[data-test='question-container'], sr-question-field-radio, sr-question-field-text, sr-question-field-textarea, sr-question-field-select, sr-question-field-autocomplete"
+  );
   const widget =
-    (host.matches &&
-      host.matches("spl-radio-group, spl-input, spl-textarea, spl-autocomplete") &&
-      host) ||
-    host.closest("spl-radio-group, spl-input, spl-textarea, spl-autocomplete") ||
-    container.querySelector("spl-radio-group, spl-input, spl-textarea, spl-autocomplete");
-  if (widget) {
-    const slotLabel = widget.querySelector('span[slot="label-content"]');
-    if (slotLabel && cleanedText(slotLabel)) return cleanedText(slotLabel);
+    closestCrossingShadow(host, "spl-radio-group, spl-input, spl-textarea, spl-autocomplete") ||
+    (container && container.querySelector && container.querySelector("spl-radio-group, spl-input, spl-textarea, spl-autocomplete"));
+  const readSlot = (root) => {
+    if (!root || !root.querySelector) return "";
+    const slotLabel = root.querySelector('span[slot="label-content"]');
+    return slotLabel && cleanedText(slotLabel) ? cleanedText(slotLabel) : "";
+  };
+  const fromWidget = readSlot(widget);
+  if (fromWidget) return fromWidget;
+  const fromContainer = readSlot(container);
+  if (fromContainer) return fromContainer;
+  const ariaHost = closestCrossingShadow(host, "spl-autocomplete") || widget;
+  if (ariaHost && ariaHost.getAttribute) {
+    const aria = stripSmartRecruitersSelectPrefix((ariaHost.getAttribute("aria-label") || "").trim());
+    if (aria && !isGenericSelectPlaceholder(aria)) return aria;
   }
-  const radioGroup = host.closest("spl-radio-group") || container.querySelector("spl-radio-group");
+  const radioGroup =
+    closestCrossingShadow(host, "spl-radio-group") ||
+    (container && container.querySelector && container.querySelector("spl-radio-group"));
   if (radioGroup) {
-    const fieldset = radioGroup.querySelector('fieldset[aria-labelledby]');
+    const fieldset = radioGroup.querySelector("fieldset[aria-labelledby]");
     const labelledby = fieldset && fieldset.getAttribute("aria-labelledby");
     if (labelledby) {
       const labelEl = document.getElementById(labelledby.split(/\s+/)[0]);
@@ -100,6 +131,40 @@ function findSmartRecruitersQuestionLabel(host) {
     }
   }
   return null;
+}
+
+// Profile has no ContactInfo.github — scrape github.com/{user} from website/summary/bullets.
+// Prefer a profile URL (no /repo path). "link"/"url"/"account" labels get https://github.com/{user}.
+function githubValueFromProfile(profile, label) {
+  const blocked =
+    /^(orgs|settings|topics|features|marketplace|explore|about|login|signup|notifications|pulls|issues|search|new)$/i;
+  const urlRe =
+    /(?:https?:\/\/)?(?:www\.)?github\.com\/+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?:\/)?(?![A-Za-z0-9])/i;
+  const handles = [];
+  const addFrom = (raw) => {
+    if (raw == null) return;
+    if (typeof raw === "string") {
+      const m = raw.match(urlRe);
+      if (m && !blocked.test(m[1])) handles.push(m[1]);
+      return;
+    }
+    if (Array.isArray(raw)) {
+      raw.forEach(addFrom);
+      return;
+    }
+    if (typeof raw === "object") Object.values(raw).forEach(addFrom);
+  };
+  const c = (profile && profile.contact) || {};
+  addFrom(c.github);
+  addFrom(c.website);
+  if (!handles.length && c.github && !/[./:\s]/.test(String(c.github).trim())) {
+    handles.push(String(c.github).trim());
+  }
+  if (!handles.length) addFrom(profile);
+  const handle = handles[0] || null;
+  if (!handle) return null;
+  if (/link|url|account|profile|details/i.test(String(label || ""))) return `https://github.com/${handle}`;
+  return handle;
 }
 
 function stripSmartRecruitersSelectPrefix(text) {
@@ -918,8 +983,12 @@ function collectShadowElements() {
         // spl-autocomplete nests spl-input → inner <input>; label/aria-label live on the outer
         // spl-autocomplete host, not spl-input (label="" there). Confirmed live: ethnicity/
         // gender/disability selects resolved to blank labels without this climb.
+        // closest() from a spl-input *inside* spl-autocomplete's shadow cannot see that host —
+        // climb out of nested open shadows (jobs-smartrecruiters-com-20260813T160201Z).
         let labelHost = host;
-        const autocomplete = host.closest && host.closest("spl-autocomplete");
+        const autocomplete =
+          (typeof closestCrossingShadow === "function" && closestCrossingShadow(host, "spl-autocomplete")) ||
+          (host.closest && host.closest("spl-autocomplete"));
         if (autocomplete) labelHost = autocomplete;
         found.push({ element: inner, host: labelHost });
       }
@@ -930,32 +999,49 @@ function collectShadowElements() {
   return collectFrom(document);
 }
 
-// SmartRecruiters screening questions use custom `<spl-radio role="radio" name="question_*">`
-// elements (no native <input type="radio">), grouped under `<spl-radio-group>`.
+// SmartRecruiters screening questions use custom `<spl-radio role="radio">` under
+// `<spl-radio-group>`. Live oneclick-ui screening often has `name=""` (not `question_*`),
+// so grouping by name missed every Yes/No (jobs-smartrecruiters-com-20260813T160201Z:
+// groups=0 for "eligible to work in the EU?" / "reside in Germany?").
+function splRadioOptionLabel(el) {
+  const attr = (el.getAttribute && el.getAttribute("label")) || "";
+  if (attr && attr.trim()) return normalizeLabel(attr);
+  const slot = el.querySelector && el.querySelector('span[slot="label-content"]');
+  if (slot && cleanedText(slot)) return normalizeLabel(cleanedText(slot));
+  return normalizeLabel(cleanedText(el) || "");
+}
+
+function isVisibleSplRadio(el) {
+  if (isVisible(el)) return true;
+  const row = (el.closest && (el.closest("sr-question-field-radio") || el.closest("spl-radio-group"))) || el;
+  const rect = row.getBoundingClientRect();
+  return rect.width > 1 && rect.height > 1;
+}
+
 function collectSplRadioGroups(claimed) {
-  const byName = new Map();
-  for (const el of document.querySelectorAll('spl-radio[name^="question_"]')) {
-    if (!isVisible(el)) continue;
-    const name = el.getAttribute("name");
-    if (!name) continue;
-    if (!byName.has(name)) byName.set(name, []);
-    byName.get(name).push(el);
+  const byKey = new Map();
+  for (const el of document.querySelectorAll("spl-radio")) {
+    const group = el.closest && el.closest("spl-radio-group");
+    if (!group) continue;
+    if (!isVisibleSplRadio(el)) continue;
+    const name = (el.getAttribute("name") || "").trim();
+    const key = name || group;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(el);
   }
   const groups = [];
-  for (const radios of byName.values()) {
+  for (const radios of byKey.values()) {
     if (radios.length < 2) continue;
-    let groupLabel = findSmartRecruitersQuestionLabel(radios[0]);
-    if (!groupLabel) {
-      const group = radios[0].closest("spl-radio-group");
-      if (group) groupLabel = findSmartRecruitersQuestionLabel(group);
-    }
+    const group = radios[0].closest("spl-radio-group");
+    let groupLabel = group && findSmartRecruitersQuestionLabel(group);
+    if (!groupLabel) groupLabel = findSmartRecruitersQuestionLabel(radios[0]);
     if (!groupLabel) continue;
     groups.push({
       kind: "radio-group",
       label: normalizeLabel(groupLabel),
       options: radios.map((el) => ({
         element: el,
-        optionLabel: normalizeLabel(el.getAttribute("label") || ""),
+        optionLabel: splRadioOptionLabel(el),
       })),
     });
     radios.forEach((r) => claimed.add(r));

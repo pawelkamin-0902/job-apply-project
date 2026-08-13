@@ -3317,6 +3317,25 @@ unverified outside a live browser).
     Right to Work is a visa-status list — do not fill QA "No". Not yet confirmed
     live.
 
+130. **SmartRecruiters screening (jobs.smartrecruiters.com Redcare): English level left as
+    `(no label)`; GitHub link asked for input; EU/Germany Yes/No never detected.**
+    `Author: Cursor`. Capture `jobs-smartrecruiters-com-20260813T160201Z`.
+    - **English select**: question text is `<span slot="label-content">` on
+      `sr-question-field-select`, not on nested `spl-autocomplete` (`label=""`). Inner
+      `spl-input` lives in that autocomplete's shadow, so `closest()` never reached the
+      light-DOM slot (`(no label)`). Menu was already open; `findComboboxOptions` saw
+      `aria-controls` listbox, found no light-DOM `[role=option]`, and returned `[]`
+      (`combobox-discovery "" -> 0`). Fixed: `closestCrossingShadow`; read container slot
+      / `aria-label` minus `"Select "`; pierce `spl-select-option` even when the menu was
+      already open; default Fluent once the label matches.
+    - **GitHub**: pattern matched `"Please add your GitHub link / account details"` but
+      `ContactInfo` has no `github` and website was LinkedIn, so structured value was
+      null and `canGenerate=false`. Now scrape `github.com/{user}` from the whole profile
+      and fill a URL; if still empty, do not block GPT.
+    - **Radios**: `collectSplRadioGroups` required `name^="question_"`; live radios have
+      `name=""`. Group by `spl-radio-group`. "Eligible to work in the EU?" (Poland → Yes)
+      and "reside in Germany?" (Poland → No). Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
