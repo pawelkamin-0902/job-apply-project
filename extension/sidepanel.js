@@ -2472,6 +2472,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // sibling of the number input — no <label> text that matches the Workday-style patterns
     // above. Confirmed live on manningglobal.zohorecruit.eu (Mobile field).
     if (document.querySelector('[lt-prop-user-value="dial_code"], crux-phone-component')) return true;
+    // Greenhouse remix: Country dial combobox (#country in .select-shell) sits beside
+    // intl-tel-input — confirmed live lokainc 20260813T112331Z. Without this, setPhoneValue's
+    // DOM fallback still opened the 240-country iti flag list even after Country was already set.
+    if (
+      /greenhouse\.io$/i.test(location.hostname || "") &&
+      document.querySelector("input#country[role='combobox'], .select-shell #country") &&
+      document.querySelector(".iti__tel-input, .iti")
+    ) {
+      return true;
+    }
     return false;
   }
 
@@ -2628,6 +2638,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (element.id && /countryPhoneCode|country-phone-code/i.test(element.id)) return true;
     const autocomplete = (element.getAttribute && element.getAttribute("autocomplete")) || "";
     if (/^tel-country-code$/i.test(autocomplete)) return true;
+    // Greenhouse remix job-boards: bare "Country" combobox id=country next to iti phone
+    // (lokainc 20260813T112331Z) — not wrapped in .phone-input__country.
+    if (
+      element.id === "country" &&
+      /greenhouse\.io$/i.test(location.hostname || "") &&
+      document.querySelector(".iti__tel-input, .iti")
+    ) {
+      return true;
+    }
     if (element.closest && element.closest(".phone-row__prefix, .cx-select-container")) {
       const hint =
         (element.getAttribute("aria-label") || "") +
@@ -2727,7 +2746,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     },
     {
       key: "hear_about",
-      re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+      re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
     },
     {
       key: "reasonable_accommodation",
@@ -2739,7 +2758,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -3149,6 +3168,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         // just corrupt the number, so leave it alone and fall through to a plain fill of
         // the untouched original value below rather than a wrongly-split one.
         if (countryItem) {
+          const localNumber = String(value).slice(1 + dialCodeLen).trim();
+          // Greenhouse remix already has a separate Country combobox. Opening iti's 240-row
+          // flag list here is what the user saw as phone focus / open-close looping
+          // (lokainc 20260813T112331Z). Write local digits only; Country is filled elsewhere.
+          if (
+            (typeof hasSeparateCountryCodeField === "function" && hasSeparateCountryCodeField()) ||
+            document.querySelector("input#country[role='combobox'], .select-shell #country")
+          ) {
+            nativeSet(element, localNumber);
+            return true;
+          }
           const list = wrapper.querySelector(".iti__country-list");
           const listAlreadyOpen =
             list &&
@@ -3178,7 +3208,6 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           }
           countryItem.click();
           await new Promise((resolve) => setTimeout(resolve, 100));
-          const localNumber = String(value).slice(1 + dialCodeLen).trim();
           nativeSet(element, localNumber);
           return true;
         }
@@ -3808,13 +3837,22 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const target = (desiredText || "").toLowerCase().trim();
     const cur = display.toLowerCase();
     if (cur === target || cur.startsWith(target + ",") || cur.startsWith(target + " ")) return true;
-    if (element.closest && element.closest(".phone-input__country")) {
-      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
-      if (bareCountry === target || bareCountry.startsWith(target)) return true;
-      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
-    }
-    if (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element)) {
-      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+    const isDialPicker =
+      (element.closest && element.closest(".phone-input__country")) ||
+      (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element));
+    if (isDialPicker) {
+      const digits = String(
+        (typeof profile !== "undefined" && profile && profile.contact && profile.contact.phone) || ""
+      ).replace(/[^\d+]/g, "");
+      const code = display.trim();
+      if (/^\+\d{1,4}$/.test(code)) {
+        // Any +NN used to count as committed (lokainc 20260813T112331Z: +1 skipped Poland re-fill).
+        if (digits.startsWith(code)) return true;
+        const bare = code.replace(/^\+/, "");
+        const digitsOnly = digits.replace(/^\+/, "");
+        if (bare && digitsOnly.startsWith(bare)) return true;
+        return false;
+      }
       const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
       if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
         return true;
@@ -4182,7 +4220,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // nativeSet blurs after typing which cancels Places (confirmed live: open/close with no
   // visible "Warsaw" typing and empty waits).
   async function fillGreenhouseLocationPlaces(element, desiredText, controlEl) {
-    const query = String(desiredText || "").trim();
+    let query = String(desiredText || "").trim();
+    // Greenhouse Places: "Warsaw, Poland" returns 0 predictions for ~35s; bare city maps to
+    // "Warsaw, Mazowieckie, Poland" immediately (lokainc 20260813T112331Z).
+    if (
+      (element.id && /^(candidate-location|_systemfield_location)$/i.test(element.id)) ||
+      /location\s*\(\s*city\s*\)/i.test((element.getAttribute && element.getAttribute("aria-label")) || "")
+    ) {
+      const city = query.split(",")[0].trim();
+      if (city) query = city;
+    }
     const log = (step, extra) => {
       console.info(`[Auto Fill][location] ${step}`, {
         query,
@@ -4454,11 +4501,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // as the earlier findElementByLabel bug) rather than its own intended element. Logging the
     // actual element identity (id + whether it's inside .phone-input__country) every call tells
     // these two apart directly instead of guessing again.
-    if (element && element.closest && element.closest(".phone-input__country")) {
+    if (
+      (element && element.closest && element.closest(".phone-input__country")) ||
+      (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element))
+    ) {
       console.warn(
         `[Auto Fill][phone-watch] fillReactSelectByClick called on the COUNTRY PICKER itself with desiredText="${desiredText}" (element id="${element.id || ""}")`
       );
-      if (!isDialCodeTargetReasonable(desiredText)) {
+      if (typeof isDialCodeTargetReasonable === "function" && !isDialCodeTargetReasonable(desiredText)) {
         console.warn(
           `[Auto Fill][phone-watch] refusing non-country value "${desiredText}" on dial-code picker (id="${element.id || ""}")`
         );
@@ -4625,10 +4675,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           options.find((o) => norm(o.textContent).startsWith(target)) ||
           options.find((o) => norm(o.textContent).includes(target) || target.includes(norm(o.textContent))) ||
           (/^(yes|no)$/i.test(target) && options.find((o) => norm(o.textContent) === target)) ||
-          (/^(yes|agree|accept|i agree)$/i.test(target) &&
+          (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
             options.find(
-              (o) => /agree|accept|consent/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree/i.test(norm(o.textContent))
+              (o) => /agree|accept|consent|confirm/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree|not confirm/i.test(norm(o.textContent))
             )) ||
+          (/linkedin/i.test(target) &&
+            !/^https?:/i.test(target) &&
+            (options.find((o) => /linkedin\s*post/i.test(norm(o.textContent))) ||
+              options.find((o) => /linkedin/i.test(norm(o.textContent)) && !/^https?:/i.test(norm(o.textContent))))) ||
           null
         );
       };
@@ -4974,8 +5028,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         options.find((o) => textOf(o).startsWith(target + ",") || textOf(o).startsWith(target + " ")) ||
         options.find((o) => textOf(o).startsWith(target)) ||
         options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) ||
-        (/^(yes|agree|accept|i agree)$/i.test(target) &&
-          options.find((o) => /agree|accept|consent/i.test(textOf(o)) && !/do not|don't|decline|not agree/i.test(textOf(o)))) ||
+        (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
+          options.find((o) => /agree|accept|consent|confirm/i.test(textOf(o)) && !/do not|don't|decline|not agree|not confirm/i.test(textOf(o)))) ||
+        (/linkedin/i.test(target) &&
+          !/^https?:/i.test(target) &&
+          (options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
+            options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))))) ||
         null
       );
     };
@@ -5181,11 +5239,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       if (!match && includes.length) match = includes[0];
     }
-    if (!match && /^(yes|agree|accept|i agree)$/i.test(target)) {
+    if (!match && /^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target)) {
       match = options.find((o) => {
         const t = textOf(o);
-        return /agree|accept|consent/i.test(t) && !/do not|don't|decline|not agree/i.test(t);
+        return /agree|accept|consent|confirm/i.test(t) && !/do not|don't|decline|not agree|not confirm/i.test(t);
       });
+    }
+    if (
+      !match &&
+      /linkedin/i.test(target) &&
+      !/^https?:/i.test(target)
+    ) {
+      match =
+        options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
+        options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))) ||
+        null;
     }
     // Location / Places typeahead: after typing + search finishes, pick the top suggestion
     // (confirmed live Greenhouse candidate-location: "Warsaw" → "Warsaw, Mazowieckie, Poland").
@@ -5842,6 +5910,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (/^(no|n|false)$/i.test(desired)) {
       return optionLabels.find((o) => /^no$/i.test(String(o).trim())) || desired;
     }
+    if (/linkedin/i.test(desired) && !/^https?:/i.test(desired)) {
+      const linkedInOpt =
+        optionLabels.find((o) => /linkedin\s*post/i.test(String(o))) ||
+        optionLabels.find((o) => /linkedin/i.test(String(o)) && !/^https?:/i.test(String(o)));
+      if (linkedInOpt) return linkedInOpt;
+    }
+    if (isYesNoOptionSet(optionLabels) && desired.length > 40) {
+      const skillPick = inferSkillExperienceYesNo(label);
+      if (skillPick) return optionLabels.find((o) => new RegExp(`^${skillPick}$`, "i").test(String(o).trim())) || skillPick;
+    }
     return desired;
   }
 
@@ -5994,13 +6072,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
     }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
-      const linkedInOpt = optionLabels.find((o) => /linkedin/i.test(String(o)));
+      const linkedInOpt =
+        optionLabels.find((o) => /linkedin\s*post/i.test(String(o))) ||
+        optionLabels.find((o) => /linkedin/i.test(String(o)) && !/^https?:/i.test(String(o)));
       if (linkedInOpt) add(linkedInOpt);
       else add("LinkedIn");
     }
-    if (/acknowledg|gdpr/i.test(String(label || ""))) {
+    if (/acknowledg|gdpr|privacy|consent/i.test(String(label || ""))) {
       const confirm =
-        optionLabels.find((o) => /^i confirm$/i.test(String(o).trim())) ||
+        optionLabels.find((o) => /^(i\s+)?confirm$/i.test(String(o).trim())) ||
         optionLabels.find((o) => /confirm|agree|accept/i.test(String(o)) && !/do not|don't|decline|not confirm/i.test(String(o)));
       if (confirm) add(confirm);
     }
@@ -6030,11 +6110,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (mapped) add(mapped);
     }
     if (
-      (cat === "skill_experience" || /\bexperience\s+(?:with|building|in)\b/i.test(String(label || ""))) &&
+      (cat === "skill_experience" ||
+        /\b(do you have|have you).{0,40}experience|\bexperience\s+(?:with|building|in)\b/i.test(String(label || ""))) &&
       optionLabels.some((o) => /^(yes|no)$/i.test(String(o).trim()))
     ) {
       const skillPick = inferSkillExperienceYesNo(label);
-      if (skillPick) add(optionLabels.find((o) => new RegExp(`^${skillPick}$`, "i").test(String(o).trim())) || skillPick);
+      const yes = optionLabels.find((o) => /^yes$/i.test(String(o).trim()));
+      const no = optionLabels.find((o) => /^no$/i.test(String(o).trim()));
+      add((skillPick === "Yes" ? yes : no) || skillPick || no || "No");
     }
     return candidates;
   }
@@ -6064,35 +6147,45 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const raw = String(label || "");
     // Classic: "Experience working with X?" / "Experience with X"
     let m = raw.match(/\bexperience\s+(?:working\s+)?with\s+([^?.!]+)/i);
+    // "Do you have professional experience with Python and SQL at an advanced level?"
+    if (!m) m = raw.match(/\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\s+([^?.!]+)/i);
     // Greenhouse requirement statements: "Hands-on experience with modern mobile…",
     // "5+ years of software engineering experience building… Python and TypeScript"
     if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using)\s+([^?.!]+)/i);
-    if (!m && /\b(proficiency|years).{0,40}\b(python|typescript|react|kubernetes|aws|docker)\b/i.test(raw)) {
+    if (!m && /\b(proficiency|years).{0,40}\b(python|typescript|react|kubernetes|aws|docker|sql)\b/i.test(raw)) {
       m = [raw, raw];
     }
-    if (!m) return null;
+    if (!m) {
+      if (/\b(do you have|have you).{0,40}experience|experience with\b/i.test(raw)) return "No";
+      return null;
+    }
     let skill = m[1].trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").trim();
     if (!skill) return null;
     const blob = profileSkillHaystack();
     // Tokenize skill phrase; also pull notable tech tokens from the whole label.
     const labelTechs = (raw.toLowerCase().match(
-      /\b(python|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
+      /\b(python|sql|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
     ) || []).map((t) => t.replace(/\s+/g, " "));
     const tokens = [
       ...skill.split(/[\s,/]+/).filter((t) => t.length > 2),
       ...labelTechs,
     ];
+    const skipTok = new Set([
+      "and", "the", "with", "for", "you", "have", "professional", "experience", "advanced",
+      "level", "modern", "using", "working", "hands", "years", "plus",
+    ]);
     const seen = new Set();
     for (const tok of tokens) {
-      if (seen.has(tok)) continue;
+      if (seen.has(tok) || skipTok.has(tok)) continue;
       seen.add(tok);
       if (tok === "go" && (/\bgolang\b/.test(blob) || /\bgo\s*\(/.test(blob))) return "Yes";
       if (blob.includes(tok)) return "Yes";
     }
     // Unknown skill on a Yes/No requirement — prefer No over inventing Yes.
-    if (/\b(highly relevant|required|must have|hands-?on experience|years of)\b/i.test(raw)) {
+    if (/\b(highly relevant|required|must have|hands-?on experience|years of|do you have|have you)\b/i.test(raw)) {
       return "No";
     }
+    if (/\bexperience with\b/i.test(raw)) return "No";
     return null;
   }
 
@@ -6328,8 +6421,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       !/^country\b/i.test(ownLabel) &&
       !/\bnationality\b/i.test(ownLabel)
     ) {
+      const city = (profile.contact && profile.contact.city) || "";
       const full = profileLocationQuery();
-      if (full) structuredValue = full;
+      // Greenhouse Location (City) Places wants the city token, not "City, Country".
+      if (element.id === "candidate-location" || /location\s*\(\s*city\s*\)/i.test(ownLabel)) {
+        structuredValue = city || (full ? full.split(",")[0].trim() : full) || structuredValue;
+      } else if (full) {
+        structuredValue = full;
+      }
     }
     // RecruitCRM apply: "Location" is a searchable country list (cmdk), not a city — confirmed
     // live: typing "Warsaw" matches nothing; Poland is the real option.
@@ -6607,16 +6706,44 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.warn("[Auto Fill][phone-watch] country picker FAILED to commit any value");
     }
     if (looksLikeComboboxPick(element) && isConsentField(label)) {
-      const consentPicks = ["I agree", "Yes", "Agree", "Accept"];
-      const qaEarly = matchQaBank(label, element);
-      if (qaEarly && qaEarly.answer) consentPicks.unshift(qaEarly.answer);
+      let optionLabels = [];
+      try {
+        optionLabels = findRadixHiddenSelectOptions(element) || [];
+      } catch {
+        optionLabels = [];
+      }
+      if (!optionLabels.length) {
+        try {
+          optionLabels = discoverGreenhouseOptionsFromFiber(element) || [];
+        } catch {
+          optionLabels = [];
+        }
+      }
+      const wanted =
+        optionLabels.find((t) => /^(i\s+)?(confirm|agree|accept)$/i.test(String(t).trim())) ||
+        optionLabels.find(
+          (t) =>
+            /confirm|agree|accept|consent/i.test(String(t)) &&
+            !/do not|don't|decline|not confirm|not agree/i.test(String(t))
+        ) ||
+        (optionLabels.length === 1 ? optionLabels[0] : null);
+      // One real option (Confirm) — never open/close I agree / Yes / Agree / Accept
+      // (lokainc 20260813T112331Z Privacy Policy, 11–18s gaps between failed phrases).
+      const picks = wanted ? [wanted] : ["Confirm", "I Confirm", "I agree"];
       let consentDone = false;
-      for (const pick of [...new Set(consentPicks.map(String))]) {
-        if (await fillReactSelectByClick(element, pick)) {
+      for (const pick of picks) {
+        if (fillGreenhouseViaReactFiber(element, pick)) {
           filled.push({ label, value: pick, source: "consent" });
           consentDone = true;
           break;
         }
+        const ok = await fillReactSelectByClick(element, pick);
+        if (ok && ok !== "no-match") {
+          filled.push({ label, value: pick, source: "consent" });
+          consentDone = true;
+          break;
+        }
+        if (wanted) break;
       }
       if (consentDone) continue;
     }
@@ -6696,14 +6823,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       // GDPR / acknowledgement dropdowns — prefer Confirm/Agree before a stale QA phrase
       // like "Acknowledge/Confirm" that isn't a real option (apaleo 20260813T100213Z).
-      if (/acknowledg|gdpr|privacy|consent/i.test(label) && !comboboxHasDisplayValue(element)) {
-        const ackPicks = [];
-        if (qaMatch && qaMatch.answer && isPlausibleQaComboboxAnswer(label, qaMatch.answer)) {
-          ackPicks.push(qaMatch.answer);
-        }
-        ackPicks.push("I Confirm", "I agree", "Agree", "Confirm", "Yes", "Accept");
+      if (
+        /acknowledg|gdpr|privacy|consent/i.test(label) &&
+        !isConsentField(label) &&
+        !comboboxHasDisplayValue(element)
+      ) {
+        const ackPicks = ["Confirm", "I Confirm", "I agree", "Agree"];
         let ackDone = false;
-        for (const pick of [...new Set(ackPicks.map(String).filter(Boolean))]) {
+        for (const pick of ackPicks) {
           if (await fillReactSelectByClick(element, pick)) {
             filled.push({ label, value: pick, source: "consent" });
             ackDone = true;
@@ -6974,19 +7101,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
     }
 
-    // Privacy/terms on a react-select-style combobox (confirmed live: New Relic Greenhouse
-    // Applicant Privacy Policy is a required dropdown, not a checkbox).
-    if (looksLikeComboboxPick(element) && isConsentField(label)) {
-      let consentDone = false;
-      for (const pick of ["I agree", "Yes", "Agree", "Accept"]) {
-        if (await fillReactSelectByClick(element, pick)) {
-          filled.push({ label, value: pick, source: "consent" });
-          consentDone = true;
-          break;
-        }
-      }
-      if (consentDone) continue;
-    }
+    // Privacy/terms already handled in the one-shot consent block above. A second
+    // I agree/Yes/Agree/Accept loop was the open/close thrash on lokainc 20260813T112331Z.
 
     // Free-text "How did you hear…?" — answer with the source name, never the profile URL
     // (apaleo 20260813T100213Z: /linkedin/ structured match dumped the URL into this textarea).
@@ -7923,13 +8039,22 @@ async function fillGeneratedAnswersInPage(answers) {
     const target = (desiredText || "").toLowerCase().trim();
     const cur = display.toLowerCase();
     if (cur === target || cur.startsWith(target + ",") || cur.startsWith(target + " ")) return true;
-    if (element.closest && element.closest(".phone-input__country")) {
-      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
-      if (bareCountry === target || bareCountry.startsWith(target)) return true;
-      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
-    }
-    if (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element)) {
-      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+    const isDialPicker =
+      (element.closest && element.closest(".phone-input__country")) ||
+      (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element));
+    if (isDialPicker) {
+      const digits = String(
+        (typeof profile !== "undefined" && profile && profile.contact && profile.contact.phone) || ""
+      ).replace(/[^\d+]/g, "");
+      const code = display.trim();
+      if (/^\+\d{1,4}$/.test(code)) {
+        // Any +NN used to count as committed (lokainc 20260813T112331Z: +1 skipped Poland re-fill).
+        if (digits.startsWith(code)) return true;
+        const bare = code.replace(/^\+/, "");
+        const digitsOnly = digits.replace(/^\+/, "");
+        if (bare && digitsOnly.startsWith(bare)) return true;
+        return false;
+      }
       const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
       if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
         return true;
@@ -8148,7 +8273,16 @@ async function fillGeneratedAnswersInPage(answers) {
   // nativeSet blurs after typing which cancels Places (confirmed live: open/close with no
   // visible "Warsaw" typing and empty waits).
   async function fillGreenhouseLocationPlaces(element, desiredText, controlEl) {
-    const query = String(desiredText || "").trim();
+    let query = String(desiredText || "").trim();
+    // Greenhouse Places: "Warsaw, Poland" returns 0 predictions for ~35s; bare city maps to
+    // "Warsaw, Mazowieckie, Poland" immediately (lokainc 20260813T112331Z).
+    if (
+      (element.id && /^(candidate-location|_systemfield_location)$/i.test(element.id)) ||
+      /location\s*\(\s*city\s*\)/i.test((element.getAttribute && element.getAttribute("aria-label")) || "")
+    ) {
+      const city = query.split(",")[0].trim();
+      if (city) query = city;
+    }
     const log = (step, extra) => {
       console.info(`[Auto Fill][location] ${step}`, {
         query,
@@ -8420,10 +8554,24 @@ async function fillGeneratedAnswersInPage(answers) {
     // as the earlier findElementByLabel bug) rather than its own intended element. Logging the
     // actual element identity (id + whether it's inside .phone-input__country) every call tells
     // these two apart directly instead of guessing again.
-    if (element && element.closest && element.closest(".phone-input__country")) {
+    if (
+      (element && element.closest && element.closest(".phone-input__country")) ||
+      (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element))
+    ) {
       console.warn(
         `[Auto Fill][phone-watch] fillReactSelectByClick called on the COUNTRY PICKER itself with desiredText="${desiredText}" (element id="${element.id || ""}")`
       );
+      const want = String(desiredText || "").trim();
+      const looksLikeCountry =
+        /^\+\d{1,4}$/.test(want) ||
+        /^(yes|no)$/i.test(want) ||
+        /poland|country|dial|calling/i.test(want);
+      if (want && !looksLikeCountry && want.length > 4) {
+        console.warn(
+          `[Auto Fill][phone-watch] refusing non-country value "${desiredText}" on dial-code picker (id="${element.id || ""}")`
+        );
+        return false;
+      }
     }
     if (await tryFillRecruitCrmCmdkCombobox(element, desiredText)) {
       return true;
@@ -8559,10 +8707,14 @@ async function fillGeneratedAnswersInPage(answers) {
           options.find((o) => norm(o.textContent).startsWith(target)) ||
           options.find((o) => norm(o.textContent).includes(target) || target.includes(norm(o.textContent))) ||
           (/^(yes|no)$/i.test(target) && options.find((o) => norm(o.textContent) === target)) ||
-          (/^(yes|agree|accept|i agree)$/i.test(target) &&
+          (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
             options.find(
-              (o) => /agree|accept|consent/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree/i.test(norm(o.textContent))
+              (o) => /agree|accept|consent|confirm/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree|not confirm/i.test(norm(o.textContent))
             )) ||
+          (/linkedin/i.test(target) &&
+            !/^https?:/i.test(target) &&
+            (options.find((o) => /linkedin\s*post/i.test(norm(o.textContent))) ||
+              options.find((o) => /linkedin/i.test(norm(o.textContent)) && !/^https?:/i.test(norm(o.textContent))))) ||
           null
         );
       };
@@ -8900,8 +9052,12 @@ async function fillGeneratedAnswersInPage(answers) {
         options.find((o) => textOf(o).startsWith(target + ",") || textOf(o).startsWith(target + " ")) ||
         options.find((o) => textOf(o).startsWith(target)) ||
         options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) ||
-        (/^(yes|agree|accept|i agree)$/i.test(target) &&
-          options.find((o) => /agree|accept|consent/i.test(textOf(o)) && !/do not|don't|decline|not agree/i.test(textOf(o)))) ||
+        (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
+          options.find((o) => /agree|accept|consent|confirm/i.test(textOf(o)) && !/do not|don't|decline|not agree|not confirm/i.test(textOf(o)))) ||
+        (/linkedin/i.test(target) &&
+          !/^https?:/i.test(target) &&
+          (options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
+            options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))))) ||
         null
       );
     };
@@ -9078,11 +9234,21 @@ async function fillGeneratedAnswersInPage(answers) {
     if (!match) {
       match = options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) || null;
     }
-    if (!match && /^(yes|agree|accept|i agree)$/i.test(target)) {
+    if (!match && /^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target)) {
       match = options.find((o) => {
         const t = textOf(o);
-        return /agree|accept|consent/i.test(t) && !/do not|don't|decline|not agree/i.test(t);
+        return /agree|accept|consent|confirm/i.test(t) && !/do not|don't|decline|not agree|not confirm/i.test(t);
       });
+    }
+    if (
+      !match &&
+      /linkedin/i.test(target) &&
+      !/^https?:/i.test(target)
+    ) {
+      match =
+        options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
+        options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))) ||
+        null;
     }
     // Location / Places typeahead: after typing + search finishes, pick the top suggestion.
     if (!match && options.length && isLocationAutocomplete) {
@@ -9148,6 +9314,14 @@ async function fillGeneratedAnswersInPage(answers) {
     if (element.id && /countryPhoneCode|country-phone-code/i.test(element.id)) return true;
     const autocomplete = (element.getAttribute && element.getAttribute("autocomplete")) || "";
     if (/^tel-country-code$/i.test(autocomplete)) return true;
+    // Greenhouse remix: #country next to iti phone (lokainc 20260813T112331Z).
+    if (
+      element.id === "country" &&
+      /greenhouse\.io$/i.test(location.hostname || "") &&
+      document.querySelector(".iti__tel-input, .iti")
+    ) {
+      return true;
+    }
     if (element.closest && element.closest(".phone-row__prefix, .cx-select-container")) {
       const hint =
         (element.getAttribute("aria-label") || "") +
@@ -9571,7 +9745,10 @@ async function fillGeneratedAnswersInPage(answers) {
 // wasWrong, instead of re-implementing a weaker copy of it here.
 async function checkPhoneCountryPickerInPage(profile) {
   if (!profile || !profile.contact || !profile.contact.country) return { checked: false };
-  const picker = document.querySelector(".phone-input__country [role='combobox']");
+  const picker =
+    document.querySelector(".phone-input__country [role='combobox']") ||
+    document.querySelector("input#country[role='combobox']") ||
+    document.querySelector(".select-shell #country");
   if (!picker) return { checked: false };
   function reactSelectDisplayValue(element) {
     const control = element && element.closest && element.closest('[class*="__control"]');
@@ -9818,7 +9995,7 @@ function captureSampleInPage(profile, qaBank) {
     },
     {
       key: "hear_about",
-      re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+      re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
     },
     {
       key: "reasonable_accommodation",
@@ -9830,7 +10007,7 @@ function captureSampleInPage(profile, qaBank) {
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -10292,7 +10469,7 @@ const MATCH_CATEGORY_PATTERNS = [
   },
   {
     key: "hear_about",
-    re: /\b(where|how) did you hear\b|\breferral source\b|\bapplication source\b/i,
+    re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
   },
   {
     key: "reasonable_accommodation",
@@ -10304,7 +10481,7 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
   { key: "disability_status", re: /\bdisabilit/i },
   { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-  { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
+  { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
 ];
 function detectMatchCategory(text) {
   for (const { key, re } of MATCH_CATEGORY_PATTERNS) {
@@ -10959,6 +11136,12 @@ function coerceSelectAnswer(answer, options) {
   if (ci) return ci;
   const demo = coerceDemographicSelectAnswer(target, options);
   if (demo) return demo;
+  if (/linkedin/i.test(lower) && !/^https?:/i.test(lower)) {
+    const linkedInOpt =
+      options.find((o) => /linkedin\s*post/i.test(o)) ||
+      options.find((o) => /linkedin/i.test(o) && !/^https?:/i.test(o));
+    if (linkedInOpt) return linkedInOpt;
+  }
   return options.find((o) => o.toLowerCase().includes(lower) || lower.includes(o.toLowerCase())) || null;
 }
 

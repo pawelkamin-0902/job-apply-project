@@ -3147,6 +3147,33 @@ unverified outside a live browser).
     Learn them onto proficiency questions, and default remaining English/Polish level
     free-text to Fluent. Not yet confirmed live.
 
+119. **Greenhouse remix (job-boards.greenhouse.io/lokainc) open/close loop + phone focus
+    thrash.** `Author: Cursor`. Capture `job-boards-greenhouse-io-20260813T112331Z`.
+    Reported live: Auto Fill kept opening and closing dropdowns, focusing Phone over and over,
+    and looking stuck in a loop. Causes (all from that console log):
+    - **Phone / Country**: after the remix `#country` combobox already showed `+48`,
+      `setPhoneValue`'s intl-tel-input DOM fallback still opened the 240-country flag list
+      (~20s of focus). Later hear-about ArrowDown leaked into Country (`+48` → `+1`).
+      `comboboxValueCommitted` treated *any* `+NN` as success, so the phone-country-only
+      second pass skipped Poland (`skip display already committed` with `+1`).
+      `checkPhoneCountryPickerInPage` only queried `.phone-input__country` (remix uses
+      `#country` in `.select-shell`).
+    - **Location (City)**: typed `"Warsaw, Poland"`; GH Places returned 0 hits for ~35 polls.
+      Bare `"Warsaw"` maps immediately to `"Warsaw, Mazowieckie, Poland"`.
+    - **Privacy Policy**: only real option is `Confirm`. Three consent loops tried
+      `I agree` / `Yes` / `Agree` / `Accept`, each a full open/close (11–18s gaps), because
+      matchOption's agree/accept/consent regex missed `Confirm`.
+    - **Hear about**: `"Where did you first find out about this job?"` missed
+      `hear_about` (`did you hear` only). GPT later emitted `"LinkedIn Ad"` which is not in
+      the 29-option list, then 4-tier retry including ArrowDown.
+    - **Yes/No skills**: discovery found `[Yes, No]` but `inferSkillExperienceYesNo` returned
+      null (essay QA rejected), so retry picks were empty and fields waited for GPT.
+    Fixed: skip iti flag UI when a separate Country combobox exists; treat remix `#country`
+    as a dial picker; require the displayed code to be a prefix of the profile phone;
+    query `#country` in the final re-check; Places query = city only; one-shot consent via
+    fiber `Confirm`; map LinkedIn/LinkedIn Ad → first LinkedIn option; expand hear_about +
+    skill Yes/No infer. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
