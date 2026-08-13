@@ -2521,7 +2521,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
-    { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
+    // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
+    // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
+    // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
+    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -2667,11 +2670,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
 
   function matchStructuredField(label, element) {
+    const hearAbout =
+      (typeof detectCategory === "function" && detectCategory(label) === "hear_about") ||
+      /\b(how|where) did you hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
     for (const { re, get } of STRUCTURED_PATTERNS) {
       if (re.test(label)) {
         // Greenhouse phone widget: bare "Country" is the dial-code picker, not residence.
         if (/^country\b/i.test(label) && isPhoneDialCodePicker(element)) continue;
         const value = get(profile, element);
+        if (hearAbout && value && (/^https?:\/\//i.test(String(value)) || /linkedin\.com\/in\//i.test(String(value)))) {
+          continue;
+        }
         return { isStructuredCategory: true, value: value || null };
       }
     }
@@ -4919,7 +4928,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
           fieldHint
         )
-    );
+    ) && !/relocat|relocation\s*plans|based (in|outside) the|willing to (move|relocate)/i.test(fieldHint);
     // True geocode/Places widgets only — NOT fixed Greenhouse selects that merely mention
     // location (apaleo 20260813T100213Z: "Current location and relocation plans" options are
     // "Based in Germany|…" but Places typed "Poland" for ~9s with 0 hits).
@@ -6078,6 +6087,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (linkedInOpt) add(linkedInOpt);
       else add("LinkedIn");
     }
+    if (cat === "relocation" || /relocation\s*plans/i.test(String(label || ""))) {
+      const country = String((profile && profile.contact && profile.contact.country) || "").trim();
+      if (country) {
+        const basedIn = optionLabels.find((o) => new RegExp(`\\bbased in ${country}\\b`, "i").test(String(o)));
+        if (basedIn) add(basedIn);
+      }
+    }
     if (/acknowledg|gdpr|privacy|consent/i.test(String(label || ""))) {
       const confirm =
         optionLabels.find((o) => /^(i\s+)?confirm$/i.test(String(o).trim())) ||
@@ -6467,8 +6483,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Location typeaheads still need a Places pick even when Ashby (and others) omit native
     // `required` — skipping them left `_systemfield_location` empty (20260813T092428Z).
     // Relocation-plans selects are fixed option lists ("Based in Germany|…"), not a city —
-    // apaleo 20260813T100213Z: profile/QA "Poland" was thrown at Places for ~9s.
-    if (structuredValue && /relocat|relocation\s*plans|based (in|outside) the/i.test(ownLabel)) {
+    // apaleo 20260813T100213Z / 20260813T124048Z: profile/QA "Poland"/"Romania" was thrown at Places.
+    if (structuredValue && /relocat|relocation\s*plans|based (in|outside) the/i.test(`${ownLabel} ${label}`)) {
+      structuredValue = null;
+    }
+    // How-did-you-hear free text must never get a profile URL even if a leftover pattern matches.
+    if (
+      structuredValue &&
+      /^https?:\/\//i.test(String(structuredValue)) &&
+      (detectCategory(label) === "hear_about" ||
+        detectCategory(ownLabel) === "hear_about" ||
+        /\b(how|where) did you hear\b|\bfound the job posting\b/i.test(`${ownLabel} ${label}`))
+    ) {
       structuredValue = null;
     }
     if (
@@ -6875,11 +6901,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // discovery so pickExperienceYearsOption can map onto the real option text.
     const yearsExpCombobox =
       detectCategory(label) === "years_experience" && looksLikeComboboxPick(element);
+    const relocationPlansCombobox =
+      (detectCategory(label) === "relocation" || /relocation\s*plans/i.test(label)) &&
+      looksLikeComboboxPick(element);
     if (
       qaAnswerUsable &&
       looksLikeComboboxPick(element) &&
       !salaryBandCombobox &&
       !yearsExpCombobox &&
+      !relocationPlansCombobox &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
       if (comboboxHasDisplayValue(element)) {
@@ -6924,6 +6954,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       comboboxTrace(
         element,
         `years-experience combobox - deferring QA "${qaMatch.answer}" to discovery bucket pick`,
+        {}
+      );
+    }
+    if (relocationPlansCombobox && qaAnswerUsable) {
+      qaComboboxFailed = true;
+      comboboxTrace(
+        element,
+        `relocation-plans combobox - deferring QA "${qaMatch.answer}" to option mapping`,
         {}
       );
     }
@@ -8948,7 +8986,7 @@ async function fillGeneratedAnswersInPage(answers) {
         /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
           fieldHint
         )
-    );
+    ) && !/relocat|relocation\s*plans|based (in|outside) the|willing to (move|relocate)/i.test(fieldHint);
     // Kept in sync with runAutofillInPage — Places only for true geocode widgets.
     const isGeocodePlacesField = Boolean(
       (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
@@ -9464,6 +9502,14 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       value = coerced;
     }
+    const fieldLabel = label || (el.getAttribute && el.getAttribute("data-af-label")) || "";
+    if (
+      /^https?:\/\//i.test(String(value || "")) &&
+      /\b(how|where) did you hear\b|\bfound the job posting\b/i.test(fieldLabel)
+    ) {
+      console.info(`[Auto Fill][coerce] "${fieldLabel}" refused profile URL; using LinkedIn`);
+      value = "LinkedIn";
+    }
     // Confirmed live: an exception thrown anywhere in ONE field's fill logic below (a
     // Greenhouse combobox interaction, in particular - see fillReactSelectByClick's own
     // React-Fiber/trusted-click/keyboard-nav fallbacks) used to propagate uncaught out of this
@@ -9833,7 +9879,10 @@ function captureSampleInPage(profile, qaBank) {
     // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
-    { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
+    // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
+    // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
+    // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
+    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -9932,9 +9981,15 @@ function captureSampleInPage(profile, qaBank) {
   ];
 
   function matchStructuredField(label) {
+    const hearAbout =
+      (typeof detectCategory === "function" && detectCategory(label) === "hear_about") ||
+      /\b(how|where) did you hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
     for (const { re, get } of STRUCTURED_PATTERNS) {
       if (re.test(label)) {
         const value = get(profile);
+        if (hearAbout && value && (/^https?:\/\//i.test(String(value)) || /linkedin\.com\/in\//i.test(String(value)))) {
+          continue;
+        }
         if (value) return value;
       }
     }

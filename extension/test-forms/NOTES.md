@@ -3174,6 +3174,19 @@ unverified outside a live browser).
     fiber `Confirm`; map LinkedIn/LinkedIn Ad → first LinkedIn option; expand hear_about +
     skill Yes/No infer. Not yet confirmed live.
 
+120. **Apaleo Greenhouse hear-about got the LinkedIn profile URL; relocation plans still
+    treated as a city Places field.** `Author: Cursor`. Capture
+    `job-boards-greenhouse-io-20260813T124048Z`. "How did you hear about this opportunity?
+    … (e.g., Apaleo website, WeAreDevelopers, LinkedIn…)" matched the structured `/website/`
+    pattern and filled `https://www.linkedin.com/in/…` (source `profile`). The LinkedIn-as-
+    example fix from an earlier apaleo run never covered `website`. "Current location and
+    relocation plans" (Based in Germany / outside the EU …) still had `\blocation\b` so
+    `isLocationAutocomplete` typed QA "Romania" and picked "Select…". Fixed: website/portfolio
+    structured match only for fields that ASK for a URL; skip any `http` value on hear-about;
+    exclude relocation-plans from Places; map "Based in {country}" when that option exists
+    (Romania has no matching option among those three — leave for the applicant). Not yet
+    confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
