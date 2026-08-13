@@ -2636,6 +2636,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // with "Poland" (the residence country) instead of being left for the dial-code picker.
     { re: /^country\b(?!.*\b(phone|code|dial)\b)/i, get: (p) => p.contact.country },
     { re: /country of residence|current country of residence/i, get: (p) => p.contact.country },
+    { re: /what country are you currently based|country you(?:'re| are) currently based in/i, get: (p) => p.contact.country },
     // Broadened beyond a bare leading "Location" after a Recruitee form's "Where are you
     // currently located? (City, country)" fell through to generation and got answered with the
     // candidate's own tech stack instead (a small local model, given a job description that
@@ -2837,7 +2838,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       key: "reasonable_accommodation",
       re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
     },
-    { key: "relocation", re: /\brelocat|currently based|based in\b/i },
+    { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
@@ -3905,6 +3906,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (control) {
       const single = control.querySelector('[class*="__single-value"]');
       if (single && cleanedText(single)) return cleanedText(single);
+      // Greenhouse remix multi-select (id `question_…[]`, `--is-multi`): the committed
+      // answer is a chip, not `__single-value`. Reading only single-value left display=""
+      // after a real pick, so verify failed and the menu reopened ~45 times
+      // (lokainc 20260813T130714Z "Where did you first find out about this job?").
+      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
+        .map((el) => cleanedText(el))
+        .filter(Boolean);
+      if (multi.length) return multi.join(", ");
     }
     // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
     // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
@@ -3955,6 +3964,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
         return true;
       }
+    }
+    if (
+      /linkedin/i.test(target) &&
+      !/^https?:/i.test(target) &&
+      /linkedin/i.test(cur) &&
+      !/^https?:/i.test(cur)
+    ) {
+      return true;
     }
     return cur.includes(target) || target.includes(cur);
   }
@@ -4030,6 +4047,34 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return Object.keys(el || {}).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
   }
 
+  function flattenGreenhouseSelectOptions(opts) {
+    const out = [];
+    for (const o of opts || []) {
+      if (!o) continue;
+      if (Array.isArray(o.options)) out.push(...flattenGreenhouseSelectOptions(o.options));
+      else out.push(o);
+    }
+    return out;
+  }
+
+  function greenhouseSelectStateFromProps(p) {
+    const sp = p && p.selectProps;
+    const onChange = (sp && typeof sp.onChange === "function" && sp.onChange) || p.onChange;
+    if (typeof onChange !== "function") return null;
+    const rawOpts = (sp && sp.options) || p.options;
+    const hasSelectShape =
+      Array.isArray(rawOpts) ||
+      p.classNamePrefix === "select" ||
+      (sp && (sp.classNamePrefix === "select" || typeof sp.onChange === "function"));
+    if (!hasSelectShape) return null;
+    return {
+      onChange,
+      options: flattenGreenhouseSelectOptions(rawOpts || []),
+      isMulti: Boolean((sp && sp.isMulti) || p.isMulti),
+      value: sp && "value" in sp ? sp.value : p.value,
+    };
+  }
+
   function findGreenhouseReactSelect(element) {
     const roots = [element];
     const shell = element.closest && element.closest(".select-shell");
@@ -4042,12 +4087,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       let fiber = root[key];
       while (fiber) {
         const p = fiber.memoizedProps || fiber.pendingProps || {};
-        if (typeof p.onChange === "function" && (Array.isArray(p.options) || p.classNamePrefix === "select")) {
-          return { onChange: p.onChange, options: p.options || [] };
-        }
-        if (p.selectProps && typeof p.selectProps.onChange === "function") {
-          return { onChange: p.selectProps.onChange, options: p.selectProps.options || [] };
-        }
+        const state = greenhouseSelectStateFromProps(p);
+        if (state) return state;
         fiber = fiber.return;
       }
     }
@@ -4057,7 +4098,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function pickGreenhouseReactOption(rs, desiredText) {
     const want = String(desiredText || "").trim();
     const wantLow = want.toLowerCase();
-    const opts = rs.options || [];
+    const opts = flattenGreenhouseSelectOptions(rs.options || []);
     return (
       opts.find((o) => String(o.label || "").trim().toLowerCase() === wantLow) ||
       opts.find((o) => String(o.value ?? "").toString().toLowerCase() === wantLow) ||
@@ -4076,7 +4117,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const picked = pickGreenhouseReactOption(rs, desiredText);
     if (!picked) return false;
     try {
-      rs.onChange(picked, { action: "select-option", option: picked });
+      // react-select isMulti onChange expects an array. Passing a single option object is a
+      // no-op — display stays empty, verify fails, menu reopens (lokainc hear-about `[]`).
+      if (rs.isMulti) {
+        const cur = Array.isArray(rs.value) ? rs.value.filter(Boolean) : rs.value ? [rs.value] : [];
+        const same = (a, b) =>
+          a &&
+          b &&
+          (a === b ||
+            String(a.value ?? "") === String(b.value ?? "") ||
+            String(a.label || "").toLowerCase() === String(b.label || "").toLowerCase());
+        const next = cur.some((v) => same(v, picked)) ? cur : cur.concat([picked]);
+        rs.onChange(next, { action: "select-option", option: picked });
+      } else {
+        rs.onChange(picked, { action: "select-option", option: picked });
+      }
       return comboboxValueCommitted(element, desiredText);
     } catch {
       return false;
@@ -4088,7 +4143,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!rs || !rs.options || !rs.options.length) return [];
     const seen = new Set();
     const out = [];
-    for (const o of rs.options) {
+    for (const o of flattenGreenhouseSelectOptions(rs.options)) {
       const t = String(o.label || o.value || "").trim();
       if (!t || isGenericSelectPlaceholder(t) || seen.has(t)) continue;
       seen.add(t);
@@ -4966,7 +5021,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const displayAfterFail = reactSelectDisplayValue(element);
       console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
-      return false;
+      // Menu opened and options were visible (otherwise we already returned "no-match" at
+      // the matchOption-null skip). Returning false used to fall through to generic
+      // type/wait: ~45 clicks + trustedClick ≈ 90s of the same flyout reopening
+      // (lokainc 20260813T130714Z hear-about "LinkedIn" vs multi-select "LinkedIn Ad").
+      return "no-match";
     }
     // "Fresh" means "was not VISIBLE before this click", not "was not PRESENT in the DOM before
     // this click" - those aren't the same thing, and conflating them was confirmed live to break
@@ -6131,6 +6190,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       .join(", ");
   }
 
+  function hearAboutLinkedInOption(optionLabels) {
+    const labels = (optionLabels || []).map((o) => String(o || "").trim()).filter(Boolean);
+    const usable = (t) => t && !/^https?:\/\//i.test(t);
+    return (
+      labels.find((t) => usable(t) && /linkedin\s*post/i.test(t)) ||
+      labels.find((t) => usable(t) && /linkedin\s*ad/i.test(t)) ||
+      labels.find((t) => usable(t) && /linkedin\s*inmail/i.test(t)) ||
+      labels.find((t) => usable(t) && /linkedin/i.test(t)) ||
+      null
+    );
+  }
+
   function comboboxRetryCandidates(label, optionLabels, qaAnswer) {
     const candidates = [];
     const add = (v) => {
@@ -6138,11 +6209,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (!s) return;
       if (!candidates.some((c) => c.toLowerCase() === s.toLowerCase())) candidates.push(s);
     };
-    if (qaAnswer) {
-      add(qaAnswer);
-      add(coerceComboboxAnswerForOptions(label, qaAnswer, optionLabels));
-    }
     const cat = detectCategory(label);
+    if (qaAnswer) {
+      const qa = String(qaAnswer).trim();
+      const qaExact = (optionLabels || []).some(
+        (o) => String(o).trim().toLowerCase() === qa.toLowerCase()
+      );
+      // Bare QA "LinkedIn" is not a real Greenhouse option (LinkedIn Ad / Post / inmail).
+      // Leading with it includes-matches every LinkedIn-* row, verify fails on multi-select
+      // chips, and the flyout reopens for ~90s (lokainc 20260813T130714Z).
+      if (!(cat === "hear_about" && /^linkedin$/i.test(qa) && !qaExact)) {
+        add(qaAnswer);
+        add(coerceComboboxAnswerForOptions(label, qaAnswer, optionLabels));
+      }
+    }
     if (cat === "years_experience") {
       const total = computeTotalYearsExperience();
       const bucket = pickExperienceYearsOption(total, optionLabels);
@@ -6170,17 +6250,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
     }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
-      const linkedInOpt =
-        optionLabels.find((o) => /linkedin\s*post/i.test(String(o))) ||
-        optionLabels.find((o) => /linkedin/i.test(String(o)) && !/^https?:/i.test(String(o)));
+      const linkedInOpt = hearAboutLinkedInOption(optionLabels);
       if (linkedInOpt) add(linkedInOpt);
-      else add("LinkedIn");
     }
     if (cat === "relocation" || /relocation\s*plans/i.test(String(label || ""))) {
       const country = String((profile && profile.contact && profile.contact.country) || "").trim();
       if (country) {
         const basedIn = optionLabels.find((o) => new RegExp(`\\bbased in ${country}\\b`, "i").test(String(o)));
         if (basedIn) add(basedIn);
+      }
+    }
+    if (/what country are you currently based|country you(?:'re| are) currently based in/i.test(String(label || ""))) {
+      const country = String((profile && profile.contact && profile.contact.country) || "").trim();
+      if (country) {
+        const exact = optionLabels.find((o) => String(o).trim().toLowerCase() === country.toLowerCase());
+        add(exact || country);
       }
     }
     if (/acknowledg|gdpr|privacy|consent/i.test(String(label || ""))) {
@@ -6551,7 +6635,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     // Bare residence Country must stay the profile country — never city/location/dial-code.
     if (
-      /^country\b/i.test(ownLabel) &&
+      (/^country\b/i.test(ownLabel) ||
+        /what country are you currently based|country you(?:'re| are) currently based in/i.test(
+          `${ownLabel} ${label}`
+        )) &&
       !isPhoneDialCodePicker(element) &&
       profile &&
       profile.contact &&
@@ -6912,30 +6999,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           continue;
         }
       }
-      // "Where did you hear about X?" — prefer LinkedIn once up front. Confirmed live Bloomreach
-      // Greenhouse: QA/discovery selected LinkedIn, verify raced, tier-4 nativeSet("") wiped it,
-      // then GPT re-selected the same option (select → clear → select).
+      // "Where did you hear about X?" — pick a real LinkedIn-* option from fiber if present.
+      // Never throw the literal "LinkedIn" at a multi-select whose options are "LinkedIn Ad" /
+      // "LinkedIn Post" / "linkedin inmail": includes-match clicks a chip, verify missed it,
+      // then the generic path reopened the flyout ~45 times (lokainc 20260813T130714Z).
       if (screenCat === "hear_about") {
         if (comboboxHasDisplayValue(element)) {
           const cur = reactSelectDisplayValue(element);
           filled.push({ label, value: cur, source: "already-set" });
           continue;
         }
-        const hearPicks = [];
-        if (qaMatch && qaMatch.answer) hearPicks.push(qaMatch.answer);
-        if (profile && profile.contact && profile.contact.linkedin) hearPicks.push("LinkedIn");
-        hearPicks.push("LinkedIn");
-        let hearDone = false;
-        for (const pick of [...new Set(hearPicks.map(String).filter(Boolean))]) {
-          // Never dump a profile URL into a "how did you hear" answer.
-          if (/^https?:\/\//i.test(String(pick))) continue;
-          if (await fillReactSelectByClick(element, pick)) {
-            filled.push({ label, value: pick, source: "learned" });
-            hearDone = true;
-            break;
+        const fiberOpts = discoverGreenhouseOptionsFromFiber(element);
+        const hearPick = hearAboutLinkedInOption(fiberOpts);
+        if (hearPick) {
+          if (fillGreenhouseViaReactFiber(element, hearPick) || (await fillReactSelectByClick(element, hearPick))) {
+            filled.push({ label, value: hearPick, source: "learned" });
+            continue;
           }
         }
-        if (hearDone) continue;
       }
       // GDPR / acknowledgement dropdowns — prefer Confirm/Agree before a stale QA phrase
       // like "Acknowledge/Confirm" that isn't a real option (apaleo 20260813T100213Z).
@@ -6994,12 +7075,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const relocationPlansCombobox =
       (detectCategory(label) === "relocation" || /relocation\s*plans/i.test(label)) &&
       looksLikeComboboxPick(element);
+    const hearAboutBareLinkedIn =
+      detectCategory(label) === "hear_about" &&
+      looksLikeComboboxPick(element) &&
+      qaAnswerUsable &&
+      /^linkedin$/i.test(String(qaMatch && qaMatch.answer ? qaMatch.answer : "").trim());
     if (
       qaAnswerUsable &&
       looksLikeComboboxPick(element) &&
       !salaryBandCombobox &&
       !yearsExpCombobox &&
       !relocationPlansCombobox &&
+      !hearAboutBareLinkedIn &&
       !/^(yes|no)$/i.test(String(resolveOwnLabel(element, host) || ""))
     ) {
       if (comboboxHasDisplayValue(element)) {
@@ -7052,6 +7139,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       comboboxTrace(
         element,
         `relocation-plans combobox - deferring QA "${qaMatch.answer}" to option mapping`,
+        {}
+      );
+    }
+    if (hearAboutBareLinkedIn) {
+      qaComboboxFailed = true;
+      comboboxTrace(
+        element,
+        `hear-about combobox - deferring QA "${qaMatch.answer}" to real LinkedIn-* option`,
         {}
       );
     }
@@ -8066,6 +8161,14 @@ async function fillGeneratedAnswersInPage(answers) {
     if (control) {
       const single = control.querySelector('[class*="__single-value"]');
       if (single && cleanedText(single)) return cleanedText(single);
+      // Greenhouse remix multi-select (id `question_…[]`, `--is-multi`): the committed
+      // answer is a chip, not `__single-value`. Reading only single-value left display=""
+      // after a real pick, so verify failed and the menu reopened ~45 times
+      // (lokainc 20260813T130714Z "Where did you first find out about this job?").
+      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
+        .map((el) => cleanedText(el))
+        .filter(Boolean);
+      if (multi.length) return multi.join(", ");
     }
     // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
     // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
@@ -8105,11 +8208,47 @@ async function fillGeneratedAnswersInPage(answers) {
     const cur = current.toLowerCase();
     if (!target) return false;
     if (cur === target || cur.startsWith(target + ",") || cur.startsWith(target + " ")) return true;
+    if (
+      /linkedin/i.test(target) &&
+      !/^https?:/i.test(target) &&
+      /linkedin/i.test(cur) &&
+      !/^https?:/i.test(cur)
+    ) {
+      return true;
+    }
     return cur.includes(target) || target.includes(cur);
   }
 
   function greenhouseReactFiberKey(el) {
     return Object.keys(el || {}).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+  }
+
+  function flattenGreenhouseSelectOptions(opts) {
+    const out = [];
+    for (const o of opts || []) {
+      if (!o) continue;
+      if (Array.isArray(o.options)) out.push(...flattenGreenhouseSelectOptions(o.options));
+      else out.push(o);
+    }
+    return out;
+  }
+
+  function greenhouseSelectStateFromProps(p) {
+    const sp = p && p.selectProps;
+    const onChange = (sp && typeof sp.onChange === "function" && sp.onChange) || p.onChange;
+    if (typeof onChange !== "function") return null;
+    const rawOpts = (sp && sp.options) || p.options;
+    const hasSelectShape =
+      Array.isArray(rawOpts) ||
+      p.classNamePrefix === "select" ||
+      (sp && (sp.classNamePrefix === "select" || typeof sp.onChange === "function"));
+    if (!hasSelectShape) return null;
+    return {
+      onChange,
+      options: flattenGreenhouseSelectOptions(rawOpts || []),
+      isMulti: Boolean((sp && sp.isMulti) || p.isMulti),
+      value: sp && "value" in sp ? sp.value : p.value,
+    };
   }
 
   function findGreenhouseReactSelect(element) {
@@ -8124,12 +8263,8 @@ async function fillGeneratedAnswersInPage(answers) {
       let fiber = root[key];
       while (fiber) {
         const p = fiber.memoizedProps || fiber.pendingProps || {};
-        if (typeof p.onChange === "function" && (Array.isArray(p.options) || p.classNamePrefix === "select")) {
-          return { onChange: p.onChange, options: p.options || [] };
-        }
-        if (p.selectProps && typeof p.selectProps.onChange === "function") {
-          return { onChange: p.selectProps.onChange, options: p.selectProps.options || [] };
-        }
+        const state = greenhouseSelectStateFromProps(p);
+        if (state) return state;
         fiber = fiber.return;
       }
     }
@@ -8139,7 +8274,7 @@ async function fillGeneratedAnswersInPage(answers) {
   function pickGreenhouseReactOption(rs, desiredText) {
     const want = String(desiredText || "").trim();
     const wantLow = want.toLowerCase();
-    const opts = rs.options || [];
+    const opts = flattenGreenhouseSelectOptions(rs.options || []);
     return (
       opts.find((o) => String(o.label || "").trim().toLowerCase() === wantLow) ||
       opts.find((o) => String(o.value ?? "").toString().toLowerCase() === wantLow) ||
@@ -8158,7 +8293,21 @@ async function fillGeneratedAnswersInPage(answers) {
     const picked = pickGreenhouseReactOption(rs, desiredText);
     if (!picked) return false;
     try {
-      rs.onChange(picked, { action: "select-option", option: picked });
+      // react-select isMulti onChange expects an array. Passing a single option object is a
+      // no-op — display stays empty, verify fails, menu reopens (lokainc hear-about `[]`).
+      if (rs.isMulti) {
+        const cur = Array.isArray(rs.value) ? rs.value.filter(Boolean) : rs.value ? [rs.value] : [];
+        const same = (a, b) =>
+          a &&
+          b &&
+          (a === b ||
+            String(a.value ?? "") === String(b.value ?? "") ||
+            String(a.label || "").toLowerCase() === String(b.label || "").toLowerCase());
+        const next = cur.some((v) => same(v, picked)) ? cur : cur.concat([picked]);
+        rs.onChange(next, { action: "select-option", option: picked });
+      } else {
+        rs.onChange(picked, { action: "select-option", option: picked });
+      }
       return comboboxValueCommitted(element, desiredText);
     } catch {
       return false;
@@ -8170,7 +8319,7 @@ async function fillGeneratedAnswersInPage(answers) {
     if (!rs || !rs.options || !rs.options.length) return [];
     const seen = new Set();
     const out = [];
-    for (const o of rs.options) {
+    for (const o of flattenGreenhouseSelectOptions(rs.options)) {
       const t = String(o.label || o.value || "").trim();
       if (!t || isGenericSelectPlaceholder(t) || seen.has(t)) continue;
       seen.add(t);
@@ -8210,6 +8359,14 @@ async function fillGeneratedAnswersInPage(answers) {
       if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
         return true;
       }
+    }
+    if (
+      /linkedin/i.test(target) &&
+      !/^https?:/i.test(target) &&
+      /linkedin/i.test(cur) &&
+      !/^https?:/i.test(cur)
+    ) {
+      return true;
     }
     return cur.includes(target) || target.includes(cur);
   }
@@ -9051,7 +9208,11 @@ async function fillGeneratedAnswersInPage(answers) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const displayAfterFail = reactSelectDisplayValue(element);
       console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
-      return false;
+      // Menu opened and options were visible (otherwise we already returned "no-match" at
+      // the matchOption-null skip). Returning false used to fall through to generic
+      // type/wait: ~45 clicks + trustedClick ≈ 90s of the same flyout reopening
+      // (lokainc 20260813T130714Z hear-about "LinkedIn" vs multi-select "LinkedIn Ad").
+      return "no-match";
     }
     // "Fresh" means "was not VISIBLE before this click", not "was not PRESENT in the DOM before
     // this click" - those aren't the same thing, and conflating them was confirmed live to break
@@ -9914,6 +10075,10 @@ async function checkPhoneCountryPickerInPage(profile) {
     if (control) {
       const single = control.querySelector('[class*="__single-value"]');
       if (single && single.textContent) return single.textContent.replace(/\s+/g, " ").trim();
+      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
+        .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+      if (multi.length) return multi.join(", ");
     }
     if (element && element.getAttribute && element.getAttribute("role") === "combobox") {
       const own = (element.textContent || "").replace(/\s+/g, " ").trim();
@@ -10031,6 +10196,7 @@ function captureSampleInPage(profile, qaBank) {
     // with "Poland" (the residence country) instead of being left for the dial-code picker.
     { re: /^country\b(?!.*\b(phone|code|dial)\b)/i, get: (p) => p.contact.country },
     { re: /country of residence|current country of residence/i, get: (p) => p.contact.country },
+    { re: /what country are you currently based|country you(?:'re| are) currently based in/i, get: (p) => p.contact.country },
     // Broadened beyond a bare leading "Location" after a Recruitee form's "Where are you
     // currently located? (City, country)" fell through to generation and got answered with the
     // candidate's own tech stack instead (a small local model, given a job description that
@@ -10169,7 +10335,7 @@ function captureSampleInPage(profile, qaBank) {
       key: "reasonable_accommodation",
       re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
     },
-    { key: "relocation", re: /\brelocat|currently based|based in\b/i },
+    { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
@@ -10643,7 +10809,7 @@ const MATCH_CATEGORY_PATTERNS = [
     key: "reasonable_accommodation",
     re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
   },
-  { key: "relocation", re: /\brelocat|currently based|based in\b/i },
+  { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
   { key: "gender", re: /\bgender\b/i },
   { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
   { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },

@@ -3203,6 +3203,27 @@ unverified outside a live browser).
     overlay file input / Browse, confirms Attach/Save; if only Delete exists, remove then
     Add file. Not yet confirmed live.
 
+122. **Loka Greenhouse (job-boards.greenhouse.io/lokainc): "Where did you first find out
+    about this job?" opened 100+ times.** `Author: Cursor`. Capture
+    `job-boards-greenhouse-io-20260813T130714Z`. The widget is a react-select **multi-select**
+    (`id=question_4391086007[]`, `select__value-container--is-multi`). Options are
+    "linkedin inmail" / "LinkedIn Post" / "LinkedIn Ad" — not the literal `"LinkedIn"` the
+    filler tried because the profile has a LinkedIn URL. Includes-match clicked a LinkedIn-*
+    row (capture even shows a "LinkedIn Ad" chip), but `reactSelectDisplayValue` only read
+    `__single-value`, so verify always saw `display=""` and treated the pick as failed.
+    Clicking the same multi-select option again **toggles it off**. Remix then returned
+    `false` (not `"no-match"`), so the generic type/wait path ran ~45 more clicks plus
+    `trustedClick` — the ~94s gap `13:04:26` → `13:06:00` with no combobox-retry logs.
+    Discovery then retried `"LinkedIn"` *before* `"LinkedIn Post"`. Same log: "What Country
+    are you currently based in?" (197 countries) was classified as `relocation` because
+    `currently based` matched, QA "Yes" was deferred, retry picks were empty — should have
+    been Romania from `profile.contact.country`.
+    Fixed: read `__multi-value__label` chips; fiber `isMulti` onChange passes an array;
+    remix returns `"no-match"` after a 4-tier fail so we don't fall through; hear-about
+    picks a real LinkedIn-* option (Post/Ad/inmail) and never retries bare `"LinkedIn"`;
+    relocation regex no longer matches country "currently based in" lists. Not yet
+    confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
