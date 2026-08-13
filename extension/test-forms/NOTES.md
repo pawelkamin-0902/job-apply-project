@@ -3267,6 +3267,15 @@ unverified outside a live browser).
     code: "do you have experience with …" Yes/No → **Yes**. If QA has no answer and it
     isn't that pattern, leave it for GPT. Not yet confirmed live.
 
+126. **Loka Greenhouse Attach Resume: `uploadFile` of undefined.** `Author: Cursor`.
+    `Resume file attached (Dragos_Radu.pdf) → Resume/CV*` then the page threw
+    `Cannot read properties of undefined (reading 'uploadFile')`. Remix
+    `.file-upload` (`data-allow-s3="false"`) still runs a change handler that
+    calls `uploader.uploadFile`. Fixed: if a React-fiber `uploadFile` exists, call
+    it; otherwise set `input.files` and do not fire change/input. Location Places
+    extra keyboard/pac-item work reverted (slow network); wait a bit longer (~10s)
+    while the spinner is up.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

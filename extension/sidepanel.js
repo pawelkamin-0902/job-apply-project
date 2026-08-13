@@ -1073,17 +1073,82 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
 
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
-    target.files = dataTransfer.files;
-    // `composed: true` is required whenever `target` can be inside a shadow root (confirmed live:
-    // SmartRecruiters' <spl-dropzone> resume widget) - `bubbles` alone only controls propagation
-    // WITHIN a tree, not whether an event can cross a shadow boundary at all. A drop-zone-style
-    // component very plausibly manages its own "file attached" state at the HOST element level
-    // (outside the shadow root), not on the raw internal <input> itself - without `composed`,
-    // this event is silently trapped inside the shadow tree and such a listener would never fire,
-    // even though `target.files` was genuinely set correctly and everything else worked. Harmless
-    // for a plain, non-shadow input (composed only matters once a shadow boundary exists at all).
-    target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    target.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+
+    // Greenhouse remix `.file-upload` (job-boards.greenhouse.io): a change/input event
+    // calls `uploader.uploadFile(...)` but the S3 uploader is never created when
+    // `data-allow-s3="false"`. That throws "Cannot read properties of undefined
+    // (reading 'uploadFile')" after Attach Resume already set input.files
+    // (lokainc Resume/CV*). If a real uploadFile exists on a React fiber, call it;
+    // otherwise leave the File on the native input for multipart submit and skip change.
+    function greenhouseRemixAttach(input, fileObj, dt) {
+      const wrap = input.closest && input.closest(".file-upload");
+      if (!wrap) return false;
+      input.files = dt.files;
+      const fiberKey = (el) =>
+        Object.keys(el || {}).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+      const fns = [];
+      const collect = (fiber) => {
+        const bags = [
+          fiber.memoizedProps,
+          fiber.pendingProps,
+          fiber.stateNode && fiber.stateNode.props,
+          fiber.stateNode,
+        ];
+        for (const bag of bags) {
+          if (!bag || typeof bag !== "object") continue;
+          if (typeof bag.uploadFile === "function") fns.push(bag.uploadFile.bind(bag));
+          if (bag.uploader && typeof bag.uploader.uploadFile === "function") {
+            fns.push(bag.uploader.uploadFile.bind(bag.uploader));
+          }
+        }
+        let hook = fiber.memoizedState;
+        for (let n = 0; hook && n < 40; n++, hook = hook.next) {
+          const v = hook.memoizedState;
+          if (v && typeof v.uploadFile === "function") fns.push(v.uploadFile.bind(v));
+          if (v && v.current && typeof v.current.uploadFile === "function") {
+            fns.push(v.current.uploadFile.bind(v.current));
+          }
+        }
+      };
+      for (const el of [input, wrap, wrap.querySelector("button.btn")]) {
+        if (!el) continue;
+        const key = fiberKey(el);
+        if (!key) continue;
+        for (let fiber = el[key], i = 0; fiber && i < 40; i++, fiber = fiber.return) collect(fiber);
+      }
+      for (const fn of fns) {
+        try {
+          fn(fileObj);
+          return true;
+        } catch {
+          /* try next */
+        }
+      }
+      let shown = wrap.querySelector("[data-af-resume-name]");
+      if (!shown) {
+        shown = document.createElement("div");
+        shown.setAttribute("data-af-resume-name", "1");
+        shown.style.marginTop = "8px";
+        const host = wrap.querySelector(".file-upload__wrapper") || wrap;
+        host.appendChild(shown);
+      }
+      shown.textContent = fileObj.name;
+      return true;
+    }
+
+    if (!greenhouseRemixAttach(target, file, dataTransfer)) {
+      target.files = dataTransfer.files;
+      // `composed: true` is required whenever `target` can be inside a shadow root (confirmed live:
+      // SmartRecruiters' <spl-dropzone> resume widget) - `bubbles` alone only controls propagation
+      // WITHIN a tree, not whether an event can cross a shadow boundary at all. A drop-zone-style
+      // component very plausibly manages its own "file attached" state at the HOST element level
+      // (outside the shadow root), not on the raw internal <input> itself - without `composed`,
+      // this event is silently trapped inside the shadow tree and such a listener would never fire,
+      // even though `target.files` was genuinely set correctly and everything else worked. Harmless
+      // for a plain, non-shadow input (composed only matters once a shadow boundary exists at all).
+      target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    }
     // HiBob overlay: after the file is set, the dialog still needs its own Attach/Save click
     // (muchbetter-careers-hibob-com-20260813T124619Z — Add file opens a form dialog).
     const hibobDialog = target.closest && (target.closest(".cdk-overlay-pane, [role='dialog']") || hibobOverlayRoot());
@@ -4541,7 +4606,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // vs 20260813T133621Z: 12-poll cap aborted at poll#10 still-loading). Empty
     // (non-loading) waits still abort quickly so misrouted selects don't burn 8s.
     let emptyPolls = 0;
-    for (let poll = 0; poll < 40; poll++) {
+    for (let poll = 0; poll < 50; poll++) {
       await sleep(200);
       const found = readOptions();
       const loading = !found.length && menuLoading();
@@ -8811,7 +8876,7 @@ async function fillGeneratedAnswersInPage(answers) {
     // vs 20260813T133621Z: 12-poll cap aborted at poll#10 still-loading). Empty
     // (non-loading) waits still abort quickly so misrouted selects don't burn 8s.
     let emptyPolls = 0;
-    for (let poll = 0; poll < 40; poll++) {
+    for (let poll = 0; poll < 50; poll++) {
       await sleep(200);
       const found = readOptions();
       const loading = !found.length && menuLoading();
