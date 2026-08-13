@@ -3347,6 +3347,11 @@ unverified outside a live browser).
     `required` / asterisk / fieldset `aria-required`; optional SR radios are not stamped;
     ignore `"Value is required"` chrome as a label. Not yet confirmed live.
 
+132. **Website field got LinkedIn URL.** `Author: Cursor`. Structured website/portfolio
+    pattern used `p.contact.website || p.contact.linkedin`, so a separate Website field
+    was filled with the LinkedIn profile when website was empty. Fixed: website/portfolio
+    only use `contact.website`; LinkedIn stays on LinkedIn fields. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

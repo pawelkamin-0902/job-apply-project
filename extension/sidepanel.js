@@ -2665,7 +2665,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
-    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || p.contact.linkedin },
+    // Website ≠ LinkedIn — never fall back to the LinkedIn URL (SmartRecruiters/Redcare
+    // and similar forms have separate Website + LinkedIn fields).
+    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || null },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -10517,7 +10519,9 @@ function captureSampleInPage(profile, qaBank) {
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
-    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || p.contact.linkedin },
+    // Website ≠ LinkedIn — never fall back to the LinkedIn URL (SmartRecruiters/Redcare
+    // and similar forms have separate Website + LinkedIn fields).
+    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || null },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
