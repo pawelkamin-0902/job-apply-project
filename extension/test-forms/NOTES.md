@@ -3117,6 +3117,36 @@ unverified outside a live browser).
     option list by coincidence, so there's no reason to force a guess into an optional field.
     Not yet confirmed live.
 
+117. **Phenom (careers.adobe.com) required native selects + checkboxes were left empty —
+    same Workday-style fields, different widgets.** `Author: Cursor`. Capture
+    `careers-adobe-com-20260813T100512Z`: Auto Fill reported 13 filled while **Phone Device
+    Type**, **Country Phone Code**, and three required lone checkboxes (marketing *, privacy
+    consent, certify-accuracy) stayed on Please Select / `ischecked="false"`. Root causes:
+    (1) `isPhoneDialCodePicker` only recognized Greenhouse `.phone-input__country` and Oracle
+    HCM prefix widgets — Phenom's native `<select id="phoneWidget.countryPhoneCode"
+    autocomplete="tel-country-code">` was stamped for GPT with ~200 country options instead of
+    picking `Poland (+48)` from the profile. (2) Structured phone regex explicitly excludes
+    labels containing `type|device`, so Phone Device Type (Mobile / Personal) never got a
+    default. (3) Lone required checkboxes: certify text has no agree/consent/privacy, so
+    `CONSENT_RE` missed it; even matching privacy boxes need a wrapping-`<label>` click plus
+    Phenom's `ischecked` attribute, not a `.checked` write alone. Fixed by recognizing native
+    tel-country-code selects and filling them with country/(+code), defaulting Phone Device
+    Type to Mobile, auto-checking required/consent/certify lone boxes via label click, and
+    reading the filled native select in `findCountryCallingCode` so the number field can drop
+    the duplicate `+48`. Not yet confirmed live.
+
+118. **Workable English conversation level was filled with the site locale
+    `English US ‎(English US)‎` instead of Fluent.** `Author: Cursor`. Capture
+    `apply-workable-com-20260813T101015Z`: first-pass Auto Fill reported `learned` for
+    "What is your english conversation level?" with that locale string (bidi marks included —
+    the same shape as Workable/Chrome language-switcher labels). A proficiency question
+    category-matched a poisoned QA-bank row (or an exact Learn of the pre-filled locale
+    textarea) instead of the real "Fluency in English → Fluent" entries. Fixed by treating
+    `English US (English US)` / `English (United States)` as UI-locale answers: drop them from
+    the autofill QA bank, skip them in `matchQaBank` / `isPlausibleQaComboboxAnswer`, don't
+    Learn them onto proficiency questions, and default remaining English/Polish level
+    free-text to Fluent. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

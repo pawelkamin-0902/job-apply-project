@@ -1138,7 +1138,8 @@ function extractPageInfo() {
   function elementNearHeading() {
     // Many sites without JobPosting schema still clearly label the section
     // (e.g. "Job description", "About the role") right before the real content.
-    const headingRe = /job description|about (the|this) role|responsibilities|what you.?ll do/i;
+    const headingRe =
+      /job description|about (the|this) role|responsibilities|what you.?ll do|^summary\b|what we.?re looking for/i;
     for (const h of document.querySelectorAll("h1, h2, h3, h4, strong, b")) {
       const text = (h.textContent || "").trim();
       if (!headingRe.test(text) || text.length > 60) continue;
@@ -1278,13 +1279,52 @@ function extractPageInfo() {
 
   // True when this document is only a host for a cross-origin job-board iframe (the JD and
   // title live in that frame, not here). Used to skip wrapper-page landmark/body scraping.
+  // Some Greenhouse wrappers (Feedzai careers.feedzai.com/job_description/?gh_jid=…) host the
+  // full posting on-page in a jobDescriptionContent section and only embed the apply form.
+  function hasOnPageJobDescriptionShell() {
+    return !!document.querySelector(
+      '[class*="jobDescriptionContent"], [class*="job-description-content"], [class*="job-description-body"], [class*="job-post-content"], [class*="job_post_content"]'
+    );
+  }
+
   function pageHostsAtsJobEmbed() {
+    if (hasOnPageJobDescriptionShell()) return false;
     if (document.getElementById("grnhse_iframe") || document.getElementById("grnhse_app")) return true;
     for (const iframe of document.querySelectorAll("iframe[src]")) {
       const src = iframe.getAttribute("src") || "";
       if (/greenhouse\.io\/(embed|jobs)|jobs\.lever\.co|\/embed\/job/i.test(src)) return true;
     }
     return false;
+  }
+
+  // RecruitCRM apply pages (recruitcrm.io/apply/...): title + company live in og:title
+  // ("Apply To {title} With {company}") and the real JD is injected into a same-origin
+  // #view_html_iframe at runtime — confirmed live: the shell's main/body is mostly form
+  // chrome plus Next.js flight payload, while the iframe holds Summary / What You'll Do.
+  function isRecruitCrmApplyPage() {
+    return /(^|\.)recruitcrm\.io$/i.test(location.hostname || "") && /\/apply\//i.test(location.pathname || "");
+  }
+
+  function recruitCrmOgMeta() {
+    const ogTitleEl = document.querySelector('meta[property="og:title"]');
+    const raw = ogTitleEl && ogTitleEl.content && ogTitleEl.content.trim();
+    if (!raw) return null;
+    const m = raw.match(/^apply\s+to\s+(.+?)\s+with\s+(.+)$/i);
+    if (m) return { title: m[1].trim(), company: m[2].trim() };
+    return null;
+  }
+
+  function recruitCrmIframeDescription() {
+    const iframe = document.getElementById("view_html_iframe");
+    if (!iframe) return "";
+    try {
+      const doc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+      if (!doc || !doc.body) return "";
+      const text = (doc.body.innerText || doc.body.textContent || "").replace(/\s+/g, " ").trim();
+      return acceptDescription(text);
+    } catch {
+      return "";
+    }
   }
 
   // SmartRecruiters oneclick-ui bakes job/company into window.__OC_CONTEXT__ (no JobPosting
@@ -1434,6 +1474,12 @@ function extractPageInfo() {
       }
     }
 
+    // RecruitCRM: JD lives in same-origin #view_html_iframe (not the shell's main/body).
+    if (isRecruitCrmApplyPage()) {
+      const fromIframe = recruitCrmIframeDescription();
+      if (fromIframe) return fromIframe;
+    }
+
     // 2. ATS-specific description containers — checked BEFORE generic `main`/`article`/
     // `#content`, because those broader landmarks often wrap chrome (nav, "Privacy Policy",
     // "Job Openings", department subtitle) around the real posting. Confirmed on BambooHR:
@@ -1442,7 +1488,7 @@ function extractPageInfo() {
     // class names are more trustworthy than "longest landmark wins".
     let best = pickBest(
       document.querySelectorAll(
-        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content"
+        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content']"
       ),
       200
     );
@@ -1497,6 +1543,12 @@ function extractPageInfo() {
     const orgName = posting && posting.hiringOrganization && posting.hiringOrganization.name;
     const onWorkday = /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "");
     if (orgName && !onWorkday) return String(orgName).trim();
+    // RecruitCRM apply: og:title is "Apply To {title} With {company}" — domain fallback
+    // would otherwise return the ATS vendor ("Recruitcrm"), not Remote Crew etc.
+    if (isRecruitCrmApplyPage()) {
+      const meta = recruitCrmOgMeta();
+      if (meta && meta.company) return meta.company;
+    }
     // UKG Pro Recruiting: company is the job-board brand ("Archer Job Board"), not the tenant
     // subdomain (gusea1p01.rec.pro.ukg.net → "Gusea1p01"). Confirmed live on Archer postings.
     if (isUkgRecruitingPage()) {
@@ -1589,7 +1641,7 @@ function extractPageInfo() {
     // company hosts the posting themselves, not on a third-party ATS's own domain
     // (which would otherwise just give back "Greenhouse", "Lever", etc).
     const fullHost = location.hostname.replace(/^www\./, "");
-    if (!/greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net/i.test(fullHost)) {
+    if (!/greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io/i.test(fullHost)) {
       const label = fullHost.split(".")[0];
       if (label && label.length > 2) return label.charAt(0).toUpperCase() + label.slice(1);
     }
@@ -1627,6 +1679,15 @@ function extractPageInfo() {
   const GENERIC_TITLE_RE =
     /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|.+\bopenings?)$/i;
 
+  // JD section headings that sometimes win in embedded description iframes (RecruitCRM's first
+  // <h2> is "Summary") — never treat these as the job title.
+  const SECTION_HEADING_TITLE_RE =
+    /^(summary|overview|about (the|this) (role|job|position)|what you[''\u2019]?(ll| will) do|what we[''\u2019]?(re| are) looking for|requirements|qualifications|responsibilities|key responsibilities)$/i;
+
+  function isSectionHeadingTitle(text) {
+    return SECTION_HEADING_TITLE_RE.test((text || "").replace(/[\u2018\u2019]/g, "'").trim());
+  }
+
   // SmartRecruiters (and similar) inject an IE11-sunset overlay whose <h1> is often the first
   // heading in document order — confirmed live on jobs.smartrecruiters.com/QADInc/... and
   // Mirantis: "Sorry, Internet Explorer 11 is no longer supported by SmartRecruiters". Never
@@ -1642,7 +1703,7 @@ function extractPageInfo() {
   // <title> ("Candidate Profile - Software Engineer (Jenkins & .NET)").
   function stripLeadingApplyBoilerplate(text) {
     return (text || "").replace(
-      /^(easy\s*apply|apply(ing for)?|apply\s*now|new\s*application|job\s*application|application|candidate\s*profile)\s*[-|:]?\s*/i,
+      /^(easy\s*apply|apply\s+to|apply(ing for)?|apply\s*now|new\s*application|job\s*application|application|candidate\s*profile)\s*[-|:]?\s*/i,
       ""
     );
   }
@@ -1671,7 +1732,7 @@ function extractPageInfo() {
   function pickHeadingTitle(selector) {
     for (const heading of document.querySelectorAll(selector)) {
       const raw = (heading.innerText || heading.textContent || "").replace(/\s+/g, " ").trim();
-      if (!raw || GENERIC_TITLE_RE.test(raw) || isUnsupportedBrowserTitle(raw)) continue;
+      if (!raw || GENERIC_TITLE_RE.test(raw) || isSectionHeadingTitle(raw) || isUnsupportedBrowserTitle(raw)) continue;
       // A form QUESTION, not a job title - confirmed live, a join.com posting with no <h1> at
       // all has exactly one <h2> on the whole page ("What is your expected yearly compensation
       // in EUR?" - an application-form question, not any kind of title), which then won by
@@ -1687,6 +1748,19 @@ function extractPageInfo() {
   function extractJobTitle() {
     const posting = jobPostingFromJsonLd();
     if (posting && posting.title) return String(posting.title).trim();
+
+    // RecruitCRM apply: clean <h1> on the shell; og:title carries company after "With …".
+    if (isRecruitCrmApplyPage()) {
+      const h1Title = pickHeadingTitle("h1");
+      if (h1Title) return h1Title;
+      const meta = recruitCrmOgMeta();
+      if (meta && meta.title && !GENERIC_TITLE_RE.test(meta.title) && !isUnsupportedBrowserTitle(meta.title)) {
+        return meta.title;
+      }
+      // Same-origin JD iframe has section <h2>s only — leave title empty so scrapeCurrentTab
+      // keeps the shell frame's <h1> / og:title instead of "Summary" / "What You'll Do".
+      if (!document.querySelector("h1")) return "";
+    }
 
     // SmartRecruiters oneclick: visible topbar title + __OC_CONTEXT__.job.title. The page also
     // has a visually-hidden <h1> whose innerText is empty (clip/sr-only), so heading search
@@ -2224,6 +2298,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (element.closest && element.closest(".mandatoryField")) return true;
     if (host && host.closest && host.closest(".mandatoryField")) return true;
+    if (typeof isAshbyRequiredField === "function" && isAshbyRequiredField(element)) return true;
     const zohoName = element.name || (host && host.id) || "";
     if (zohoName) {
       const zohoLabel = document.getElementById(`crc-label-${zohoName}`);
@@ -2324,9 +2399,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // "Do you agree to share your CV (without personal data) with our clients..." - a real,
   // per-company data-sharing consent question - only matched "i agree" before, missing this
   // equally common second-person phrasing of the exact same kind of consent decision.
-  const CONSENT_RE = /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)/i;
+  // Phenom Adobe (20260813T100512Z): required "I hereby certify … true and accurate" has
+  // neither agree/consent/privacy in the sentence — still a per-application acknowledgement.
+  const CONSENT_RE =
+    /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
   function isConsentField(label) {
     return CONSENT_RE.test(label);
+  }
+  function shouldAutoCheckLoneCheckbox(element, label) {
+    if (isConsentField(label)) return true;
+    if (/\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
+      return true;
+    }
+    // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
+    // "required acknowledgement, tick it" rule. Optional newsletter boxes stay untouched.
+    return typeof isRequiredField === "function" && isRequiredField(element, element);
   }
 
   // ---- MATCH: structured profile fields ----
@@ -2347,6 +2434,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // digits of the stored number are the country code, since that's genuinely ambiguous from the
   // digit string alone (some calling codes are 1 digit, some 2, some 3).
   function findCountryCallingCode() {
+    for (const sel of document.querySelectorAll("select")) {
+      const ac = (sel.getAttribute("autocomplete") || "").toLowerCase();
+      const id = sel.id || "";
+      if (ac !== "tel-country-code" && !/countryPhoneCode|country-phone-code/i.test(id)) continue;
+      const opt = sel.selectedOptions && sel.selectedOptions[0];
+      const m = opt && (opt.textContent || "").match(/\+\d{1,4}/);
+      if (m) return m[0];
+    }
     for (const el of document.querySelectorAll(
       '[data-automation-id="promptAriaInstruction"], [data-automation-id="selectedItem"], [data-automation-id="promptOption"]'
     )) {
@@ -2385,8 +2480,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Negative lookahead excludes "Country Phone Code"/"Phone Device Type"/"Phone Extension" -
     // confirmed live, the plain `phone|mobile|telephone` match swallowed "Country Phone Code"
     // too and typed the full phone number into what's actually a country-code picker.
+    // Bare `\bmobile\b` removed — Cloudbeds Greenhouse 20260813T085822Z matched "Hands-on
+    // experience with modern mobile or frontend…" and filled +48573503853 into a Yes/No skill
+    // dropdown (~7s of failed tiers). Keep "mobile phone" / "mobile number" / "cell phone".
     {
-      re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|mobile|telephone)\b/i,
+      re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|telephone|mobile\s*(phone|number)|cell\s*phone)\b/i,
       get: (p, element) => {
         const phone = p.contact.phone || "";
         if (!phone) return phone;
@@ -2409,7 +2507,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         return code && phone.startsWith(code) ? phone.slice(code.length).trim() : phone;
       },
     },
-    { re: /linkedin/i, get: (p) => p.contact.linkedin },
+    // Only fields whose SUBJECT is a LinkedIn profile/URL — not questions that merely mention
+    // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
+    // or other sources" got the profile URL).
+    { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
     { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
@@ -2513,7 +2614,37 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // value (e.g. no phone on file) must never fall through to generation — a missing factual
   // detail should be asked for, not invented, same as a missing resume fact.
   function isPhoneDialCodePicker(element) {
-    return Boolean(element && element.closest && element.closest(".phone-input__country"));
+    if (!element) return false;
+    if (element.closest && element.closest(".phone-input__country")) return true;
+    // Oracle HCM Candidate Experience: dial-code cx-select sits in `.phone-row__prefix` with
+    // id `country-codes-dropdownphoneNumber` but inherits the group label "Phone Number" —
+    // confirmed live fa-euwp-saasfaprod1…oraclecloud.com 20260812T182256Z: Auto Fill tried the
+    // full E.164 number as a combobox pick and discovery found 0 options for ~10s.
+    if (element.id && /^country-codes-dropdown/i.test(element.id)) return true;
+    // Phenom (careers.adobe.com 20260813T100512Z): native <select id="phoneWidget.countryPhoneCode"
+    // autocomplete="tel-country-code"> labeled "Country Phone Code" — not Greenhouse/Oracle
+    // combobox chrome, so the widget checks above never fired and the required dial-code
+    // select stayed on "Please Select".
+    if (element.id && /countryPhoneCode|country-phone-code/i.test(element.id)) return true;
+    const autocomplete = (element.getAttribute && element.getAttribute("autocomplete")) || "";
+    if (/^tel-country-code$/i.test(autocomplete)) return true;
+    if (element.closest && element.closest(".phone-row__prefix, .cx-select-container")) {
+      const hint =
+        (element.getAttribute("aria-label") || "") +
+        " " +
+        ((element.closest(".cx-select-container") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label").textContent) ||
+          "");
+      if (/country\s*code|dial\s*code|calling\s*code/i.test(hint)) return true;
+    }
+    const own =
+      (typeof resolveOwnLabel === "function" && normalizeLabel(resolveOwnLabel(element) || "")) ||
+      ((element.getAttribute && element.getAttribute("aria-label")) || "");
+    if (/country\s*(phone\s*)?code|phone\s*country\s*code|dial(ing)?\s*code|calling\s*code/i.test(own)) {
+      return true;
+    }
+    return false;
   }
 
   function matchStructuredField(label, element) {
@@ -2568,6 +2699,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       key: "related_to_employee",
       re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
     },
+    // Pinpoint HQ boolean: "Have you been referred to this role?" — default No like relatives.
+    // Confirmed live newfireglobal.pinpointhq.com 20260812T161501Z.
+    {
+      key: "employee_referral",
+      re: /been referred|referred (you )?(for|to) (this|the) role|employee (or contractor )?from the company referred|employee referral/i,
+    },
     // Screening: "Have you ever lived in the US/Canada for more than 6 months…"
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
@@ -2599,9 +2736,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
-    { key: "veteran_status", re: /\bveteran\b/i },
+    { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -2636,11 +2774,48 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // phone-input Country picker — confirmed live Oportun question_* Country ArrowDown thrash.
     if (/^country\b/i.test(String(label || "").trim()) && /^\+\d{1,4}$/.test(a)) return false;
     const cat = detectCategory(label);
+    // "How did you hear" free-text must never reuse a profile LinkedIn URL.
+    if (cat === "hear_about" && /^https?:\/\//i.test(a)) return false;
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
     }
     if (cat === "nationality" && /^none$/i.test(a)) return false;
     if (cat === "disability_status" && /^\d+$/.test(a)) return false;
+    // Workable locale switcher text is not an English proficiency answer
+    // (apply.workable.com 20260813T101015Z: conversation level ← "English US (English US)").
+    if (
+      (cat === "english_proficiency" ||
+        cat === "polish_proficiency" ||
+        (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label))) &&
+      typeof isUiLocaleAnswer === "function" &&
+      isUiLocaleAnswer(a)
+    ) {
+      return false;
+    }
+    // EEO / demographic Yes-No must never reuse a place name left in a combobox filter
+    // (easyship GH 20260813T094934Z: Hispanic got QA "Warsaw" after the Places path typed it).
+    if (cat === "hispanic_latino" && !/^(yes|no)\b|decline|prefer not|do not (wish|want)|not hispanic|not latino/i.test(a)) {
+      return false;
+    }
+    if (
+      (cat === "gender" || cat === "race_ethnicity" || cat === "veteran_status" || cat === "disability_status") &&
+      /^[A-Z][a-z]+(?:\s*,\s*[A-Za-z].*)?$/.test(a) &&
+      !/veteran|disabilit|decline|prefer not|white|asian|black|hispanic|latino|male|female|non-?binary/i.test(a)
+    ) {
+      return false;
+    }
+    // Never put a phone number into a non-phone combobox (Yes/No skill questions, etc.).
+    if (/^\+?\d[\d\s().-]{6,}$/.test(a) && !/\b(phone|telephone|mobile\s*(phone|number)|cell)\b/i.test(String(label || ""))) {
+      return false;
+    }
+    // Discharge date Month/Day/Year ≠ veteran status answer.
+    if (
+      /discharge\s+date|militaryDischargeDate/i.test(String(label || "")) &&
+      /veteran|not applicable|^n\/?a$/i.test(a) &&
+      !/\d{4}|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(a)
+    ) {
+      return false;
+    }
     return true;
   }
 
@@ -2666,6 +2841,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     for (const entry of qaBank) {
       // Never reuse salary/notice bank entries even if another label somehow category-matched.
       if (isFormSpecificCompField(entry.question)) continue;
+      if (
+        typeof isUiLocaleAnswer === "function" &&
+        isUiLocaleAnswer(entry.answer) &&
+        (labelCategory === "english_proficiency" ||
+          labelCategory === "polish_proficiency" ||
+          (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label)))
+      ) {
+        continue;
+      }
       const normQuestion = normalizeForMatch(entry.question);
       // Exact match (after normalizing) always wins outright — this is what makes a
       // legitimately short label like "Country" matchable against a QA-bank entry also
@@ -2674,7 +2858,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (normLabel && normLabel === normQuestion) return entry;
       // Same recurring boilerplate category, even though the literal wording differs
       // (a different company name filled into the same underlying question).
-      if (labelCategory && detectCategory(entry.question) === labelCategory) return entry;
+      // skill_experience is skill-specific — never reuse across different tools/domains
+      // (Cloudbeds GH 20260813T085822Z: "Experience with payment processing…" reused a saved
+      // "5+ years, including complex production applications" from another skill question and
+      // burned failed Yes/No tiers). Fall through to word-overlap instead.
+      if (
+        labelCategory &&
+        labelCategory !== "skill_experience" &&
+        detectCategory(entry.question) === labelCategory
+      ) {
+        return entry;
+      }
       const qWords = new Set(normQuestion.split(" ").filter((w) => w.length > 2 && !MATCH_QA_STOPWORDS.has(w)));
       if (!labelWords.size || !qWords.size) continue;
       let overlap = 0;
@@ -2727,6 +2921,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         element.focus();
       } catch {
         /* not focusable */
+      }
+    }
+    // React's `_valueTracker` caches the last value it saw — without resetting it to the
+    // PRE-change value, a native setter write often never fires onChange, so Ashby keeps
+    // empty form state while the DOM looks filled. Confirmed live Ashby 20260812T152002Z:
+    // Full Name + "authorised to work" showed on screen but Submit reported "Missing entry".
+    // Kept in sync with fillGeneratedAnswersInPage.nativeSet (which already had this).
+    const prev = element.value;
+    const tracker = element._valueTracker;
+    if (tracker) {
+      try {
+        tracker.setValue(prev);
+      } catch {
+        /* ignore */
       }
     }
     if (setter) setter.call(element, str);
@@ -2811,9 +3019,32 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // live on intapp.wd1.myworkdayjobs.com: "I currently work here" was already correctly
     // checked for a Present role; setting checked=true then firing click flipped it OFF and
     // cleared/broke the paired To date. If aria-checked/checked already matches, do nothing.
-    const aria = element.getAttribute("aria-checked");
-    const isOn = aria === "true" ? true : aria === "false" ? false : Boolean(element.checked);
-    if (isOn === want) return;
+    const isOn =
+      Boolean(element.checked) ||
+      element.getAttribute("ischecked") === "true" ||
+      element.getAttribute("aria-checked") === "true";
+    if (isOn === want) {
+      if (want && element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
+      return;
+    }
+    // Phenom Career Connect: wrapping <label> click is what flips `ischecked`.
+    const wrap = element.closest && element.closest("label");
+    if (wrap && want) {
+      wrap.click();
+      if (element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
+      if (element.checked || element.getAttribute("ischecked") === "true") return;
+    }
+    // Same `_valueTracker` reset as nativeSet — React caches checkbox/radio as String(checked).
+    // Without resetting to the PRE-change value, onChange can be skipped (DOM looks ticked,
+    // framework state empty) — same class of failure as Ashby Full Name 20260812T152002Z.
+    const tracker = element._valueTracker;
+    if (tracker) {
+      try {
+        tracker.setValue(String(Boolean(element.checked)));
+      } catch {
+        /* ignore */
+      }
+    }
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked") &&
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
     if (setter) setter.call(element, want);
@@ -2826,6 +3057,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // even where it isn't strictly needed.
     for (const type of ["mousedown", "mouseup", "click"]) {
       element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+    }
+    if (element.getAttribute("ischecked") != null) {
+      element.setAttribute("ischecked", want ? "true" : "false");
     }
   }
 
@@ -3027,7 +3261,29 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!best) return false;
     const el = best.element;
     if (el.tagName === "BUTTON") {
+      // Ashby Yes/No options use type="submit" — clicking as-is can submit the whole form.
+      const parent = el.parentElement;
+      const siblingLabels = parent
+        ? [...parent.children].filter((c) => c.tagName === "BUTTON").map((c) => (c.textContent || "").trim().toLowerCase())
+        : [];
+      const isYesNoPair =
+        siblingLabels.length === 2 && siblingLabels.includes("yes") && siblingLabels.includes("no");
+      const savedType = el.type;
+      if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+        try {
+          el.type = "button";
+        } catch {
+          /* ignore */
+        }
+      }
       el.click();
+      if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+        try {
+          el.type = savedType;
+        } catch {
+          /* ignore */
+        }
+      }
     } else if (el.tagName === "A") {
       el.click();
     } else if (el.tagName === "SPL-RADIO" || (el.getAttribute && el.getAttribute("role") === "radio" && el.tagName.includes("-"))) {
@@ -3312,6 +3568,76 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     );
   }
 
+  // Oracle HCM Candidate Experience (fa-*.oraclecloud.com / hcmUI/CandidateExperience):
+  // React `cx-select` behind Knockout — visible `<input class="cx-select-input" role="combobox"
+  // aria-haspopup="grid">` plus a sibling `#${id}-toggle-button`. Listbox mounts only after
+  // open (`#${id}-listbox`). Confirmed live 20260812T182256Z: discovery always found 0 options
+  // because the menu never opened via a plain input click and display reads used textContent.
+  function isOracleCxSelect(element) {
+    return Boolean(
+      element &&
+        ((element.classList && element.classList.contains("cx-select-input")) ||
+          (element.closest && element.closest(".cx-select-container")))
+    );
+  }
+
+  function oracleCxSelectOpenTarget(element) {
+    if (!element) return element;
+    if (element.id) {
+      const byId = document.getElementById(`${element.id}-toggle-button`);
+      if (byId) return byId;
+    }
+    const container = element.closest && element.closest(".cx-select-container");
+    const btn =
+      container &&
+      container.querySelector(
+        'button.icon-dropdown-arrow, button[id$="-toggle-button"], button[aria-label*="drop-down" i], button[title*="drop-down" i]'
+      );
+    return btn || element;
+  }
+
+  function findOracleCxSelectOptions(element, before) {
+    const isVisibleLocal = (el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const usable = (el) => {
+      if (!el || el === element) return false;
+      if (el.tagName === "INPUT" || el.tagName === "BUTTON") return false;
+      if (!isVisibleLocal(el)) return false;
+      if (isDisabledComboboxOption(el)) return false;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!t || t.length > 120) return false;
+      if (isGenericSelectPlaceholder(t)) return false;
+      return true;
+    };
+    const collect = (root) => {
+      if (!root) return [];
+      return [...root.querySelectorAll('[role="option"], [role="gridcell"], [role="row"], li, div, span, a')].filter(
+        (el) => usable(el) && (!before || !before.has(el) || isVisibleLocal(el))
+      );
+    };
+    const listId =
+      (element.getAttribute && element.getAttribute("aria-controls")) ||
+      (element.id ? `${element.id}-listbox` : "");
+    if (listId) {
+      const list = document.getElementById(listId);
+      const scoped = collect(list);
+      if (scoped.length) {
+        return scoped.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+      }
+    }
+    // Portaled popups (listbox id may not match until React mounts).
+    for (const list of document.querySelectorAll('[role="listbox"], [role="grid"], [id$="-listbox"]')) {
+      if (listId && list.id && list.id !== listId) continue;
+      const scoped = collect(list);
+      if (scoped.length) {
+        return scoped.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+      }
+    }
+    return [];
+  }
+
   function successFactorsPicklistOpenTarget(element) {
     const container =
       (element.closest && element.closest(".paginatedPicklistContainer, .sfCascadingPicklist")) || element;
@@ -3418,6 +3744,36 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       return "";
     }
+    // Oracle cx-select (and other ARIA combobox <input>s): the committed answer lives in
+    // `.value`, not textContent — cleanedText() always returned "" so every fill looked
+    // uncommitted (fa-euwp…oraclecloud.com 20260812T182256Z).
+    if (
+      element &&
+      (element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
+      String(element.value || "").trim()
+    ) {
+      const v = String(element.value).trim();
+      const ph = (element.getAttribute("placeholder") || "").trim();
+      const hint =
+        (element.closest &&
+          element.closest(".cx-select-container") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label").textContent) ||
+        "";
+      if (v && v !== ph && !isGenericSelectPlaceholder(v) && !/country\s*code/i.test(v)) {
+        // Ashby Location (`placeholder="Start typing..."`): typed "Warsaw" is the geocode
+        // FILTER, not a committed Places pick — treating `.value` as display made Auto Fill
+        // skip the option click (jobs.ashbyhq.com 20260813T092428Z). A selected place usually
+        // includes a comma ("Warsaw, Mazowieckie, Poland").
+        const locationFilter =
+          typeof isLocationTypeaheadInput === "function" &&
+          isLocationTypeaheadInput(element) &&
+          !/,/.test(v);
+        if (!locationFilter && (!hint || v.toLowerCase() !== String(hint).trim().toLowerCase())) {
+          return v;
+        }
+      }
+    }
     const control = element && element.closest && element.closest('[class*="__control"]');
     if (control) {
       const single = control.querySelector('[class*="__single-value"]');
@@ -3456,6 +3812,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
       if (bareCountry === target || bareCountry.startsWith(target)) return true;
       if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+    }
+    if (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element)) {
+      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
+      if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
+        return true;
+      }
     }
     return cur.includes(target) || target.includes(cur);
   }
@@ -3623,7 +3986,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (isPhoneDialCodePicker(element)) {
       const digits = String((profile && profile.contact && profile.contact.phone) || "").replace(/[^\d+]/g, "");
       const code = current.trim();
-      if (/^\+\d{1,4}$/.test(code)) return digits.startsWith(code);
+      if (/^\+\d{1,4}$/.test(code)) {
+        if (digits.startsWith(code)) return true;
+        const bare = code.replace(/^\+/, "");
+        const digitsOnly = digits.replace(/^\+/, "");
+        if (bare && digitsOnly.startsWith(bare)) return true;
+      }
     }
     const target = (desiredText || "").toLowerCase().trim();
     const cur = current.toLowerCase();
@@ -3637,6 +4005,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   function comboboxOpenTarget(element) {
     if (isSuccessFactorsPicklist(element)) return successFactorsPicklistOpenTarget(element);
+    if (isOracleCxSelect(element)) return oracleCxSelectOpenTarget(element);
     const control = element.closest && element.closest('[class*="__control"]');
     if (control && element.closest(".select-shell, .select__container")) {
       const toggle = control.querySelector(
@@ -3657,6 +4026,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (element && isSuccessFactorsPicklist(element)) {
       const sfOpts = findSuccessFactorsPicklistOptions(element, before);
       if (sfOpts.length) return sfOpts;
+    }
+    if (element && isOracleCxSelect(element)) {
+      const cxOpts = findOracleCxSelectOptions(element, before);
+      if (cxOpts.length) return cxOpts;
     }
 
     const ownMenu = element && reactSelectMenuForElement(element);
@@ -3698,9 +4071,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // live on an Angular CDK-based ATS "Country" field built exactly this way. `role="menu"`/
     // `role="menuitem"` covers a Homerun-style ATS "select all that apply" dropdown that
     // repurposes the ARIA menu pattern for a pick-list instead of navigation.
-    for (const listbox of querySelectorAllDeep('[role="listbox"], [role="tree"], [role="menu"]')) {
+    for (const listbox of querySelectorAllDeep('[role="listbox"], [role="grid"], [cmdk-list], [role="tree"], [role="menu"]')) {
       if (isPhoneCountryListbox(listbox)) continue;
-      const opts = [...listbox.querySelectorAll('[role="option"], [role="treeitem"], [role="menuitem"]')].filter(isFreshAndVisible);
+      const opts = [...listbox.querySelectorAll('[role="option"], [role="gridcell"], [role="row"], [cmdk-item], [role="treeitem"], [role="menuitem"]')].filter(isFreshAndVisible);
       if (opts.length) return opts;
     }
     // Comeet / Bootstrap `dropdown-menu`: options are `<li><a><div class="option-title">…`.
@@ -3872,7 +4245,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         }
         const portaled = [];
         for (const menu of document.querySelectorAll(
-          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu, [role="listbox"]'
         )) {
           const rect = menu.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) continue;
@@ -3917,22 +4290,31 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let options = [];
     let stable = 0;
     let lastSig = "";
-    for (let poll = 0; poll < 40; poll++) {
+    // Cap empty waits: 40×200ms (~8s) burned on non-Places selects misrouted as location
+    // (apaleo relocation plans 20260813T100213Z). Real Places menus usually appear in <1s.
+    let emptyPolls = 0;
+    for (let poll = 0; poll < 12; poll++) {
       await sleep(200);
       if (menuLoading()) {
         if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
         stable = 0;
         lastSig = "";
         options = [];
+        emptyPolls = 0;
         continue;
       }
       const found = readOptions();
       const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
       if (!found.length) {
+        emptyPolls += 1;
         if (poll % 5 === 0) log(`3 poll#${poll} 0 options`);
         stable = 0;
         lastSig = "";
         options = [];
+        if (emptyPolls >= 6) {
+          log(`3 abort - ${emptyPolls} empty polls`);
+          break;
+        }
         continue;
       }
       if (sig === lastSig) {
@@ -3978,12 +4360,88 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     await commitComboboxOption(match, controlEl || element);
     await sleep(350);
     const display = reactSelectDisplayValue(element);
+    const inputVal = String(element.value || "").trim();
+    const cityLow = cityOnly.toLowerCase();
     const ok =
       comboboxValueCommitted(element, query) ||
-      (Boolean(display) && cityOnly && display.toLowerCase().includes(cityOnly));
+      (Boolean(display) && cityLow && display.toLowerCase().includes(cityLow)) ||
+      (Boolean(inputVal) && cityLow && inputVal.toLowerCase().includes(cityLow));
     log(ok ? `5 SUCCESS display="${display}"` : `5 FAILED verify display="${display}"`);
     if (ok) await dismissOpenGreenhouseComboboxes(element);
     return Boolean(ok);
+  }
+
+  // RecruitCRM apply forms: Radix dialog + cmdk country search (aria-haspopup="dialog").
+  // Confirmed live: closed display is "Not Selected"; typing a city name into the country
+  // list never matches — profile.contact.country is the value that commits.
+  async function tryFillRecruitCrmCmdkCombobox(element, desiredText) {
+    if (!/(^|\.)recruitcrm\.io$/i.test(location.hostname || "") || !/\/apply\//i.test(location.pathname || "")) {
+      return false;
+    }
+    const trigger =
+      element && element.getAttribute && element.getAttribute("role") === "combobox"
+        ? element
+        : element.closest && element.closest('[role="combobox"]');
+    if (!trigger || trigger.getAttribute("aria-haspopup") !== "dialog") return false;
+    const norm = (s) => (s || "").toLowerCase().trim();
+    const target = norm(desiredText);
+    if (!target) return false;
+    if (comboboxValueCommitted(trigger, desiredText)) return true;
+
+    const openIfNeeded = async () => {
+      if (trigger.getAttribute("aria-expanded") === "true") return true;
+      simulateClick(trigger);
+      trigger.focus();
+      await new Promise((resolve) => setTimeout(resolve, 280));
+      return trigger.getAttribute("aria-expanded") === "true";
+    };
+    const findSearchInput = () => {
+      const dialogId = trigger.getAttribute("aria-controls");
+      const dialog = dialogId && document.getElementById(dialogId);
+      if (dialog) {
+        const inp = dialog.querySelector('input[cmdk-input], [cmdk-input-wrapper] input');
+        if (inp) return inp;
+      }
+      return document.querySelector('input[cmdk-input]');
+    };
+    const pickFromCmdk = async (query) => {
+      const q = String(query || "").trim();
+      if (!q) return false;
+      const input = findSearchInput();
+      if (!input) return false;
+      nativeSet(input, q);
+      input.focus();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const items = [...document.querySelectorAll('[cmdk-item][role="option"], [cmdk-item]')].filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      const want = norm(q);
+      const match =
+        items.find((el) => norm(el.textContent) === want) ||
+        items.find((el) => norm(el.textContent).startsWith(want)) ||
+        items.find((el) => norm(el.textContent).includes(want) || want.includes(norm(el.textContent)));
+      if (!match) return false;
+      match.click();
+      await new Promise((resolve) => setTimeout(resolve, 280));
+      return comboboxValueCommitted(trigger, desiredText) || comboboxValueCommitted(trigger, match.textContent);
+    };
+
+    const candidates = [desiredText];
+    const fieldLabel = comboboxFieldLabel(trigger) || "";
+    if (/^location\b/i.test(fieldLabel)) {
+      const country =
+        (typeof profile !== "undefined" && profile && profile.contact && profile.contact.country
+          ? String(profile.contact.country).trim()
+          : "") ||
+        (String(desiredText).includes(",") ? String(desiredText).split(",").pop().trim() : "");
+      if (country && norm(country) !== target) candidates.push(country);
+    }
+    for (const pick of [...new Set(candidates.map(String).filter(Boolean))]) {
+      if (!(await openIfNeeded())) continue;
+      if (await pickFromCmdk(pick)) return true;
+    }
+    return false;
   }
 
   async function fillReactSelectByClick(element, desiredText) {
@@ -4006,6 +4464,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         );
         return false;
       }
+    }
+    if (await tryFillRecruitCrmCmdkCombobox(element, desiredText)) {
+      comboboxTrace(element, `recruitcrm cmdk committed -> "${desiredText}"`, {});
+      return true;
     }
     const displayAtStart = reactSelectDisplayValue(element);
     if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
@@ -4090,7 +4552,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         }
         const portaled = [];
         for (const menu of document.querySelectorAll(
-          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu, [role="listbox"]'
         )) {
           const rect = menu.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) continue;
@@ -4174,18 +4636,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         if (comboboxExpanded(element, control)) return true;
         const toggle = greenhouseToggle();
         element.focus();
-        // Live GH remix react-select ignores synthetic opens — trusted-click the flyout toggle first.
-        if (await trustedClick(toggle)) {
-          await new Promise((resolve) => setTimeout(resolve, 280));
-          if (comboboxExpanded(element, control)) return true;
-        }
+        // Prefer cheap synthetic open first — trustedClick (debugger) is slow and was the
+        // main open/close thrash on apaleo GH 20260813T100213Z. One trusted retry is enough.
         simulateClick(toggle);
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 180));
         if (comboboxExpanded(element, control)) return true;
         dispatchKey("ArrowDown");
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         if (comboboxExpanded(element, control)) return true;
-        if (!comboboxExpanded(element, control) && (await trustedClick(toggle))) {
+        if (await trustedClick(toggle)) {
           await new Promise((resolve) => setTimeout(resolve, 220));
         }
         return comboboxExpanded(element, control);
@@ -4194,13 +4653,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.info(`${tag} tier 2 open (click/keyboard toggle) -> ${opened ? "opened" : "FAILED to open"}`);
       if (!opened) return false;
       let pollMatchedAt = null;
-      for (let poll = 0; poll < 10; poll++) {
+      for (let poll = 0; poll < 3; poll++) {
         await new Promise((resolve) => setTimeout(resolve, 60));
         const match = matchOption(liveOptions());
         if (!match) continue;
         pollMatchedAt = poll;
         if (await commitComboboxOption(match, control || element)) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Greenhouse remix often lags the single-value label after a real option click —
+          // confirmed live Bloomreach "Where did you hear…": LinkedIn was selected, verify
+          // failed on the first 200ms read, then tier-4 cleanup wiped it with nativeSet("").
+          await new Promise((resolve) => setTimeout(resolve, 350));
           if (comboboxValueCommitted(element, desiredText)) {
             const displayAfterCommit = reactSelectDisplayValue(element);
             console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll}, display="${displayAfterCommit}")`);
@@ -4208,10 +4670,25 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
             watchComboboxDisplay(element, `after tier-2 commit "${desiredText}"`);
             return true;
           }
+          // Click landed a real option whose label is a fuzzy sibling of desiredText
+          // ("LinkedIn" vs "LinkedIn / Social") — treat as committed rather than wiping.
+          const displayAfterClick = reactSelectDisplayValue(element);
+          if (
+            displayAfterClick &&
+            !isGenericSelectPlaceholder(displayAfterClick) &&
+            answerCouldMatchOptions(desiredText, [displayAfterClick])
+          ) {
+            console.info(
+              `${tag} tier 2 click-poll -> COMMITTED via display "${displayAfterClick}" (desired="${desiredText}")`
+            );
+            await dismissOpenGreenhouseComboboxes(element);
+            watchComboboxDisplay(element, `after tier-2 fuzzy commit "${desiredText}"`);
+            return true;
+          }
         }
       }
       console.info(
-        `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
+        `${tag} tier 2 click-poll -> no committed match after 3 polls (~0.2s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
       // Don't ArrowDown when the desired string isn't any visible option (confirmed live:
       // "No disability" vs OFCCP long labels — keyboard-nav just walks Yes/No/Decline uselessly).
@@ -4222,7 +4699,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
             `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
           );
           await dismissOpenGreenhouseComboboxes(element);
-          return false;
+          // Sentinel: caller must NOT fall through to the generic open/type path (~7s).
+          // Confirmed live Cloudbeds GH 20260813T085822Z (phone / "5+ years…" on Yes/No).
+          return "no-match";
         }
       }
       await dismissOpenGreenhouseComboboxes(element);
@@ -4267,6 +4746,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           console.warn(
             `${tag} tier 3 step ${keyboardSteps}: document.activeElement is NOT this element before ArrowDown (actual: ${ae ? `${ae.tagName}#${ae.id || ""}.${ae.className || ""}` : "null"})`
           );
+          // Confirmed live: ArrowDown meant for hear-about / other selects landed on the phone
+          // dial-code picker and walked it toward Greenhouse's US default (+1). Refocus before
+          // sending keys; if focus is stuck on the dial picker, abort keyboard nav entirely.
+          if (ae && ae.closest && ae.closest(".phone-input__country") && !isPhoneDialCodePicker(element)) {
+            console.warn(`${tag} tier 3 aborted - focus is on phone dial-code picker`);
+            break;
+          }
+          try {
+            element.focus();
+          } catch {
+            /* ignore */
+          }
         }
         dispatchKey("ArrowDown");
       }
@@ -4286,23 +4777,40 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           return true;
         }
       }
-      // No real option anywhere in THIS field's own list ever matched desiredText - blindly
-      // pressing Enter anyway (the previous behavior) left the widget holding non-matching
-      // typed text, with nothing committed, still open/focused in some undefined state.
-      // Confirmed live: this is exactly what let a LATER, unrelated field's own keyboard/focus
-      // activity leak into and corrupt a DIFFERENT widget's already-correct value afterward
-      // (reported live as the phone/country picker silently changing minutes after a completely
-      // unrelated question's own combobox retried and failed the exact same way - e.g. a
-      // "60000 EUR" answer mistakenly aimed at a Yes/No field). Closing cleanly here - Escape,
-      // clear the typed text, blur - instead of leaving things ambiguous removes that whole
-      // class of risk, regardless of WHY the mismatch happened in the first place. Not
-      // preventing the mismatched answer itself (a genuinely wrong answer should still leave
-      // this ONE field for the user, not silently corrupt some OTHER, unrelated field too).
+      // Close the open menu without wiping a value that already committed. Confirmed live
+      // Bloomreach Greenhouse "Where did you hear about Bloomreach?": tier 2 clicked LinkedIn,
+      // verify raced, then nativeSet("") here cleared the selection — GPT later re-selected
+      // the same option (select → remove → select again). Only clear the typed filter text when
+      // the display is still empty/placeholder; never blank a real single-value.
+      // Also Escape-only (no ArrowDown leftovers) so a failed hear-about retry can't walk the
+      // still-active phone dial-code picker toward the US default (+1).
+      const displayBeforeCleanup = reactSelectDisplayValue(element);
+      if (
+        displayBeforeCleanup &&
+        !isGenericSelectPlaceholder(displayBeforeCleanup) &&
+        (comboboxValueCommitted(element, desiredText) ||
+          answerCouldMatchOptions(desiredText, [displayBeforeCleanup]))
+      ) {
+        const escapeKeep = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+        element.dispatchEvent(new KeyboardEvent("keydown", escapeKeep));
+        element.dispatchEvent(new KeyboardEvent("keyup", escapeKeep));
+        element.blur();
+        await dismissOpenGreenhouseComboboxes(element);
+        console.info(
+          `${tag} tier 4 keep existing display="${displayBeforeCleanup}" (desired="${desiredText}")`
+        );
+        return true;
+      }
       const escapeInit = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
       element.dispatchEvent(new KeyboardEvent("keydown", escapeInit));
       element.dispatchEvent(new KeyboardEvent("keyup", escapeInit));
-      nativeSet(element, "");
+      // Only clear filter text when nothing real is selected — never nativeSet("") on a
+      // phone dial-code picker (wiping it remounts Greenhouse's default +1).
+      if (!isPhoneDialCodePicker(element) && !comboboxHasDisplayValue(element)) {
+        nativeSet(element, "");
+      }
       element.blur();
+      await dismissOpenGreenhouseComboboxes(element);
       await new Promise((resolve) => setTimeout(resolve, 100));
       const displayAfterFail = reactSelectDisplayValue(element);
       console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
@@ -4339,16 +4847,37 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       element.getAttribute("placeholder"),
       element.getAttribute("name"),
       element.id,
+      element.getAttribute("data-af-label"),
+      typeof ashbyFieldQuestionLabel === "function" ? ashbyFieldQuestionLabel(element) : "",
       controlEl && controlEl.getAttribute("aria-label"),
     ]
       .filter(Boolean)
       .join(" ");
     const isLocationAutocomplete = Boolean(
+      (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
       (element.closest &&
         element.closest(
           'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
         )) ||
-        /location|city|where (are|do) you|place of residence|current (city|location)/i.test(fieldHint)
+        // Word boundaries required: bare /city/ matched inside id `hispanic_ethnicity`
+        // (ethniCITY) and routed EEO Yes/No through the Places typeahead — confirmed live
+        // job-boards.greenhouse.io/easyship 20260813T094934Z (typed "Warsaw" into Hispanic).
+        /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
+          fieldHint
+        )
+    );
+    // True geocode/Places widgets only — NOT fixed Greenhouse selects that merely mention
+    // location (apaleo 20260813T100213Z: "Current location and relocation plans" options are
+    // "Based in Germany|…" but Places typed "Poland" for ~9s with 0 hits).
+    const isGeocodePlacesField = Boolean(
+      (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
+        (element.id && /^(candidate-location|_systemfield_location)$/i.test(element.id)) ||
+        (element.closest &&
+          element.closest(
+            'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
+          )) ||
+        (/location\s*\(\s*city\s*\)/i.test(fieldHint) &&
+          !/relocat|plans|based (in|outside)|willing to (move|relocate)/i.test(fieldHint))
     );
     const isCountryOrPhonePicker = Boolean(
       (element.closest && element.closest(".iti, crux-phone-component, [class*='phone-input'], [class*='PhoneInput']")) ||
@@ -4359,7 +4888,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const hasAriaListbox = Boolean(element.getAttribute && element.getAttribute("aria-controls"));
 
     // Greenhouse Location (City) Places: dedicated path — click, type (no blur), wait, top result.
-    if (isGreenhouseSelect && isLocationAutocomplete) {
+    // Ashby `_systemfield_location` is the same geocode typeahead (no .select-shell).
+    if (isGeocodePlacesField) {
       return await fillGreenhouseLocationPlaces(element, desiredText, controlEl);
     }
 
@@ -4371,11 +4901,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           preType: 100,
           // Greenhouse Places menus often need >1s after typing before options appear
           // (confirmed live Tatari Location City: 400ms type-head saw []).
-          typeHead: hasAriaListbox || isGreenhouseSelect ? 1200 : 450,
-          poll: hasAriaListbox || isGreenhouseSelect ? 180 : 120,
+          typeHead: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 1200 : 450,
+          poll: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 180 : 120,
           stable: 2,
-          maxPolls: hasAriaListbox || isGreenhouseSelect ? 70 : 50,
-          trustedRetry: hasAriaListbox || isGreenhouseSelect ? 35 : 25,
+          maxPolls: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 70 : 50,
+          trustedRetry: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 35 : 25,
         }
       : isCountryOrPhonePicker
         ? { open: 150, preType: 80, typeHead: 280, poll: 100, stable: 2, maxPolls: 40, trustedRetry: 15 }
@@ -4399,12 +4929,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
       // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
       if (!isLocationAutocomplete) {
-        if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
-          return true;
-        }
-        // Do NOT return early here. GPT select-pick already chose an option label — fall through
-        // and click that label in the open menu (confirmed live Tatari: early-return after remix
-        // failure left generated answers uncommitted).
+        const remixResult = await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText);
+        if (remixResult === true) return true;
+        // Remix already proved desiredText matches no visible option — falling through only
+        // re-opens the menu and burns ~7s (Cloudbeds GH skill Yes/No + wrong QA/phone).
+        // Still fall through when remix merely failed to open (false) so GPT labels can retry.
+        if (remixResult === "no-match") return false;
       }
     }
 
@@ -4680,10 +5210,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return false;
     }
     await commitComboboxOption(match, controlEl || element);
-    const committed = comboboxValueCommitted(element, desiredText);
+    let committed = comboboxValueCommitted(element, desiredText);
+    if (!committed && isLocationAutocomplete) {
+      const typed = String(element.value || "").trim().toLowerCase();
+      const city = String(desiredText || "").split(",")[0].trim().toLowerCase();
+      if (city && typed.includes(city)) committed = true;
+    }
     if (committed && isLocationAutocomplete) {
       console.info(
-        `[Auto Fill][location] committed "${reactSelectDisplayValue(element)}" for query "${desiredText}"`
+        `[Auto Fill][location] committed "${reactSelectDisplayValue(element) || element.value}" for query "${desiredText}"`
       );
     }
     return committed;
@@ -4717,12 +5252,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         (element.getAttribute && element.getAttribute("aria-expanded") === "true") ||
         (controlEl && controlEl.getAttribute && controlEl.getAttribute("aria-expanded") === "true");
       if (isGH) {
-        await trustedClick(controlEl || element);
-        await new Promise((resolve) => setTimeout(resolve, 180));
-        if (!isOpen()) {
-          simulateClick(controlEl || element);
-          await new Promise((resolve) => setTimeout(resolve, 150));
-        }
+        // Fiber already missed — open once synthetically, one trustedClick max. Confirmed live
+        // apaleo 20260813T100213Z: multi trustedClick open/close burned ~25s on GDPR discovery.
+        simulateClick(controlEl || element);
+        await new Promise((resolve) => setTimeout(resolve, 150));
         if (!isOpen()) {
           const init = { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true };
           element.dispatchEvent(new KeyboardEvent("keydown", init));
@@ -4731,16 +5264,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         }
         if (!isOpen()) {
           await trustedClick(controlEl || element);
-          await new Promise((resolve) => setTimeout(resolve, 160));
+          await new Promise((resolve) => setTimeout(resolve, 180));
         }
       } else {
         simulateClick(controlEl || element);
         await new Promise((resolve) => setTimeout(resolve, sfPick ? 200 : asyncList ? 150 : 100));
       }
       let options = [];
-      const maxAttempts = sfPick ? 25 : asyncList ? 20 : 15;
+      const maxAttempts = sfPick ? 8 : asyncList ? 6 : 4;
       for (let attempt = 0; attempt < maxAttempts && !options.length; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, sfPick ? 100 : asyncList ? 120 : 80));
+        await new Promise((resolve) => setTimeout(resolve, sfPick ? 80 : asyncList ? 100 : 70));
         options = findComboboxOptions(prefix, before, element);
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -5286,6 +5819,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!desired || !optionLabels || !optionLabels.length) return desired;
     const demo = coerceDemographicSelectAnswer(desired, optionLabels);
     if (demo) return demo;
+    const lang = coerceLanguageLevelForOptions(desired, optionLabels);
+    if (lang) return lang;
     if (!isYesNoOptionSet(optionLabels)) return desired;
     const cat = detectCategory(label);
     const low = desired.toLowerCase();
@@ -5308,6 +5843,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return optionLabels.find((o) => /^no$/i.test(String(o).trim())) || desired;
     }
     return desired;
+  }
+
+  // Map "Native / Advanced", "Fluent", "C1", etc. onto CEFR-labelled option lists
+  // (Pinpoint/Personio/Ashby). Confirmed live newfireglobal.pinpointhq.com 20260812T161501Z:
+  // QA "Native / Advanced" matched none of Basic/Intermediate/Advanced/Fluent/Native — discovery
+  // picks stayed empty and English waited for GPT.
+  function coerceLanguageLevelForOptions(answer, optionLabels) {
+    const desired = String(answer || "").trim();
+    if (!desired || !optionLabels || !optionLabels.length) return null;
+    const texts = optionLabels.map((o) => String(o || "").trim()).filter(Boolean);
+    const hasCefr = texts.some((t) => /\bA[12]\b|\bB[12]\b|\bC[12]\b/i.test(t));
+    if (!hasCefr && !texts.some((t) => /fluent|native|advanced|intermediate|basic/i.test(t))) {
+      return null;
+    }
+    const low = desired.toLowerCase();
+    const pick =
+      (/\b(native|c2|fluent|mastery)\b/i.test(low) &&
+        (texts.find((t) => /\bC2\b/i.test(t)) ||
+          texts.find((t) => /fluent\s*\/\s*native|native|fluent/i.test(t)))) ||
+      (/\b(advanced|c1|proficient|upper intermediate|b2)\b/i.test(low) &&
+        (texts.find((t) => /\bC1\b/i.test(t)) ||
+          texts.find((t) => /\bB2\b/i.test(t)) ||
+          texts.find((t) => /advanced/i.test(t)))) ||
+      (/\b(intermediate|b1)\b/i.test(low) &&
+        !/upper/i.test(low) &&
+        (texts.find((t) => /\bB1\b/i.test(t)) || texts.find((t) => /intermediate/i.test(t)))) ||
+      (/\b(beginner|elementary|basic|a1|a2)\b/i.test(low) &&
+        (texts.find((t) => /\bA[12]\b/i.test(t)) || texts.find((t) => /basic|beginner/i.test(t))));
+    return pick || null;
   }
 
   function computeTotalYearsExperience() {
@@ -5338,6 +5902,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         const text = String(label || "").trim();
         const plus = text.match(/(\d+(?:\.\d+)?)\s*\+/);
         if (plus) return { label: text, min: parseNum(plus[1]), max: Infinity };
+        // "More than 8 years" / "Over 5 years"
+        const moreThan = text.match(/(?:more\s+than|over|above)\s+(\d+(?:\.\d+)?)/i);
+        if (moreThan) return { label: text, min: parseNum(moreThan[1]) + 0.01, max: Infinity };
         // "0 - 3 Years", "8–10", and Rippling "8 to 10 Years" / "5 to 7.11 Years"
         const range = text.match(/(\d+(?:\.\d+)?)\s*(?:[-–]|to)\s*(\d+(?:\.\d+)?)/i);
         if (range) return { label: text, min: parseNum(range[1]), max: parseNum(range[2]) };
@@ -5420,18 +5987,34 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         add(fit || digitOpts[digitOpts.length - 1]);
       }
     }
+    if (cat === "english_proficiency" || cat === "polish_proficiency") {
+      if (qaAnswer) {
+        const mapped = coerceLanguageLevelForOptions(qaAnswer, optionLabels);
+        if (mapped) add(mapped);
+      }
+    }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
       const linkedInOpt = optionLabels.find((o) => /linkedin/i.test(String(o)));
       if (linkedInOpt) add(linkedInOpt);
       else add("LinkedIn");
     }
+    if (/acknowledg|gdpr/i.test(String(label || ""))) {
+      const confirm =
+        optionLabels.find((o) => /^i confirm$/i.test(String(o).trim())) ||
+        optionLabels.find((o) => /confirm|agree|accept/i.test(String(o)) && !/do not|don't|decline|not confirm/i.test(String(o)));
+      if (confirm) add(confirm);
+    }
     if (cat === "reasonable_accommodation") {
+      add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
+    }
+    if (cat === "hispanic_latino") {
       add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
     }
     if (
       cat === "worked_here_before" ||
       cat === "currently_employed_here" ||
       cat === "related_to_employee" ||
+      cat === "employee_referral" ||
       cat === "lived_abroad"
     ) {
       add(optionLabels.find((o) => /^no$/i.test(String(o).trim())) || "No");
@@ -5446,7 +6029,71 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       );
       if (mapped) add(mapped);
     }
+    if (
+      (cat === "skill_experience" || /\bexperience\s+(?:with|building|in)\b/i.test(String(label || ""))) &&
+      optionLabels.some((o) => /^(yes|no)$/i.test(String(o).trim()))
+    ) {
+      const skillPick = inferSkillExperienceYesNo(label);
+      if (skillPick) add(optionLabels.find((o) => new RegExp(`^${skillPick}$`, "i").test(String(o).trim())) || skillPick);
+    }
     return candidates;
+  }
+
+  function profileSkillHaystack() {
+    const parts = [];
+    const skills = profile && (profile.skills || profile.technical_skills);
+    if (Array.isArray(skills)) parts.push(...skills);
+    else if (skills && typeof skills === "object") {
+      for (const v of Object.values(skills)) {
+        if (Array.isArray(v)) parts.push(...v);
+        else if (v) parts.push(String(v));
+      }
+    }
+    if (profile && Array.isArray(profile.experience)) {
+      for (const e of profile.experience) {
+        if (e && e.title) parts.push(e.title);
+        if (e && e.company) parts.push(e.company);
+        if (e && e.description) parts.push(e.description);
+        if (e && Array.isArray(e.bullets)) parts.push(...e.bullets);
+      }
+    }
+    return parts.join(" ").toLowerCase();
+  }
+
+  function inferSkillExperienceYesNo(label) {
+    const raw = String(label || "");
+    // Classic: "Experience working with X?" / "Experience with X"
+    let m = raw.match(/\bexperience\s+(?:working\s+)?with\s+([^?.!]+)/i);
+    // Greenhouse requirement statements: "Hands-on experience with modern mobile…",
+    // "5+ years of software engineering experience building… Python and TypeScript"
+    if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using)\s+([^?.!]+)/i);
+    if (!m && /\b(proficiency|years).{0,40}\b(python|typescript|react|kubernetes|aws|docker)\b/i.test(raw)) {
+      m = [raw, raw];
+    }
+    if (!m) return null;
+    let skill = m[1].trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").trim();
+    if (!skill) return null;
+    const blob = profileSkillHaystack();
+    // Tokenize skill phrase; also pull notable tech tokens from the whole label.
+    const labelTechs = (raw.toLowerCase().match(
+      /\b(python|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
+    ) || []).map((t) => t.replace(/\s+/g, " "));
+    const tokens = [
+      ...skill.split(/[\s,/]+/).filter((t) => t.length > 2),
+      ...labelTechs,
+    ];
+    const seen = new Set();
+    for (const tok of tokens) {
+      if (seen.has(tok)) continue;
+      seen.add(tok);
+      if (tok === "go" && (/\bgolang\b/.test(blob) || /\bgo\s*\(/.test(blob))) return "Yes";
+      if (blob.includes(tok)) return "Yes";
+    }
+    // Unknown skill on a Yes/No requirement — prefer No over inventing Yes.
+    if (/\b(highly relevant|required|must have|hands-?on experience|years of)\b/i.test(raw)) {
+      return "No";
+    }
+    return null;
   }
 
   // ---- RUN ----
@@ -5538,14 +6185,55 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         continue;
       }
     }
+    if (detectCategory(group.label) === "disability_status") {
+      const demo =
+        coerceDemographicSelectAnswer("No disability", optionLabels) ||
+        coerceDemographicSelectAnswer("I do not want to answer", optionLabels) ||
+        optionLabels.find((t) => /do not want to answer|prefer not|decline/i.test(String(t))) ||
+        optionLabels.find((t) => /do not have a disabilit|don'?t have a disabilit/i.test(String(t)));
+      if (demo && clickGroupOption(group.options, demo)) {
+        filled.push({ label: group.label, value: demo, source: "default" });
+        continue;
+      }
+    }
+    if (
+      (detectCategory(group.label) === "employee_referral" ||
+        detectCategory(group.label) === "related_to_employee" ||
+        detectCategory(group.label) === "worked_here_before" ||
+        detectCategory(group.label) === "currently_employed_here" ||
+        detectCategory(group.label) === "lived_abroad") &&
+      optionLabels.some((t) => /^no$/i.test(String(t).trim()))
+    ) {
+      if (clickGroupOption(group.options, "No")) {
+        filled.push({ label: group.label, value: "No", source: "default" });
+        continue;
+      }
+    }
+    if (detectCategory(group.label) === "hear_about") {
+      const linkedIn = optionLabels.find((t) => /linkedin/i.test(String(t)));
+      if (linkedIn && clickGroupOption(group.options, linkedIn)) {
+        filled.push({ label: group.label, value: linkedIn, source: "default" });
+        continue;
+      }
+    }
+    const isYesNoGroup = optionLabels.some((t) => /^(yes|no)$/i.test(String(t).trim()));
+    if (isYesNoGroup) {
+      const skillPick = inferSkillExperienceYesNo(group.label);
+      if (skillPick && clickGroupOption(group.options, skillPick)) {
+        filled.push({ label: group.label, value: skillPick, source: "profile" });
+        continue;
+      }
+    }
     // Stamp the first option element so a later AI pick can click the matching sibling(s).
     if (optionLabels.length > 1 && group.options[0] && group.options[0].element) {
       const idx = stampIdx(group.options[0].element, group.label);
+      const yesNoGroup = optionLabels.some((t) => /^(yes|no)$/i.test(String(t).trim()));
       unmatched.push({
         idx,
         label: group.label,
         type: group.kind,
-        canGenerate: false,
+        canGenerate: yesNoGroup,
+        gptBatchEligible: yesNoGroup,
         options: optionLabels,
         // checkbox-group = select-all-that-apply; radio/button = single pick.
         multi: group.kind === "checkbox-group",
@@ -5628,6 +6316,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       /location\s*\(city\)/i.test(ownLabel) ||
       /^(location|city)\b|\bcity\s*$/i.test(ownLabel) ||
       (element.id && /location/i.test(element.id)) ||
+      (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
       (element.closest &&
         element.closest(
           "spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test=\"location-autocomplete\"]"
@@ -5641,6 +6330,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       const full = profileLocationQuery();
       if (full) structuredValue = full;
+    }
+    // RecruitCRM apply: "Location" is a searchable country list (cmdk), not a city — confirmed
+    // live: typing "Warsaw" matches nothing; Poland is the real option.
+    if (
+      /(^|\.)recruitcrm\.io$/i.test(location.hostname || "") &&
+      /\/apply\//i.test(location.pathname || "") &&
+      looksLikeComboboxPick(element) &&
+      isLocationAutocompleteField &&
+      profile &&
+      profile.contact &&
+      profile.contact.country
+    ) {
+      structuredValue = profile.contact.country;
     }
     // Bare residence Country must stay the profile country — never city/location/dial-code.
     if (
@@ -5663,7 +6365,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // cycle - before settling on "-None-" anyway. For an optional field, none of that needed to
     // happen at all; the later "skip optional combobox" guard below only protects the
     // discovery-and-stamp-for-AI path, not this earlier structured-value attempt.
-    if (structuredValue && looksLikeComboboxPick(element) && !isRequiredField(element, host)) {
+    // Location typeaheads still need a Places pick even when Ashby (and others) omit native
+    // `required` — skipping them left `_systemfield_location` empty (20260813T092428Z).
+    // Relocation-plans selects are fixed option lists ("Based in Germany|…"), not a city —
+    // apaleo 20260813T100213Z: profile/QA "Poland" was thrown at Places for ~9s.
+    if (structuredValue && /relocat|relocation\s*plans|based (in|outside) the/i.test(ownLabel)) {
+      structuredValue = null;
+    }
+    if (
+      structuredValue &&
+      looksLikeComboboxPick(element) &&
+      !isRequiredField(element, host) &&
+      !isLocationAutocompleteField
+    ) {
       structuredValue = null;
     }
     if (structuredValue && (await fillSingle(element, structuredValue))) {
@@ -5696,6 +6410,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       continue;
     }
     if (isPhoneDialCodePicker(element) && profile.contact && (profile.contact.phone || profile.contact.country)) {
+      // Phenom / other native <select> dial pickers: pick "Poland (+48)" from the option list
+      // instead of running the Greenhouse combobox retry chain (which can't set a real <select>).
+      if (element.tagName && element.tagName.toLowerCase() === "select") {
+        const country = String(profile.contact.country || "").trim();
+        const phoneDigits = String(profile.contact.phone || "").replace(/[^\d+]/g, "");
+        const codeMatch = phoneDigits.match(/^\+(\d{1,4})/);
+        const code = codeMatch ? `+${codeMatch[1]}` : "";
+        const dialPicks = [];
+        if (country && code) dialPicks.push(`${country} (${code})`);
+        if (country) dialPicks.push(country);
+        if (code) dialPicks.push(code);
+        let dialDone = false;
+        for (const pick of dialPicks) {
+          if (pick && (await fillSingle(element, pick))) {
+            filled.push({ label, value: pick, source: "profile" });
+            dialDone = true;
+            break;
+          }
+        }
+        if (dialDone) continue;
+        unmatched.push({
+          idx: stampIdx(element, label),
+          label,
+          type: element.type || "select-one",
+          canGenerate: false,
+          skipQaMatch: true,
+        });
+        continue;
+      }
       // Real calling codes are 1-3 digits with no way to tell the boundary from the digit
       // string alone (see setPhoneValue's own comment on the same ambiguity) - `/^(\+\d+)/` used
       // to match the ENTIRE leading digit run, not just the code, so this always tried to match
@@ -5724,7 +6467,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const phoneDigitsForCheck = String(profile.contact.phone || "").replace(/[^\d+]/g, "");
       const isCorrectDialCode = (v) => {
         const code = String(v || "").trim();
-        return /^\+\d{1,4}$/.test(code) && phoneDigitsForCheck.startsWith(code);
+        if (!/^\+\d{1,4}$/.test(code)) return false;
+        // Full E.164 ("+4857…") or local digits that still start with the calling-code digits.
+        if (phoneDigitsForCheck.startsWith(code)) return true;
+        const bare = code.replace(/^\+/, "");
+        const digitsOnly = phoneDigitsForCheck.replace(/^\+/, "");
+        return Boolean(bare) && digitsOnly.startsWith(bare);
       };
       // Confirmed live via the country-picker watcher above: its display kept changing long
       // after this field's own fill was done and the loop had moved on to LATER, unrelated
@@ -5875,12 +6623,40 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Company-employment / relatives / lived-abroad screens: default No before QA/discovery.
     // Confirmed live Oportun: relatives + lived-in-US/Canada stayed unmatched when category
     // QA / discovery retries didn't fire — while "worked at … before?" already filled No.
+    let qaMatch = matchQaBank(label, element);
+    // Veteran discharge Month/Day/Year must not reuse a "Not a veteran" status answer —
+    // confirmed live Oracle HCM 20260812T182256Z (those three date comboboxes each tried
+    // "Not a veteran" for 10–90s with 0 options found).
+    if (
+      qaMatch &&
+      /discharge\s+date|militaryDischargeDate/i.test(label) &&
+      /veteran|not applicable|^n\/?a$/i.test(String(qaMatch.answer || "")) &&
+      !/\d{4}|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(String(qaMatch.answer || ""))
+    ) {
+      qaMatch = null;
+    }
     if (looksLikeComboboxPick(element) && !isPhoneDialCodePicker(element)) {
       const screenCat = detectCategory(label);
+      // Greenhouse skill/requirement Yes/No statements — infer from profile BEFORE bad QA/
+      // structured phone hits (Cloudbeds GH: "mobile" → phone, skill_experience → "5+ years").
+      if (
+        (screenCat === "skill_experience" ||
+          /\b(hands-?on\s+)?experience\s+(with|building|in|using)\b|\b\d+\+?\s*years?\b.*\bexperience\b/i.test(
+            label
+          )) &&
+        !comboboxHasDisplayValue(element)
+      ) {
+        const skillPick = inferSkillExperienceYesNo(label);
+        if (skillPick && (await fillReactSelectByClick(element, skillPick))) {
+          filled.push({ label, value: skillPick, source: "profile" });
+          continue;
+        }
+      }
       if (
         screenCat === "worked_here_before" ||
         screenCat === "currently_employed_here" ||
         screenCat === "related_to_employee" ||
+        screenCat === "employee_referral" ||
         screenCat === "lived_abroad"
       ) {
         if (comboboxHasDisplayValue(element)) {
@@ -5893,8 +6669,71 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           continue;
         }
       }
+      // "Where did you hear about X?" — prefer LinkedIn once up front. Confirmed live Bloomreach
+      // Greenhouse: QA/discovery selected LinkedIn, verify raced, tier-4 nativeSet("") wiped it,
+      // then GPT re-selected the same option (select → clear → select).
+      if (screenCat === "hear_about") {
+        if (comboboxHasDisplayValue(element)) {
+          const cur = reactSelectDisplayValue(element);
+          filled.push({ label, value: cur, source: "already-set" });
+          continue;
+        }
+        const hearPicks = [];
+        if (qaMatch && qaMatch.answer) hearPicks.push(qaMatch.answer);
+        if (profile && profile.contact && profile.contact.linkedin) hearPicks.push("LinkedIn");
+        hearPicks.push("LinkedIn");
+        let hearDone = false;
+        for (const pick of [...new Set(hearPicks.map(String).filter(Boolean))]) {
+          // Never dump a profile URL into a "how did you hear" answer.
+          if (/^https?:\/\//i.test(String(pick))) continue;
+          if (await fillReactSelectByClick(element, pick)) {
+            filled.push({ label, value: pick, source: "learned" });
+            hearDone = true;
+            break;
+          }
+        }
+        if (hearDone) continue;
+      }
+      // GDPR / acknowledgement dropdowns — prefer Confirm/Agree before a stale QA phrase
+      // like "Acknowledge/Confirm" that isn't a real option (apaleo 20260813T100213Z).
+      if (/acknowledg|gdpr|privacy|consent/i.test(label) && !comboboxHasDisplayValue(element)) {
+        const ackPicks = [];
+        if (qaMatch && qaMatch.answer && isPlausibleQaComboboxAnswer(label, qaMatch.answer)) {
+          ackPicks.push(qaMatch.answer);
+        }
+        ackPicks.push("I Confirm", "I agree", "Agree", "Confirm", "Yes", "Accept");
+        let ackDone = false;
+        for (const pick of [...new Set(ackPicks.map(String).filter(Boolean))]) {
+          if (await fillReactSelectByClick(element, pick)) {
+            filled.push({ label, value: pick, source: "consent" });
+            ackDone = true;
+            break;
+          }
+        }
+        if (ackDone) continue;
+      }
+      if (screenCat === "hispanic_latino") {
+        if (comboboxHasDisplayValue(element)) {
+          const cur = reactSelectDisplayValue(element);
+          filled.push({ label, value: cur, source: "already-set" });
+          continue;
+        }
+        const hispanicPicks = [];
+        if (qaMatch && qaMatch.answer && isPlausibleQaComboboxAnswer(label, qaMatch.answer)) {
+          hispanicPicks.push(qaMatch.answer);
+        }
+        hispanicPicks.push("No");
+        let hispanicDone = false;
+        for (const pick of [...new Set(hispanicPicks.map(String).filter(Boolean))]) {
+          if (await fillReactSelectByClick(element, pick)) {
+            filled.push({ label, value: pick, source: "learned" });
+            hispanicDone = true;
+            break;
+          }
+        }
+        if (hispanicDone) continue;
+      }
     }
-    const qaMatch = matchQaBank(label, element);
     let qaComboboxFailed = false;
     const qaAnswerUsable = qaMatch && isPlausibleQaComboboxAnswer(label, qaMatch.answer);
     // Salary band dropdowns (e.g. Greenhouse "€15,000 - €20,000" yearly ranges) can't commit a
@@ -5993,6 +6832,33 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (consentPick && (await fillSingle(element, consentPick))) {
         filled.push({ label, value: consentPick, source: "consent" });
         continue;
+      }
+    }
+
+    // Native <select> defaults that must not wait for GPT: Phone Device Type → Mobile,
+    // How did you hear → LinkedIn/Social Media. Phenom Adobe 20260813T100512Z left both
+    // required device-type and (when visible) source selects on "Please Select".
+    if (tag === "select") {
+      const nativeOpts = [...element.options]
+        .map((o) => cleanedText(o).trim())
+        .filter((t) => t && !/^\?/.test(t) && !isGenericSelectPlaceholder(t));
+      if (/phone\s*device\s*type|\bdevice type\b/i.test(ownLabel) || /phone\s*device\s*type/i.test(label)) {
+        const mobile =
+          nativeOpts.find((t) => /^mobile$/i.test(t)) ||
+          nativeOpts.find((t) => /\bmobile\b|\bcell\b/i.test(t));
+        if (mobile && (await fillSingle(element, mobile))) {
+          filled.push({ label, value: mobile, source: "default" });
+          continue;
+        }
+      }
+      if (detectCategory(ownLabel) === "hear_about" || detectCategory(label) === "hear_about") {
+        const hear =
+          nativeOpts.find((t) => /linkedin/i.test(t)) ||
+          nativeOpts.find((t) => /social media/i.test(t));
+        if (hear && (await fillSingle(element, hear))) {
+          filled.push({ label, value: hear, source: "default" });
+          continue;
+        }
       }
     }
 
@@ -6122,13 +6988,59 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (consentDone) continue;
     }
 
+    // Free-text "How did you hear…?" — answer with the source name, never the profile URL
+    // (apaleo 20260813T100213Z: /linkedin/ structured match dumped the URL into this textarea).
+    if (
+      detectCategory(label) === "hear_about" &&
+      (tag === "textarea" || (tag === "input" && /^(text|search)?$/i.test(element.type || "")))
+    ) {
+      const hearText =
+        (qaMatch && qaMatch.answer && !/^https?:\/\//i.test(String(qaMatch.answer)) && qaMatch.answer) ||
+        "LinkedIn";
+      if (await fillSingle(element, hearText)) {
+        filled.push({ label, value: hearText, source: "default" });
+        continue;
+      }
+    }
+
+    // English/Polish conversation/level free-text: never leave a UI locale in the box.
+    // If QA was a locale (rejected above) or missing, use Fluent from other bank entries
+    // or a stable default (apply.workable.com 20260813T101015Z).
+    if (
+      (detectCategory(label) === "english_proficiency" ||
+        detectCategory(ownLabel) === "english_proficiency" ||
+        detectCategory(label) === "polish_proficiency" ||
+        detectCategory(ownLabel) === "polish_proficiency") &&
+      (tag === "textarea" || (tag === "input" && /^(text|search)?$/i.test(element.type || "")))
+    ) {
+      const levelAnswer =
+        (qaMatch &&
+          qaMatch.answer &&
+          !(typeof isUiLocaleAnswer === "function" && isUiLocaleAnswer(qaMatch.answer)) &&
+          qaMatch.answer) ||
+        "Fluent";
+      if (levelAnswer && (await fillSingle(element, levelAnswer))) {
+        filled.push({
+          label,
+          value: levelAnswer,
+          source: qaMatch && qaMatch.answer === levelAnswer ? "learned" : "default",
+        });
+        continue;
+      }
+    }
+
     // "range" included alongside the plain text-like types - confirmed live, a Teamtailor
     // rangeslider.js widget's real (visually near-invisible) `<input type="range">` backs an
     // ordinary free-text-answerable numeric question ("How many years of experience do you have
     // with full-stack development?"), not a discrete, un-generatable option picker like a
     // select/combobox - excluding it here left a genuinely required, generatable question stuck
     // asking for manual input even after isVisible() started detecting it correctly.
-    const isFreeText = tag === "textarea" || (tag === "input" && /^(text|email|tel|url|search|range)?$/i.test(element.type || ""));
+    // `number` included — Pinpoint HQ salary uses <input type="number"> ("monthly expected
+    // compensation … USD"). Without it, gptBatchEligible/canGenerate stayed false and the field
+    // sat in "need your input" (newfireglobal.pinpointhq.com 20260812T161501Z).
+    const isFreeText =
+      tag === "textarea" ||
+      (tag === "input" && /^(text|email|tel|url|search|number|range)?$/i.test(element.type || ""));
     const isCoverLetter = /\bcover(ing)?\s*letter\b/i.test(label) || /\bcover(ing)?\s*letter\b/i.test(ownLabel);
     const fieldRequired = isRequiredField(element, host) || isCoverLetter;
     // Optional free-text with no profile/QA answer (Facebook, Skill Set, etc.) — leave alone.
@@ -6137,7 +7049,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (isFreeText && !fieldRequired && !qaAnswerUsable && !structured.isStructuredCategory) {
       continue;
     }
-    if (looksLikeComboboxPick(element) && !fieldRequired && !qaAnswerUsable) {
+    if (
+      looksLikeComboboxPick(element) &&
+      !fieldRequired &&
+      !qaAnswerUsable &&
+      !isLocationAutocompleteField
+    ) {
       continue;
     }
     const gptBatchEligible =
@@ -6202,8 +7119,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (element.getAttribute("tabindex") === "-1") continue;
     if (workExpTouched.has(element)) continue;
     const label = labelForElement(element, element);
-    if (isConsentField(label)) {
+    if (shouldAutoCheckLoneCheckbox(element, label)) {
+      // Phenom (and similar) bind via a wrapping <label> + custom `ischecked` attribute, not
+      // a plain `.checked` write. Click the label first (same as grouped options); then
+      // nativeSetChecked is a no-op if the box is already on.
+      const wrap = element.closest && element.closest("label");
+      if (wrap) wrap.click();
       await fillSingle(element, true);
+      if (element.getAttribute("ischecked") != null) {
+        element.setAttribute("ischecked", "true");
+      }
       filled.push({ label, value: "yes", source: "consent" });
       continue;
     }
@@ -6221,8 +7146,27 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // nativeSet already focus/blurs, but the mutation still needs a beat to finish before Submit
   // reads server-side values — confirmed live: immediate Submit after Auto Fill still showed
   // "Missing entry" for Name/Email/salary even when the DOM looked filled.
+  // Also re-focus/blur non-empty text fields once at the end: if React onChange only landed
+  // after `_valueTracker` reset (20260812T152002Z Full Name / authorised-to-work), the first
+  // blur may have run before state committed, so a second blur pair flushes the save.
   if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    for (const el of document.querySelectorAll("input, textarea")) {
+      if (!el || !el.isConnected) continue;
+      const t = (el.type || "").toLowerCase();
+      if (t && t !== "text" && t !== "email" && t !== "tel" && t !== "search" && t !== "url" && el.tagName !== "TEXTAREA") {
+        continue;
+      }
+      if (!String(el.value || "").trim()) continue;
+      if (el.closest && el.closest("lyte-autocomplete")) continue;
+      try {
+        el.focus();
+        el.blur();
+      } catch {
+        /* ignore */
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
   }
 
   console.info(`[Auto Fill][summary] filled=${filled.length} unmatched=${unmatched.length}`);
@@ -6337,9 +7281,28 @@ async function fillGeneratedAnswersInPage(answers) {
     // Kept in sync with runAutofillInPage — skip when already in the desired state so a
     // synthetic click doesn't toggle a correct checkbox off (Workday "I currently work here").
     const want = Boolean(checked);
-    const aria = element.getAttribute("aria-checked");
-    const isOn = aria === "true" ? true : aria === "false" ? false : Boolean(element.checked);
-    if (isOn === want) return;
+    const isOn =
+      Boolean(element.checked) ||
+      element.getAttribute("ischecked") === "true" ||
+      element.getAttribute("aria-checked") === "true";
+    if (isOn === want) {
+      if (want && element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
+      return;
+    }
+    const wrap = element.closest && element.closest("label");
+    if (wrap && want) {
+      wrap.click();
+      if (element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
+      if (element.checked || element.getAttribute("ischecked") === "true") return;
+    }
+    const tracker = element._valueTracker;
+    if (tracker) {
+      try {
+        tracker.setValue(String(Boolean(element.checked)));
+      } catch {
+        /* ignore */
+      }
+    }
     const setter =
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked") &&
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
@@ -6349,6 +7312,9 @@ async function fillGeneratedAnswersInPage(answers) {
     element.dispatchEvent(new Event("change", { bubbles: true }));
     for (const type of ["mousedown", "mouseup", "click"]) {
       element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+    }
+    if (element.getAttribute("ischecked") != null) {
+      element.setAttribute("ischecked", want ? "true" : "false");
     }
   }
 
@@ -6627,6 +7593,76 @@ async function fillGeneratedAnswersInPage(answers) {
     );
   }
 
+  // Oracle HCM Candidate Experience (fa-*.oraclecloud.com / hcmUI/CandidateExperience):
+  // React `cx-select` behind Knockout — visible `<input class="cx-select-input" role="combobox"
+  // aria-haspopup="grid">` plus a sibling `#${id}-toggle-button`. Listbox mounts only after
+  // open (`#${id}-listbox`). Confirmed live 20260812T182256Z: discovery always found 0 options
+  // because the menu never opened via a plain input click and display reads used textContent.
+  function isOracleCxSelect(element) {
+    return Boolean(
+      element &&
+        ((element.classList && element.classList.contains("cx-select-input")) ||
+          (element.closest && element.closest(".cx-select-container")))
+    );
+  }
+
+  function oracleCxSelectOpenTarget(element) {
+    if (!element) return element;
+    if (element.id) {
+      const byId = document.getElementById(`${element.id}-toggle-button`);
+      if (byId) return byId;
+    }
+    const container = element.closest && element.closest(".cx-select-container");
+    const btn =
+      container &&
+      container.querySelector(
+        'button.icon-dropdown-arrow, button[id$="-toggle-button"], button[aria-label*="drop-down" i], button[title*="drop-down" i]'
+      );
+    return btn || element;
+  }
+
+  function findOracleCxSelectOptions(element, before) {
+    const isVisibleLocal = (el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+    const usable = (el) => {
+      if (!el || el === element) return false;
+      if (el.tagName === "INPUT" || el.tagName === "BUTTON") return false;
+      if (!isVisibleLocal(el)) return false;
+      if (isDisabledComboboxOption(el)) return false;
+      const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!t || t.length > 120) return false;
+      if (isGenericSelectPlaceholder(t)) return false;
+      return true;
+    };
+    const collect = (root) => {
+      if (!root) return [];
+      return [...root.querySelectorAll('[role="option"], [role="gridcell"], [role="row"], li, div, span, a')].filter(
+        (el) => usable(el) && (!before || !before.has(el) || isVisibleLocal(el))
+      );
+    };
+    const listId =
+      (element.getAttribute && element.getAttribute("aria-controls")) ||
+      (element.id ? `${element.id}-listbox` : "");
+    if (listId) {
+      const list = document.getElementById(listId);
+      const scoped = collect(list);
+      if (scoped.length) {
+        return scoped.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+      }
+    }
+    // Portaled popups (listbox id may not match until React mounts).
+    for (const list of document.querySelectorAll('[role="listbox"], [role="grid"], [id$="-listbox"]')) {
+      if (listId && list.id && list.id !== listId) continue;
+      const scoped = collect(list);
+      if (scoped.length) {
+        return scoped.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+      }
+    }
+    return [];
+  }
+
   function successFactorsPicklistOpenTarget(element) {
     const container =
       (element.closest && element.closest(".paginatedPicklistContainer, .sfCascadingPicklist")) || element;
@@ -6729,6 +7765,36 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return "";
     }
+    // Oracle cx-select (and other ARIA combobox <input>s): the committed answer lives in
+    // `.value`, not textContent — cleanedText() always returned "" so every fill looked
+    // uncommitted (fa-euwp…oraclecloud.com 20260812T182256Z).
+    if (
+      element &&
+      (element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
+      String(element.value || "").trim()
+    ) {
+      const v = String(element.value).trim();
+      const ph = (element.getAttribute("placeholder") || "").trim();
+      const hint =
+        (element.closest &&
+          element.closest(".cx-select-container") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label").textContent) ||
+        "";
+      if (v && v !== ph && !isGenericSelectPlaceholder(v) && !/country\s*code/i.test(v)) {
+        // Ashby Location (`placeholder="Start typing..."`): typed "Warsaw" is the geocode
+        // FILTER, not a committed Places pick — treating `.value` as display made Auto Fill
+        // skip the option click (jobs.ashbyhq.com 20260813T092428Z). A selected place usually
+        // includes a comma ("Warsaw, Mazowieckie, Poland").
+        const locationFilter =
+          typeof isLocationTypeaheadInput === "function" &&
+          isLocationTypeaheadInput(element) &&
+          !/,/.test(v);
+        if (!locationFilter && (!hint || v.toLowerCase() !== String(hint).trim().toLowerCase())) {
+          return v;
+        }
+      }
+    }
     const control = element && element.closest && element.closest('[class*="__control"]');
     if (control) {
       const single = control.querySelector('[class*="__single-value"]');
@@ -6758,14 +7824,16 @@ async function fillGeneratedAnswersInPage(answers) {
     }
     const current = reactSelectDisplayValue(element);
     if (!current || isGenericSelectPlaceholder(current)) return false;
-    // Greenhouse's phone dial-code picker (see isPhoneDialCodePicker) always commits as a bare
-    // "+NN" display (flag + calling code) no matter whether it was picked by typing the code OR
-    // the country name - comparing that against a country-name target ("poland") can never find
-    // any textual overlap, so every genuinely successful pick on this widget kept reading back
-    // as "not committed" here, forcing tryGreenhouseRemixSelect through all 4 fallback tiers
-    // every single run even though tier 2's very first click already landed correctly. Confirmed
-    // live via console logs showing a real click committed on poll #0 yet still reported failed.
-    if (isPhoneDialCodePicker(element) && /^\+\d{1,4}$/.test(current.trim())) return true;
+    // Without profile phone digits here, never treat a bare "+NN" as "already correct" —
+    // confirmed live Bloomreach: Greenhouse defaulted to +1 and this short-circuit would have
+    // left the wrong dial code in place on any re-fill attempt.
+    if (isPhoneDialCodePicker(element) && /^\+\d{1,4}$/.test(current.trim())) {
+      const target = (desiredText || "").toLowerCase().trim();
+      const cur = current.toLowerCase().trim();
+      if (target && (cur === target || cur.includes(target) || target.includes(cur))) return true;
+      if (/^\+\d{1,4}$/.test(String(desiredText || "").trim()) && cur === String(desiredText).trim()) return true;
+      return false;
+    }
     const target = (desiredText || "").toLowerCase().trim();
     const cur = current.toLowerCase();
     if (!target) return false;
@@ -6855,6 +7923,18 @@ async function fillGeneratedAnswersInPage(answers) {
     const target = (desiredText || "").toLowerCase().trim();
     const cur = display.toLowerCase();
     if (cur === target || cur.startsWith(target + ",") || cur.startsWith(target + " ")) return true;
+    if (element.closest && element.closest(".phone-input__country")) {
+      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
+      if (bareCountry === target || bareCountry.startsWith(target)) return true;
+      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+    }
+    if (typeof isPhoneDialCodePicker === "function" && isPhoneDialCodePicker(element)) {
+      if (/^\+\d{1,4}$/.test(cur.trim()) && target) return true;
+      const bareCountry = cur.replace(/\s*\+\d{1,4}\s*$/, "").trim();
+      if (bareCountry && (bareCountry === target || bareCountry.startsWith(target) || target.includes(bareCountry))) {
+        return true;
+      }
+    }
     return cur.includes(target) || target.includes(cur);
   }
 
@@ -6877,6 +7957,24 @@ async function fillGeneratedAnswersInPage(answers) {
   function comboboxHasDisplayValue(element) {
     const display = reactSelectDisplayValue(element);
     return Boolean(display && !isGenericSelectPlaceholder(display));
+  }
+
+  function answerCouldMatchOptions(answer, optionLabels) {
+    const a = String(answer || "").toLowerCase().trim();
+    if (!a) return false;
+    if (!optionLabels || !optionLabels.length) return true;
+    return optionLabels.some((o) => {
+      const t = String(o).toLowerCase().trim();
+      return (
+        t === a ||
+        t.startsWith(a + ",") ||
+        t.startsWith(a + " ") ||
+        t.startsWith(a) ||
+        a.startsWith(t) ||
+        t.includes(a) ||
+        a.includes(t)
+      );
+    });
   }
 
   function comboboxTrace(element, event, detail) {
@@ -6906,6 +8004,7 @@ async function fillGeneratedAnswersInPage(answers) {
 
   function comboboxOpenTarget(element) {
     if (isSuccessFactorsPicklist(element)) return successFactorsPicklistOpenTarget(element);
+    if (isOracleCxSelect(element)) return oracleCxSelectOpenTarget(element);
     const control = element.closest && element.closest('[class*="__control"]');
     if (control && element.closest(".select-shell, .select__container")) {
       const toggle = control.querySelector(
@@ -6926,6 +8025,10 @@ async function fillGeneratedAnswersInPage(answers) {
     if (element && isSuccessFactorsPicklist(element)) {
       const sfOpts = findSuccessFactorsPicklistOptions(element, before);
       if (sfOpts.length) return sfOpts;
+    }
+    if (element && isOracleCxSelect(element)) {
+      const cxOpts = findOracleCxSelectOptions(element, before);
+      if (cxOpts.length) return cxOpts;
     }
 
     const ownMenu = element && reactSelectMenuForElement(element);
@@ -6962,9 +8065,9 @@ async function fillGeneratedAnswersInPage(answers) {
         if (opts.length) return opts;
       }
     }
-    for (const listbox of querySelectorAllDeep('[role="listbox"], [role="tree"], [role="menu"]')) {
+    for (const listbox of querySelectorAllDeep('[role="listbox"], [role="grid"], [cmdk-list], [role="tree"], [role="menu"]')) {
       if (isPhoneCountryListbox(listbox)) continue;
-      const opts = [...listbox.querySelectorAll('[role="option"], [role="treeitem"], [role="menuitem"]')].filter(isFreshAndVisible);
+      const opts = [...listbox.querySelectorAll('[role="option"], [role="gridcell"], [role="row"], [cmdk-item], [role="treeitem"], [role="menuitem"]')].filter(isFreshAndVisible);
       if (opts.length) return opts;
     }
     // Comeet / Bootstrap `dropdown-menu`: options are `<li><a><div class="option-title">…`.
@@ -7108,7 +8211,7 @@ async function fillGeneratedAnswersInPage(answers) {
         }
         const portaled = [];
         for (const menu of document.querySelectorAll(
-          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu, [role="listbox"]'
         )) {
           const rect = menu.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) continue;
@@ -7153,22 +8256,31 @@ async function fillGeneratedAnswersInPage(answers) {
     let options = [];
     let stable = 0;
     let lastSig = "";
-    for (let poll = 0; poll < 40; poll++) {
+    // Cap empty waits: 40×200ms (~8s) burned on non-Places selects misrouted as location
+    // (apaleo relocation plans 20260813T100213Z). Real Places menus usually appear in <1s.
+    let emptyPolls = 0;
+    for (let poll = 0; poll < 12; poll++) {
       await sleep(200);
       if (menuLoading()) {
         if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
         stable = 0;
         lastSig = "";
         options = [];
+        emptyPolls = 0;
         continue;
       }
       const found = readOptions();
       const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
       if (!found.length) {
+        emptyPolls += 1;
         if (poll % 5 === 0) log(`3 poll#${poll} 0 options`);
         stable = 0;
         lastSig = "";
         options = [];
+        if (emptyPolls >= 6) {
+          log(`3 abort - ${emptyPolls} empty polls`);
+          break;
+        }
         continue;
       }
       if (sig === lastSig) {
@@ -7214,12 +8326,88 @@ async function fillGeneratedAnswersInPage(answers) {
     await commitComboboxOption(match, controlEl || element);
     await sleep(350);
     const display = reactSelectDisplayValue(element);
+    const inputVal = String(element.value || "").trim();
+    const cityLow = cityOnly.toLowerCase();
     const ok =
       comboboxValueCommitted(element, query) ||
-      (Boolean(display) && cityOnly && display.toLowerCase().includes(cityOnly));
+      (Boolean(display) && cityLow && display.toLowerCase().includes(cityLow)) ||
+      (Boolean(inputVal) && cityLow && inputVal.toLowerCase().includes(cityLow));
     log(ok ? `5 SUCCESS display="${display}"` : `5 FAILED verify display="${display}"`);
     if (ok) await dismissOpenGreenhouseComboboxes(element);
     return Boolean(ok);
+  }
+
+  // RecruitCRM apply forms: Radix dialog + cmdk country search (aria-haspopup="dialog").
+  // Confirmed live: closed display is "Not Selected"; typing a city name into the country
+  // list never matches — profile.contact.country is the value that commits.
+  async function tryFillRecruitCrmCmdkCombobox(element, desiredText) {
+    if (!/(^|\.)recruitcrm\.io$/i.test(location.hostname || "") || !/\/apply\//i.test(location.pathname || "")) {
+      return false;
+    }
+    const trigger =
+      element && element.getAttribute && element.getAttribute("role") === "combobox"
+        ? element
+        : element.closest && element.closest('[role="combobox"]');
+    if (!trigger || trigger.getAttribute("aria-haspopup") !== "dialog") return false;
+    const norm = (s) => (s || "").toLowerCase().trim();
+    const target = norm(desiredText);
+    if (!target) return false;
+    if (comboboxValueCommitted(trigger, desiredText)) return true;
+
+    const openIfNeeded = async () => {
+      if (trigger.getAttribute("aria-expanded") === "true") return true;
+      simulateClick(trigger);
+      trigger.focus();
+      await new Promise((resolve) => setTimeout(resolve, 280));
+      return trigger.getAttribute("aria-expanded") === "true";
+    };
+    const findSearchInput = () => {
+      const dialogId = trigger.getAttribute("aria-controls");
+      const dialog = dialogId && document.getElementById(dialogId);
+      if (dialog) {
+        const inp = dialog.querySelector('input[cmdk-input], [cmdk-input-wrapper] input');
+        if (inp) return inp;
+      }
+      return document.querySelector('input[cmdk-input]');
+    };
+    const pickFromCmdk = async (query) => {
+      const q = String(query || "").trim();
+      if (!q) return false;
+      const input = findSearchInput();
+      if (!input) return false;
+      nativeSet(input, q);
+      input.focus();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const items = [...document.querySelectorAll('[cmdk-item][role="option"], [cmdk-item]')].filter((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      const want = norm(q);
+      const match =
+        items.find((el) => norm(el.textContent) === want) ||
+        items.find((el) => norm(el.textContent).startsWith(want)) ||
+        items.find((el) => norm(el.textContent).includes(want) || want.includes(norm(el.textContent)));
+      if (!match) return false;
+      match.click();
+      await new Promise((resolve) => setTimeout(resolve, 280));
+      return comboboxValueCommitted(trigger, desiredText) || comboboxValueCommitted(trigger, match.textContent);
+    };
+
+    const candidates = [desiredText];
+    const fieldLabel = comboboxFieldLabel(trigger) || "";
+    if (/^location\b/i.test(fieldLabel)) {
+      const country =
+        (typeof profile !== "undefined" && profile && profile.contact && profile.contact.country
+          ? String(profile.contact.country).trim()
+          : "") ||
+        (String(desiredText).includes(",") ? String(desiredText).split(",").pop().trim() : "");
+      if (country && norm(country) !== target) candidates.push(country);
+    }
+    for (const pick of [...new Set(candidates.map(String).filter(Boolean))]) {
+      if (!(await openIfNeeded())) continue;
+      if (await pickFromCmdk(pick)) return true;
+    }
+    return false;
   }
 
   async function fillReactSelectByClick(element, desiredText) {
@@ -7236,6 +8424,9 @@ async function fillGeneratedAnswersInPage(answers) {
       console.warn(
         `[Auto Fill][phone-watch] fillReactSelectByClick called on the COUNTRY PICKER itself with desiredText="${desiredText}" (element id="${element.id || ""}")`
       );
+    }
+    if (await tryFillRecruitCrmCmdkCombobox(element, desiredText)) {
+      return true;
     }
     if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
       return true;
@@ -7295,7 +8486,7 @@ async function fillGeneratedAnswersInPage(answers) {
         }
         const portaled = [];
         for (const menu of document.querySelectorAll(
-          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu'
+          '[class*="__menu"], [class*="-menu"], [class*="menu-list"], .select__menu, [role="listbox"]'
         )) {
           const rect = menu.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) continue;
@@ -7379,18 +8570,15 @@ async function fillGeneratedAnswersInPage(answers) {
         if (comboboxExpanded(element, control)) return true;
         const toggle = greenhouseToggle();
         element.focus();
-        // Live GH remix react-select ignores synthetic opens — trusted-click the flyout toggle first.
-        if (await trustedClick(toggle)) {
-          await new Promise((resolve) => setTimeout(resolve, 280));
-          if (comboboxExpanded(element, control)) return true;
-        }
+        // Prefer cheap synthetic open first — trustedClick (debugger) is slow and was the
+        // main open/close thrash on apaleo GH 20260813T100213Z. One trusted retry is enough.
         simulateClick(toggle);
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 180));
         if (comboboxExpanded(element, control)) return true;
         dispatchKey("ArrowDown");
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         if (comboboxExpanded(element, control)) return true;
-        if (!comboboxExpanded(element, control) && (await trustedClick(toggle))) {
+        if (await trustedClick(toggle)) {
           await new Promise((resolve) => setTimeout(resolve, 220));
         }
         return comboboxExpanded(element, control);
@@ -7399,13 +8587,16 @@ async function fillGeneratedAnswersInPage(answers) {
       console.info(`${tag} tier 2 open (click/keyboard toggle) -> ${opened ? "opened" : "FAILED to open"}`);
       if (!opened) return false;
       let pollMatchedAt = null;
-      for (let poll = 0; poll < 10; poll++) {
+      for (let poll = 0; poll < 3; poll++) {
         await new Promise((resolve) => setTimeout(resolve, 60));
         const match = matchOption(liveOptions());
         if (!match) continue;
         pollMatchedAt = poll;
         if (await commitComboboxOption(match, control || element)) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Greenhouse remix often lags the single-value label after a real option click —
+          // confirmed live Bloomreach "Where did you hear…": LinkedIn was selected, verify
+          // failed on the first 200ms read, then tier-4 cleanup wiped it with nativeSet("").
+          await new Promise((resolve) => setTimeout(resolve, 350));
           if (comboboxValueCommitted(element, desiredText)) {
             const displayAfterCommit = reactSelectDisplayValue(element);
             console.info(`${tag} tier 2 click-poll -> COMMITTED (found match on poll #${poll}, display="${displayAfterCommit}")`);
@@ -7413,10 +8604,25 @@ async function fillGeneratedAnswersInPage(answers) {
             watchComboboxDisplay(element, `after tier-2 commit "${desiredText}"`);
             return true;
           }
+          // Click landed a real option whose label is a fuzzy sibling of desiredText
+          // ("LinkedIn" vs "LinkedIn / Social") — treat as committed rather than wiping.
+          const displayAfterClick = reactSelectDisplayValue(element);
+          if (
+            displayAfterClick &&
+            !isGenericSelectPlaceholder(displayAfterClick) &&
+            answerCouldMatchOptions(desiredText, [displayAfterClick])
+          ) {
+            console.info(
+              `${tag} tier 2 click-poll -> COMMITTED via display "${displayAfterClick}" (desired="${desiredText}")`
+            );
+            await dismissOpenGreenhouseComboboxes(element);
+            watchComboboxDisplay(element, `after tier-2 fuzzy commit "${desiredText}"`);
+            return true;
+          }
         }
       }
       console.info(
-        `${tag} tier 2 click-poll -> no committed match after 10 polls (~0.6s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
+        `${tag} tier 2 click-poll -> no committed match after 3 polls (~0.2s)${pollMatchedAt !== null ? ` (matched text on poll #${pollMatchedAt} but commit/verify failed)` : ""}`
       );
       // Don't ArrowDown when the desired string isn't any visible option (confirmed live:
       // "No disability" vs OFCCP long labels — keyboard-nav just walks Yes/No/Decline uselessly).
@@ -7427,7 +8633,9 @@ async function fillGeneratedAnswersInPage(answers) {
             `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
           );
           await dismissOpenGreenhouseComboboxes(element);
-          return false;
+          // Sentinel: caller must NOT fall through to the generic open/type path (~7s).
+          // Confirmed live Cloudbeds GH 20260813T085822Z (phone / "5+ years…" on Yes/No).
+          return "no-match";
         }
       }
       await dismissOpenGreenhouseComboboxes(element);
@@ -7472,6 +8680,18 @@ async function fillGeneratedAnswersInPage(answers) {
           console.warn(
             `${tag} tier 3 step ${keyboardSteps}: document.activeElement is NOT this element before ArrowDown (actual: ${ae ? `${ae.tagName}#${ae.id || ""}.${ae.className || ""}` : "null"})`
           );
+          // Confirmed live: ArrowDown meant for hear-about / other selects landed on the phone
+          // dial-code picker and walked it toward Greenhouse's US default (+1). Refocus before
+          // sending keys; if focus is stuck on the dial picker, abort keyboard nav entirely.
+          if (ae && ae.closest && ae.closest(".phone-input__country") && !isPhoneDialCodePicker(element)) {
+            console.warn(`${tag} tier 3 aborted - focus is on phone dial-code picker`);
+            break;
+          }
+          try {
+            element.focus();
+          } catch {
+            /* ignore */
+          }
         }
         dispatchKey("ArrowDown");
       }
@@ -7491,23 +8711,40 @@ async function fillGeneratedAnswersInPage(answers) {
           return true;
         }
       }
-      // No real option anywhere in THIS field's own list ever matched desiredText - blindly
-      // pressing Enter anyway (the previous behavior) left the widget holding non-matching
-      // typed text, with nothing committed, still open/focused in some undefined state.
-      // Confirmed live: this is exactly what let a LATER, unrelated field's own keyboard/focus
-      // activity leak into and corrupt a DIFFERENT widget's already-correct value afterward
-      // (reported live as the phone/country picker silently changing minutes after a completely
-      // unrelated question's own combobox retried and failed the exact same way - e.g. a
-      // "60000 EUR" answer mistakenly aimed at a Yes/No field). Closing cleanly here - Escape,
-      // clear the typed text, blur - instead of leaving things ambiguous removes that whole
-      // class of risk, regardless of WHY the mismatch happened in the first place. Not
-      // preventing the mismatched answer itself (a genuinely wrong answer should still leave
-      // this ONE field for the user, not silently corrupt some OTHER, unrelated field too).
+      // Close the open menu without wiping a value that already committed. Confirmed live
+      // Bloomreach Greenhouse "Where did you hear about Bloomreach?": tier 2 clicked LinkedIn,
+      // verify raced, then nativeSet("") here cleared the selection — GPT later re-selected
+      // the same option (select → remove → select again). Only clear the typed filter text when
+      // the display is still empty/placeholder; never blank a real single-value.
+      // Also Escape-only (no ArrowDown leftovers) so a failed hear-about retry can't walk the
+      // still-active phone dial-code picker toward the US default (+1).
+      const displayBeforeCleanup = reactSelectDisplayValue(element);
+      if (
+        displayBeforeCleanup &&
+        !isGenericSelectPlaceholder(displayBeforeCleanup) &&
+        (comboboxValueCommitted(element, desiredText) ||
+          answerCouldMatchOptions(desiredText, [displayBeforeCleanup]))
+      ) {
+        const escapeKeep = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+        element.dispatchEvent(new KeyboardEvent("keydown", escapeKeep));
+        element.dispatchEvent(new KeyboardEvent("keyup", escapeKeep));
+        element.blur();
+        await dismissOpenGreenhouseComboboxes(element);
+        console.info(
+          `${tag} tier 4 keep existing display="${displayBeforeCleanup}" (desired="${desiredText}")`
+        );
+        return true;
+      }
       const escapeInit = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
       element.dispatchEvent(new KeyboardEvent("keydown", escapeInit));
       element.dispatchEvent(new KeyboardEvent("keyup", escapeInit));
-      nativeSet(element, "");
+      // Only clear filter text when nothing real is selected — never nativeSet("") on a
+      // phone dial-code picker (wiping it remounts Greenhouse's default +1).
+      if (!isPhoneDialCodePicker(element) && !comboboxHasDisplayValue(element)) {
+        nativeSet(element, "");
+      }
       element.blur();
+      await dismissOpenGreenhouseComboboxes(element);
       await new Promise((resolve) => setTimeout(resolve, 100));
       const displayAfterFail = reactSelectDisplayValue(element);
       console.warn(`${tag} tier 4 FAILED - closed cleanly (display before="${displayBefore}", after="${displayAfterFail}")`);
@@ -7542,16 +8779,34 @@ async function fillGeneratedAnswersInPage(answers) {
       element.getAttribute("placeholder"),
       element.getAttribute("name"),
       element.id,
+      element.getAttribute("data-af-label"),
+      typeof ashbyFieldQuestionLabel === "function" ? ashbyFieldQuestionLabel(element) : "",
       controlEl && controlEl.getAttribute("aria-label"),
     ]
       .filter(Boolean)
       .join(" ");
     const isLocationAutocomplete = Boolean(
+      (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
       (element.closest &&
         element.closest(
           'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
         )) ||
-        /location|city|where (are|do) you|place of residence|current (city|location)/i.test(fieldHint)
+        // Word boundaries required: bare /city/ matched inside id `hispanic_ethnicity`
+        // (ethniCITY) — see runAutofillInPage copy above (easyship 20260813T094934Z).
+        /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
+          fieldHint
+        )
+    );
+    // Kept in sync with runAutofillInPage — Places only for true geocode widgets.
+    const isGeocodePlacesField = Boolean(
+      (typeof isAshbyLocationField === "function" && isAshbyLocationField(element)) ||
+        (element.id && /^(candidate-location|_systemfield_location)$/i.test(element.id)) ||
+        (element.closest &&
+          element.closest(
+            'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
+          )) ||
+        (/location\s*\(\s*city\s*\)/i.test(fieldHint) &&
+          !/relocat|plans|based (in|outside)|willing to (move|relocate)/i.test(fieldHint))
     );
     const isCountryOrPhonePicker = Boolean(
       (element.closest && element.closest(".iti, crux-phone-component, [class*='phone-input'], [class*='PhoneInput']")) ||
@@ -7562,7 +8817,8 @@ async function fillGeneratedAnswersInPage(answers) {
     const hasAriaListbox = Boolean(element.getAttribute && element.getAttribute("aria-controls"));
 
     // Greenhouse Location (City) Places: dedicated path — click, type (no blur), wait, top result.
-    if (isGreenhouseSelect && isLocationAutocomplete) {
+    // Ashby `_systemfield_location` is the same geocode typeahead (no .select-shell).
+    if (isGeocodePlacesField) {
       return await fillGreenhouseLocationPlaces(element, desiredText, controlEl);
     }
 
@@ -7574,11 +8830,11 @@ async function fillGeneratedAnswersInPage(answers) {
           preType: 100,
           // Greenhouse Places menus often need >1s after typing before options appear
           // (confirmed live Tatari Location City: 400ms type-head saw []).
-          typeHead: hasAriaListbox || isGreenhouseSelect ? 1200 : 450,
-          poll: hasAriaListbox || isGreenhouseSelect ? 180 : 120,
+          typeHead: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 1200 : 450,
+          poll: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 180 : 120,
           stable: 2,
-          maxPolls: hasAriaListbox || isGreenhouseSelect ? 70 : 50,
-          trustedRetry: hasAriaListbox || isGreenhouseSelect ? 35 : 25,
+          maxPolls: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 70 : 50,
+          trustedRetry: hasAriaListbox || isGreenhouseSelect || isLocationAutocomplete ? 35 : 25,
         }
       : isCountryOrPhonePicker
         ? { open: 150, preType: 80, typeHead: 280, poll: 100, stable: 2, maxPolls: 40, trustedRetry: 15 }
@@ -7602,12 +8858,12 @@ async function fillGeneratedAnswersInPage(answers) {
       // Async Greenhouse Location (City) / Places: remix open+poll sees [] until text is typed
       // (confirmed live Tatari). Skip remix and fall through to type-and-wait below.
       if (!isLocationAutocomplete) {
-        if (await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText)) {
-          return true;
-        }
-        // Do NOT return early here. GPT select-pick already chose an option label — fall through
-        // and click that label in the open menu (confirmed live Tatari: early-return after remix
-        // failure left generated answers uncommitted).
+        const remixResult = await tryGreenhouseRemixSelect(element, desiredText, controlEl, isUnusableOptionText);
+        if (remixResult === true) return true;
+        // Remix already proved desiredText matches no visible option — falling through only
+        // re-opens the menu and burns ~7s (Cloudbeds GH skill Yes/No + wrong QA/phone).
+        // Still fall through when remix merely failed to open (false) so GPT labels can retry.
+        if (remixResult === "no-match") return false;
       }
     }
 
@@ -7852,10 +9108,15 @@ async function fillGeneratedAnswersInPage(answers) {
       return false;
     }
     await commitComboboxOption(match, controlEl || element);
-    const committed = comboboxValueCommitted(element, desiredText);
+    let committed = comboboxValueCommitted(element, desiredText);
+    if (!committed && isLocationAutocomplete) {
+      const typed = String(element.value || "").trim().toLowerCase();
+      const city = String(desiredText || "").split(",")[0].trim().toLowerCase();
+      if (city && typed.includes(city)) committed = true;
+    }
     if (committed && isLocationAutocomplete) {
       console.info(
-        `[Auto Fill][location] committed "${reactSelectDisplayValue(element)}" for query "${desiredText}"`
+        `[Auto Fill][location] committed "${reactSelectDisplayValue(element) || element.value}" for query "${desiredText}"`
       );
     }
     return committed;
@@ -7876,7 +9137,36 @@ async function fillGeneratedAnswersInPage(answers) {
   // country well after the rest of the batch had already filled, non-deterministically per run
   // since the residence-country answer itself varies run to run.
   function isPhoneDialCodePicker(element) {
-    return Boolean(element && element.closest && element.closest(".phone-input__country"));
+    if (!element) return false;
+    if (element.closest && element.closest(".phone-input__country")) return true;
+    // Oracle HCM Candidate Experience: dial-code cx-select sits in `.phone-row__prefix` with
+    // id `country-codes-dropdownphoneNumber` but inherits the group label "Phone Number" —
+    // confirmed live fa-euwp-saasfaprod1…oraclecloud.com 20260812T182256Z: Auto Fill tried the
+    // full E.164 number as a combobox pick and discovery found 0 options for ~10s.
+    if (element.id && /^country-codes-dropdown/i.test(element.id)) return true;
+    // Phenom native Country Phone Code <select> — kept in sync with runAutofillInPage.
+    if (element.id && /countryPhoneCode|country-phone-code/i.test(element.id)) return true;
+    const autocomplete = (element.getAttribute && element.getAttribute("autocomplete")) || "";
+    if (/^tel-country-code$/i.test(autocomplete)) return true;
+    if (element.closest && element.closest(".phone-row__prefix, .cx-select-container")) {
+      const hint =
+        (element.getAttribute("aria-label") || "") +
+        " " +
+        ((element.closest(".cx-select-container") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label") &&
+          element.closest(".cx-select-container").querySelector(".input-field__label").textContent) ||
+          "");
+      if (/country\s*code|dial\s*code|calling\s*code/i.test(hint)) return true;
+    }
+    const own =
+      (typeof resolveOwnLabel === "function" &&
+        typeof normalizeLabel === "function" &&
+        normalizeLabel(resolveOwnLabel(element) || "")) ||
+      ((element.getAttribute && element.getAttribute("aria-label")) || "");
+    if (/country\s*(phone\s*)?code|phone\s*country\s*code|dial(ing)?\s*code|calling\s*code/i.test(own)) {
+      return true;
+    }
+    return false;
   }
 
   function findElementByLabel(label) {
@@ -8026,7 +9316,7 @@ async function fillGeneratedAnswersInPage(answers) {
       // peer was checked, so "select all that apply" never got more than one tick.
       const groupName = el.name || el.getAttribute("name");
       const inputType = el.type === "checkbox" ? "checkbox" : "radio";
-      const peers = groupName
+      let peers = groupName
         ? [
             ...document.querySelectorAll(`input[type="${inputType}"][name="${CSS.escape(groupName)}"]`),
             ...(inputType === "radio"
@@ -8034,6 +9324,15 @@ async function fillGeneratedAnswersInPage(answers) {
               : []),
           ]
         : [el];
+      // Ashby hear-about checkboxes use a unique `name` per option inside one <fieldset>
+      // (jobs.ashbyhq.com 20260813T092428Z). Shared-name lookup only sees the stamped box.
+      if (peers.length < 2 && el.closest) {
+        const fieldset = el.closest("fieldset");
+        if (fieldset) {
+          const boxed = [...fieldset.querySelectorAll(`input[type="${inputType}"]`)];
+          if (boxed.length > 1) peers = boxed;
+        }
+      }
       const labelOf = (p) => {
         if (p.tagName === "SPL-RADIO") {
           const lab = (p.getAttribute("label") || "").trim();
@@ -8120,14 +9419,39 @@ async function fillGeneratedAnswersInPage(answers) {
           const t = (b.textContent || "").trim().toLowerCase();
           return t.includes(target) || target.includes(t);
         });
-      if (match) match.click();
-      else ok = false;
+      if (match) {
+        const savedType = match.type;
+        const siblingLabels = match.parentElement
+          ? [...match.parentElement.children]
+              .filter((c) => c.tagName === "BUTTON")
+              .map((c) => (c.textContent || "").trim().toLowerCase())
+          : [];
+        const isYesNoPair =
+          siblingLabels.length === 2 && siblingLabels.includes("yes") && siblingLabels.includes("no");
+        if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+          try {
+            match.type = "button";
+          } catch {
+            /* ignore */
+          }
+        }
+        match.click();
+        if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+          try {
+            match.type = savedType;
+          } catch {
+            /* ignore */
+          }
+        }
+      } else ok = false;
     } else if (looksLikeComboboxPick(el)) {
       console.info(`[Auto Fill][gpt-fill] idx=${idx} combobox "${label}" -> "${value}"`);
       ok = await fillReactSelectByClick(el, value);
       if (
         ok &&
-        (/greenhouse\.io$/i.test(location.hostname || "") || (el.closest && el.closest(".select-shell")))
+        (/greenhouse\.io$/i.test(location.hostname || "") ||
+          /oraclecloud\.com$/i.test(location.hostname || "") ||
+          (el.closest && el.closest(".select-shell, .cx-select-container")))
       ) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         if (!comboboxValueCommitted(el, value)) {
@@ -8141,7 +9465,28 @@ async function fillGeneratedAnswersInPage(answers) {
         }
       }
     } else {
+      console.info(`[Auto Fill][gpt-fill] idx=${idx} text "${label}" -> "${String(value).slice(0, 80)}"`);
       nativeSet(el, value);
+      // Oracle HCM Knockout `textInput` binding: a second focus→input→blur pass helps the
+      // observable commit when the first synthetic write was ignored (salary textarea stayed
+      // empty in model while canGenerate was true — 20260812T182256Z).
+      if (
+        /oraclecloud\.com$/i.test(location.hostname || "") &&
+        (el.tagName === "TEXTAREA" || el.tagName === "INPUT") &&
+        !textInputCommitted(el, value)
+      ) {
+        try {
+          el.focus();
+        } catch {
+          /* ignore */
+        }
+        nativeSet(el, value);
+        try {
+          el.blur();
+        } catch {
+          /* ignore */
+        }
+      }
       ok = textInputCommitted(el, value);
     }
     if (ok) count++;
@@ -8166,7 +9511,23 @@ async function fillGeneratedAnswersInPage(answers) {
   // Same Ashby post-fill settle as runAutofillInPage — generated answers also need the
   // blur-triggered GraphQL save to finish before Submit.
   if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    for (const el of document.querySelectorAll("input, textarea")) {
+      if (!el || !el.isConnected) continue;
+      const t = (el.type || "").toLowerCase();
+      if (t && t !== "text" && t !== "email" && t !== "tel" && t !== "search" && t !== "url" && el.tagName !== "TEXTAREA") {
+        continue;
+      }
+      if (!String(el.value || "").trim()) continue;
+      if (el.closest && el.closest("lyte-autocomplete")) continue;
+      try {
+        el.focus();
+        el.blur();
+      } catch {
+        /* ignore */
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
   }
   // Greenhouse remix react-select sometimes needs a beat after programmatic picks before the
   // single-value label reflects in the DOM (confirmed live: GPT second pass reported fills
@@ -8214,9 +9575,18 @@ async function checkPhoneCountryPickerInPage(profile) {
   if (!picker) return { checked: false };
   function reactSelectDisplayValue(element) {
     const control = element && element.closest && element.closest('[class*="__control"]');
-    if (!control) return "";
-    const single = control.querySelector('[class*="__single-value"]');
-    return single && single.textContent ? single.textContent.replace(/\s+/g, " ").trim() : "";
+    if (control) {
+      const single = control.querySelector('[class*="__single-value"]');
+      if (single && single.textContent) return single.textContent.replace(/\s+/g, " ").trim();
+    }
+    if (element && element.getAttribute && element.getAttribute("role") === "combobox") {
+      const own = (element.textContent || "").replace(/\s+/g, " ").trim();
+      if (own && !/^(select|choose)(\s+\.{0,3})?$/i.test(own)) {
+        const ariaLabel = ((element.getAttribute("aria-label") || "") + "").trim();
+        if (!ariaLabel || own.toLowerCase() !== ariaLabel.toLowerCase()) return own;
+      }
+    }
+    return "";
   }
   // Any GENUINELY correct calling code must be a literal PREFIX of the profile's own full phone
   // number (e.g. "+48" is a prefix of "+48694542078"; "+374" is not) - checking that directly
@@ -8225,7 +9595,11 @@ async function checkPhoneCountryPickerInPage(profile) {
   const phoneDigits = String((profile.contact && profile.contact.phone) || "").replace(/[^\d+]/g, "");
   const isCorrectDialCode = (v) => {
     const code = String(v || "").trim();
-    return /^\+\d{1,4}$/.test(code) && phoneDigits.startsWith(code);
+    if (!/^\+\d{1,4}$/.test(code)) return false;
+    if (phoneDigits.startsWith(code)) return true;
+    const bare = code.replace(/^\+/, "");
+    const digitsOnly = phoneDigits.replace(/^\+/, "");
+    return Boolean(bare) && digitsOnly.startsWith(bare);
   };
   // Waits for any delayed reset to have already happened before checking, rather than checking
   // too early and missing one that's still pending. Was 3000ms - shortened now that #106 fixed
@@ -8277,8 +9651,11 @@ function captureSampleInPage(profile, qaBank) {
     { re: /^(retype\s+)?e-?mail(\s*address)?\s*$/i, get: (p) => p.contact.email },
     // Kept in sync with runAutofillInPage's negative-lookahead version - excludes "Country
     // Phone Code"/"Phone Device Type"/"Phone Extension" from matching as the phone number itself.
-    { re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|mobile|telephone)\b/i, get: (p) => p.contact.phone },
-    { re: /linkedin/i, get: (p) => p.contact.linkedin },
+    { re: /^(?!.*\b(code|type|extension|device)\b).*\b(phone|telephone|mobile\s*(phone|number)|cell\s*phone)\b/i, get: (p) => p.contact.phone },
+    // Only fields whose SUBJECT is a LinkedIn profile/URL — not questions that merely mention
+    // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
+    // or other sources" got the profile URL).
+    { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
     { re: /website|portfolio/i, get: (p) => p.contact.website || p.contact.linkedin },
     {
       re: /^links?\b/i,
@@ -8416,6 +9793,10 @@ function captureSampleInPage(profile, qaBank) {
       key: "related_to_employee",
       re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
     },
+    {
+      key: "employee_referral",
+      re: /been referred|referred (you )?(for|to) (this|the) role|employee (or contractor )?from the company referred|employee referral/i,
+    },
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
@@ -8446,9 +9827,10 @@ function captureSampleInPage(profile, qaBank) {
     { key: "relocation", re: /\brelocat|currently based|based in\b/i },
     { key: "gender", re: /\bgender\b/i },
     { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
-    { key: "veteran_status", re: /\bveteran\b/i },
+    { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -8479,11 +9861,37 @@ function captureSampleInPage(profile, qaBank) {
     if (a.length > 120) return false;
     if (/^country\b/i.test(String(label || "").trim()) && /^\+\d{1,4}$/.test(a)) return false;
     const cat = detectCategory(label);
+    if (cat === "hear_about" && /^https?:\/\//i.test(a)) return false;
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
     }
     if (cat === "nationality" && /^none$/i.test(a)) return false;
     if (cat === "disability_status" && /^\d+$/.test(a)) return false;
+    if (
+      (cat === "english_proficiency" ||
+        cat === "polish_proficiency" ||
+        (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label))) &&
+      typeof isUiLocaleAnswer === "function" &&
+      isUiLocaleAnswer(a)
+    ) {
+      return false;
+    }
+    // Kept in sync with runAutofillInPage (easyship GH 20260813T094934Z Hispanic ← "Warsaw").
+    if (cat === "hispanic_latino" && !/^(yes|no)\b|decline|prefer not|do not (wish|want)|not hispanic|not latino/i.test(a)) {
+      return false;
+    }
+    // Never put a phone number into a non-phone combobox (Yes/No skill questions, etc.).
+    if (/^\+?\d[\d\s().-]{6,}$/.test(a) && !/\b(phone|telephone|mobile\s*(phone|number)|cell)\b/i.test(String(label || ""))) {
+      return false;
+    }
+    // Discharge date Month/Day/Year ≠ veteran status answer.
+    if (
+      /discharge\s+date|militaryDischargeDate/i.test(String(label || "")) &&
+      /veteran|not applicable|^n\/?a$/i.test(a) &&
+      !/\d{4}|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(a)
+    ) {
+      return false;
+    }
     return true;
   }
 
@@ -8508,6 +9916,15 @@ function captureSampleInPage(profile, qaBank) {
     for (const entry of qaBank) {
       // Never reuse salary/notice bank entries even if another label somehow category-matched.
       if (isFormSpecificCompField(entry.question)) continue;
+      if (
+        typeof isUiLocaleAnswer === "function" &&
+        isUiLocaleAnswer(entry.answer) &&
+        (labelCategory === "english_proficiency" ||
+          labelCategory === "polish_proficiency" ||
+          (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label)))
+      ) {
+        continue;
+      }
       const normQuestion = normalizeForMatch(entry.question);
       // Exact match (after normalizing) always wins outright — this is what makes a
       // legitimately short label like "Country" matchable against a QA-bank entry also
@@ -8516,7 +9933,17 @@ function captureSampleInPage(profile, qaBank) {
       if (normLabel && normLabel === normQuestion) return entry;
       // Same recurring boilerplate category, even though the literal wording differs
       // (a different company name filled into the same underlying question).
-      if (labelCategory && detectCategory(entry.question) === labelCategory) return entry;
+      // skill_experience is skill-specific — never reuse across different tools/domains
+      // (Cloudbeds GH 20260813T085822Z: "Experience with payment processing…" reused a saved
+      // "5+ years, including complex production applications" from another skill question and
+      // burned failed Yes/No tiers). Fall through to word-overlap instead.
+      if (
+        labelCategory &&
+        labelCategory !== "skill_experience" &&
+        detectCategory(entry.question) === labelCategory
+      ) {
+        return entry;
+      }
       const qWords = new Set(normQuestion.split(" ").filter((w) => w.length > 2 && !MATCH_QA_STOPWORDS.has(w)));
       if (!labelWords.size || !qWords.size) continue;
       let overlap = 0;
@@ -8548,7 +9975,8 @@ function captureSampleInPage(profile, qaBank) {
   // "Do you agree to share your CV (without personal data) with our clients..." - a real,
   // per-company data-sharing consent question - only matched "i agree" before, missing this
   // equally common second-person phrasing of the exact same kind of consent decision.
-  const CONSENT_RE = /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)/i;
+  const CONSENT_RE =
+    /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
   function isConsentField(label) {
     return CONSENT_RE.test(label);
   }
@@ -8770,6 +10198,15 @@ function runLearnInPage() {
       const cat = typeof detectCategory === "function" ? detectCategory(label) : null;
       if (cat === "salary_expectations" || cat === "notice_period") continue;
       if (
+        typeof isUiLocaleAnswer === "function" &&
+        isUiLocaleAnswer(value) &&
+        (cat === "english_proficiency" ||
+          cat === "polish_proficiency" ||
+          (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label)))
+      ) {
+        continue;
+      }
+      if (
         /\bsalary\b|\bcompensation\b|\bremuneration\b|\bnotice period\b|\bavailable from\b|when can you start/i.test(
           label
         )
@@ -8830,6 +10267,10 @@ const MATCH_CATEGORY_PATTERNS = [
     key: "related_to_employee",
     re: /\brelatives?\b|\brelated to anyone\b|\bfamily\b.{0,40}(?:employ|work|at|with|member|\bin\b)|\bknow anyone\b.{0,30}(?:work|employ)|\brelationship\b.{0,40}(?:family|relative|employ)/i,
   },
+  {
+    key: "employee_referral",
+    re: /been referred|referred (you )?(for|to) (this|the) role|employee (or contractor )?from the company referred|employee referral/i,
+  },
   { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
   {
     key: "notice_period",
@@ -8860,9 +10301,10 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "relocation", re: /\brelocat|currently based|based in\b/i },
   { key: "gender", re: /\bgender\b/i },
   { key: "hispanic_latino", re: /\bhispanic\b|\blatino\b/i },
-  { key: "veteran_status", re: /\bveteran\b/i },
+  { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
   { key: "disability_status", re: /\bdisabilit/i },
   { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
+  { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b/i },
 ];
 function detectMatchCategory(text) {
   for (const { key, re } of MATCH_CATEGORY_PATTERNS) {
@@ -8871,15 +10313,41 @@ function detectMatchCategory(text) {
   return null;
 }
 
+function isUiLocaleAnswer(answer) {
+  const a = String(answer || "")
+    .replace(/[\u200e\u200f\u202a-\u202e]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!a) return false;
+  return /^english(\s*[-_/]?\s*(us|uk|gb|au|united states|united kingdom|america))?(\s*\(\s*english[^)]*\s*\))?$/i.test(
+    a
+  );
+}
+
+function looksLikeLanguageProficiencyLabel(label) {
+  const t = String(label || "");
+  return (
+    /\benglish\b.*\b(level|proficiency|fluency|language|conversation)\b|\bfluency in english\b|\bdo you have english\b/i.test(
+      t
+    ) ||
+    /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i.test(t) ||
+    /\b(conversation|proficiency|fluency|language)\s*level\b/i.test(t)
+  );
+}
+
 function isFormSpecificCompQuestion(text) {
   const cat = detectMatchCategory(text);
   return cat === "salary_expectations" || cat === "notice_period";
 }
 
 // Defense in depth: even if companion still serves stale salary/notice seeds, never hand
-// them to Auto Fill / GPT matching.
+// them to Auto Fill / GPT matching. Also drop UI-locale strings learned as English level.
 function filterQaBankForAutofill(qaBank) {
-  return (qaBank || []).filter((e) => !isFormSpecificCompQuestion(e.question));
+  return (qaBank || []).filter((e) => {
+    if (isFormSpecificCompQuestion(e.question)) return false;
+    if (looksLikeLanguageProficiencyLabel(e.question) && isUiLocaleAnswer(e.answer)) return false;
+    return true;
+  });
 }
 
 // Same matcher as runAutofillInPage's matchQaBank — duplicated here because that function lives
@@ -8895,6 +10363,7 @@ function matchQaBankEntry(label, qaBank) {
   let bestScore = 0;
   for (const entry of qaBank || []) {
     if (isFormSpecificCompQuestion(entry.question)) continue;
+    if (looksLikeLanguageProficiencyLabel(label) && isUiLocaleAnswer(entry.answer)) continue;
     const normQuestion = norm(entry.question);
     if (normLabel && normLabel === normQuestion) return entry;
     if (labelCategory && detectMatchCategory(entry.question) === labelCategory) return entry;
@@ -8941,8 +10410,23 @@ function isPlausibleQaMatch(newQuestion, matchedQuestion) {
   if (isFormSpecificCompQuestion(newQuestion) || isFormSpecificCompQuestion(matchedQuestion)) {
     return false;
   }
+  // Oracle/OFCCP discharge date parts must not match the veteran-status question.
+  if (
+    /discharge\s+date|militaryDischargeDate/i.test(String(newQuestion || "")) &&
+    /veteran self-ident|\bveteran status\b|protected veteran/i.test(String(matchedQuestion || ""))
+  ) {
+    return false;
+  }
   const newCategory = detectMatchCategory(newQuestion);
-  if (newCategory && newCategory === detectMatchCategory(matchedQuestion)) return true;
+  // skill_experience is skill-specific — category alone must not equate different tools
+  // (same Cloudbeds GH failure mode as matchQaBank's category short-circuit).
+  if (
+    newCategory &&
+    newCategory !== "skill_experience" &&
+    newCategory === detectMatchCategory(matchedQuestion)
+  ) {
+    return true;
+  }
   const norm = (t) => (t || "").toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
   // Length > 3 here, not > 2 like the codebase's other word-overlap helpers — short filler
   // words ("are", "you") sitting at exactly the length-3 boundary coincidentally overlapped
@@ -9048,6 +10532,9 @@ async function scrapeCurrentTab() {
         /internet explorer|no longer supported|browser.+(not|no longer)\s+supported/i.test(t) ||
         /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|.+\bopenings?)$/i.test(
           t
+        ) ||
+        /^(summary|overview|about (the|this) (role|job|position)|what you[''\u2019]?(ll| will) do|what we[''\u2019]?(re| are) looking for|requirements|qualifications|responsibilities|key responsibilities)$/i.test(
+          (t || "").replace(/[\u2018\u2019]/g, "'")
         );
       const titleCandidates = [
         bestContent.result.jobTitle,
@@ -9558,6 +11045,17 @@ el("autofillBtn").addEventListener("click", async () => {
       .filter((u) => Array.isArray(u.options))
       .map((u) => ({ ...u, options: realSelectOptions(u.options) }))
       .filter((u) => u.options.length > 1);
+    // Yes/No radio groups are both canGenerate (gptBatchEligible) AND have options, so they
+    // used to be sent twice in the GPT prompt — once as free text, once as OPTIONS.
+    // Confirmed live Paylocity 20260813T091014Z: 9 screener radios became questions 1–9
+    // (bare `multiQuestionAnswer…` labels) AND 10–18 (same IDs with Yes/No OPTIONS).
+    // Keep the select-pick copy; drop the duplicate text-generation entry.
+    {
+      const selectKeys = new Set(selectPickCandidates.map((u) => `${u.frameId}:${u.idx}`));
+      generationCandidates = generationCandidates.filter(
+        (u) => !selectKeys.has(`${u.frameId}:${u.idx}`)
+      );
+    }
     const tailoredResume = getTailoredResumeIfAny();
 
     // gpt-auto skips server /match-answers — run the same local category/word-overlap matcher
@@ -9886,7 +11384,7 @@ el("autofillBtn").addEventListener("click", async () => {
       }
       if (/^autofill application\b/i.test(lab)) return false;
       if (/^(facebook|twitter|instagram|tiktok|xing)\b/i.test(lab)) return false;
-      if (/^captcha\b|security\s*code/i.test(lab)) return false;
+      if (/^captcha\b|security\s*code|verification\s*code|confirm you.?re a human|8-character code/i.test(lab)) return false;
       if (/^salutation\b/i.test(lab)) return false;
       if (lab.length > 160) return false;
       return true;

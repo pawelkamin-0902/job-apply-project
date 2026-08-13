@@ -2,7 +2,26 @@
 # Syncs this project to the VMware shared folder so changes show up on the Windows host.
 set -e
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/"
-DEST="/mnt/hgfs/auto-apply/job-apply-project/"
+
+# Prefer the classic /mnt/hgfs path; fall back to a user-mounted vmhgfs-fuse share when
+# /mnt/hgfs is empty/unmounted (common after VM reboot before root remount).
+DEST=""
+for candidate in \
+  "/mnt/hgfs/auto-apply/job-apply-project/" \
+  "/tmp/hgfs-user/job-apply-project/" \
+  "$HOME/hgfs-mount/auto-apply/job-apply-project/"; do
+  parent="$(dirname "${candidate%/}")"
+  if [[ -d "$parent" ]]; then
+    DEST="$candidate"
+    break
+  fi
+done
+if [[ -z "$DEST" ]]; then
+  echo "No HGFS auto-apply share found. Mount with e.g.:" >&2
+  echo "  mkdir -p /tmp/hgfs-user && vmhgfs-fuse .host:/auto-apply /tmp/hgfs-user" >&2
+  exit 1
+fi
+mkdir -p "$DEST"
 
 # extension/test-forms/captured/ is excluded from --delete's reach: it holds real "Save Sample"
 # captures written directly by a live companion-service instance, not code — this local

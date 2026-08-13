@@ -208,6 +208,7 @@ function isGenericSelectPlaceholder(text) {
   return (
     /^-*\s*(please\s+)?(select|choose)(\s+(one|an\s+option))?\s*\.{0,3}-*$/i.test(t) ||
     /^no\s+selection$/i.test(t) ||
+    /^not\s+selected$/i.test(t) ||
     /^select\s+option$/i.test(t) ||
     // Zoho Recruit picklists use "-None-" as the empty/default option (Salutation, Current Job
     // Title). Treating it as a real answer made Auto Fill open the dropdown twice just to
@@ -636,7 +637,7 @@ function isAutofillExcludedField(element) {
   if (/^middle name$/i.test(label)) return true;
   // CAPTCHA / human-verification - never fill, never GPT. Confirmed live on Zoho Recruit:
   // CAPTCHA was canGenerate:true and sent to ChatGPT (which then produced garbage JSON).
-  if (/^captcha\b|security\s*code|enter\s*(the\s*)?(code|characters)\s*(you\s*)?see/i.test(label)) {
+  if (/^captcha\b|security\s*code|enter\s*(the\s*)?(code|characters)\s*(you\s*)?see|verification\s*code|confirm you.?re a human|8-character code/i.test(label)) {
     return true;
   }
   // Optional social vanity fields that aren't LinkedIn/Website/portfolio — confirmed live on
@@ -969,12 +970,52 @@ function collectRadioCheckboxGroups() {
         if (byId && cleanedText(byId)) groupLabel = cleanedText(byId);
       }
     }
+    // Pinpoint HQ (pinpointhq.com): Yes/No radios sit under `.pad-v-3` with the real question
+    // in `.external-form__label--title`, while the enclosing Questions <fieldset> is dozens of
+    // divs above (climb of 6 never reaches it). Confirmed live newfireglobal.pinpointhq.com
+    // 20260812T161501Z: group label fell through to the Rails `name`
+    // `application_form[…][boolean_answer]` and GPT never got the referral question.
+    if (!groupLabel) {
+      const pinpointWrap =
+        els[0].closest &&
+        els[0].closest(
+          ".pad-v-3, [id*='Questions::Boolean'], [id*='Form::Questions::'], [id*='Questions::']"
+        );
+      const pinpointTitle =
+        (pinpointWrap &&
+          pinpointWrap.querySelector(
+            ".external-form__label--title, label.external-form__label .external-form__label--title"
+          )) ||
+        (pinpointWrap && pinpointWrap.querySelector("label.external-form__label"));
+      if (pinpointTitle && cleanedText(pinpointTitle)) groupLabel = cleanedText(pinpointTitle);
+    }
+    // Paylocity screener radios: question lives in `.multi-question p > .type-semibold`,
+    // options are Yes/No labels, shared `name="multiQuestionAnswerNNNN"`. No fieldset /
+    // role="group", so the climb above never finds a label and the name fallback used to
+    // send GPT "multiQuestionAnswer1813837" instead of the real question — confirmed live
+    // recruiting.paylocity.com 20260813T091014Z (Bart & Associates).
+    if (!groupLabel) {
+      const paylocityWrap =
+        els[0].closest &&
+        els[0].closest(".multi-question, .editable-screener, .form-group.drag-edit, .text-question");
+      const paylocityTitle =
+        (paylocityWrap && paylocityWrap.querySelector("span.type-semibold, p .type-semibold")) ||
+        (paylocityWrap && paylocityWrap.querySelector("p > label, p label, p"));
+      if (paylocityTitle && cleanedText(paylocityTitle)) groupLabel = cleanedText(paylocityTitle);
+    }
     // Comeet stamps the full question text on each radio's `name` (and often a nearby
     // `legend.question-title`). Use that when fieldset climb missed — name values like
     // "gender" stay excluded by requiring spaces / "?" / length.
+    // Skip Rails/Pinpoint-style control names (`application_form[…][boolean_answer]`) and
+    // Paylocity `multiQuestionAnswerNNNN` — those are not human questions.
     if (!groupLabel && els[0].name) {
       const n = els[0].name.trim();
-      if (n.length > 20 || /\s/.test(n) || /\?/.test(n)) groupLabel = n;
+      if (
+        !/[\[\]]/.test(n) &&
+        !/answers_attributes|application_form|multiQuestionAnswer/i.test(n)
+      ) {
+        if (n.length > 20 || /\s/.test(n) || /\?/.test(n)) groupLabel = n;
+      }
     }
     if (!groupLabel) {
       const qTitle =
@@ -1006,6 +1047,27 @@ function collectRadioCheckboxGroups() {
             (el.parentElement && el.parentElement.querySelector(".option-title"));
           if (optTitle && cleanedText(optTitle)) optionLabel = cleanedText(optTitle);
         }
+        // Pinpoint checkable-input: visible "Yes"/"No" on `.checkable-input__label`, while
+        // aria-labelledby points at a display:none div that concatenates the full question +
+        // "yes"/"no" — using that made yesNoGroup detection fail (options never matched
+        // /^(yes|no)$/) so referral stayed canGenerate:false. Prefer the visible label.
+        if (!optionLabel) {
+          let checkableLab = null;
+          if (el.id) {
+            try {
+              checkableLab = document.querySelector(
+                `label.checkable-input__label[for="${CSS.escape(el.id)}"]`
+              );
+            } catch {
+              checkableLab = null;
+            }
+          }
+          if (!checkableLab && el.closest) {
+            const wrap = el.closest(".checkable-input");
+            if (wrap) checkableLab = wrap.querySelector("label.checkable-input__label");
+          }
+          if (checkableLab && cleanedText(checkableLab)) optionLabel = cleanedText(checkableLab);
+        }
         if (!optionLabel) {
           const labelledby = el.getAttribute && el.getAttribute("aria-labelledby");
           if (labelledby) {
@@ -1029,7 +1091,90 @@ function collectRadioCheckboxGroups() {
     });
     els.forEach((el) => claimed.add(el));
   }
+  // Ashby "How did you hear about us?" (and similar): each option is a checkbox with a UNIQUE
+  // `name` (the option text, e.g. name="LinkedIn") inside one <fieldset>. The shared-name loop
+  // above never groups them (els.length < 2), so they used to surface as 11 lone checkboxes
+  // asking for manual input — confirmed live jobs.ashbyhq.com 20260813T092428Z.
+  groups.push(...collectFieldsetUniqueNameCheckboxGroups(claimed));
   return { groups, claimed };
+}
+
+function collectFieldsetUniqueNameCheckboxGroups(claimed) {
+  const groups = [];
+  for (const fieldset of document.querySelectorAll("fieldset")) {
+    const boxes = [...fieldset.querySelectorAll('input[type="checkbox"]')].filter((el) => {
+      if (claimed.has(el)) return false;
+      return isRadioCheckboxGroupInput(el);
+    });
+    if (boxes.length < 2) continue;
+    const names = new Set(boxes.map((el) => el.name).filter(Boolean));
+    if (names.size < 2) continue;
+    const other = [...fieldset.querySelectorAll("input, select, textarea")].filter((el) => {
+      if (boxes.includes(el)) return false;
+      const t = (el.type || "").toLowerCase();
+      return t !== "hidden" && t !== "submit" && t !== "button";
+    });
+    if (other.length) continue;
+    const optionIds = new Set(boxes.map((o) => o.id).filter(Boolean));
+    const optionTexts = new Set(
+      boxes.map((el) => (resolveOwnLabel(el) || el.name || "").trim().toLowerCase()).filter(Boolean)
+    );
+    const candidate = [...fieldset.querySelectorAll("label")].find((l) => {
+      const forId = l.getAttribute("for");
+      if (forId && optionIds.has(forId)) return false;
+      const t = cleanedText(l);
+      if (!t || optionTexts.has(t.toLowerCase())) return false;
+      return true;
+    });
+    if (!candidate || !cleanedText(candidate)) continue;
+    groups.push({
+      kind: "checkbox-group",
+      label: normalizeLabel(cleanedText(candidate)),
+      options: boxes.map((el) => ({
+        element: el,
+        optionLabel: normalizeLabel(resolveOwnLabel(el) || el.name || ""),
+      })),
+    });
+    boxes.forEach((el) => claimed.add(el));
+  }
+  return groups;
+}
+
+function ashbyFieldQuestionLabel(element) {
+  if (!element || !element.closest) return "";
+  const entry = element.closest(".ashby-application-form-field-entry, [data-field-path]");
+  if (!entry) return "";
+  const lab = entry.querySelector("label.ashby-application-form-question-title, label");
+  return lab ? cleanedText(lab) : "";
+}
+
+function isAshbyLocationField(element) {
+  if (!element || !element.closest) return false;
+  const entry = element.closest("[data-field-path]");
+  const path = (entry && entry.getAttribute("data-field-path")) || "";
+  if (/_systemfield_location/i.test(path)) return true;
+  return /^location\b/i.test(ashbyFieldQuestionLabel(element));
+}
+
+function isAshbyRequiredField(element) {
+  if (!element || !element.closest) return false;
+  const entry = element.closest(".ashby-application-form-field-entry, [data-field-path]");
+  if (!entry) return false;
+  const lab = entry.querySelector("label.ashby-application-form-question-title, label");
+  if (!lab) return false;
+  // CSS-module class `_required_f7cvd_91` on the question label — no native `required` /
+  // `aria-required` on the control, and Location's <input> has no id so label[for] never
+  // matches. Confirmed live jobs.ashbyhq.com 20260813T092428Z: required Location was treated
+  // as an optional combobox and skipped entirely.
+  return /_required_/.test(String(lab.className || ""));
+}
+
+function isLocationTypeaheadInput(element) {
+  if (!element) return false;
+  if (isAshbyLocationField(element)) return true;
+  const ph = (element.getAttribute && element.getAttribute("placeholder")) || "";
+  const role = (element.getAttribute && element.getAttribute("role")) || "";
+  return /start typing/i.test(ph) && role === "combobox";
 }
 
 // Modal/form chrome ("Cancel", "Submit application", …) — never Yes/No-style answers.
@@ -1037,6 +1182,18 @@ function collectRadioCheckboxGroups() {
 // `[data-role="dialog-actions"]`; the sibling-button fallback walked up into the dialog,
 // grabbed the first descendant <label> ("First name"), and Auto Fill treated Cancel/Submit
 // as answers to First name — clicking Cancel closes the apply drawer.
+// Ashby Yes/No answers are `<button type="submit">` — not form-chrome Submit.
+function isAshbyYesNoAnswerButton(button) {
+  if (!button || button.tagName !== "BUTTON") return false;
+  const parent = button.parentElement;
+  if (!parent) return false;
+  if (/\byesno\b/i.test(String(parent.className || ""))) return true;
+  const labels = [...parent.children]
+    .filter((c) => c.tagName === "BUTTON")
+    .map((c) => (c.textContent || "").trim().toLowerCase());
+  return labels.length === 2 && labels.includes("yes") && labels.includes("no");
+}
+
 function isFormChromeActionButton(button) {
   if (!button) return true;
   if (
@@ -1049,11 +1206,17 @@ function isFormChromeActionButton(button) {
   }
   const dataUi = (button.getAttribute && button.getAttribute("data-ui")) || "";
   if (/cancel|submit|close|dismiss/i.test(dataUi)) return true;
-  if (button.type === "submit" || button.type === "reset") return true;
+  if ((button.type === "submit" || button.type === "reset") && !isAshbyYesNoAnswerButton(button)) return true;
   const t = (button.textContent || "").replace(/\s+/g, " ").trim();
   return /^(cancel|close|dismiss|submit(\s+application)?|apply(\s+now)?|save(\s+and\s+continue)?|back|next|continue|skip)$/i.test(
     t
   );
+}
+
+function claimAshbyYesNoProxy(parent, claimed) {
+  if (!parent || !claimed) return;
+  const proxy = parent.querySelector('input[type="checkbox"][tabindex="-1"]');
+  if (proxy) claimed.add(proxy);
 }
 
 // Ashby-style Yes/No pairs rendered as plain <button>s instead of real radio inputs.
@@ -1111,6 +1274,7 @@ function collectButtonGroups(claimed) {
       options: buttons.map((b) => ({ element: b, optionLabel: normalizeLabel(b.textContent) })),
     });
     buttons.forEach((b) => claimed.add(b));
+    claimAshbyYesNoProxy(container, claimed);
   }
   // Broader fallback: some Ashby forms wrap a Yes/No button pair in a plain <div> with no
   // fieldset/role="group"/role="radiogroup" at all (confirmed live — a real "Are you currently
@@ -1177,6 +1341,7 @@ function collectButtonGroups(claimed) {
       options: buttons.map((b) => ({ element: b, optionLabel: normalizeLabel(b.textContent) })),
     });
     buttons.forEach((b) => claimed.add(b));
+    claimAshbyYesNoProxy(parent, claimed);
   }
   return groups;
 }
@@ -1335,8 +1500,17 @@ function coerceAnswerForField(label, element, answer) {
   };
 
   if (/notice\s*period/i.test(label) || (/notice/i.test(label) && numeric) || (/\bavailable from\b|\bavailable to start\b/i.test(label) && numeric)) {
+    // Radios/selects need the option text ("Immediately available"), not "0" days — confirmed
+    // live jobs.ashbyhq.com 20260813T092428Z: GPT picked the right band then coerce rewrote it
+    // to "0" and the click missed every option.
+    const t = (element && (element.type || element.tagName) || "").toLowerCase();
+    if (/^(radio|checkbox|select-one|select-multiple|select)$/i.test(t)) return raw;
+    // Free-text notice fields want the full phrase ("7 days"), not a bare day count — confirmed
+    // live job-boards.greenhouse.io/easyship 20260813T094934Z: GPT wrote "7 days", coerce
+    // stripped it to "7".
+    if (!numeric) return raw;
     const days = parseNoticePeriodDays(raw);
-    if (days == null) return numeric ? null : raw;
+    if (days == null) return null;
     return fit(String(days));
   }
 
@@ -1380,4 +1554,35 @@ function coerceAnswerForField(label, element, answer) {
     return m ? fit(m[0]) : null;
   }
   return raw;
+}
+
+// Workable (and Chrome UI) language switchers display "English US ‎(English US)‎" with bidi
+// marks. That string is a locale name, not an English *proficiency* answer — confirmed live
+// apply.workable.com 20260813T101015Z: "What is your english conversation level?" was filled
+// with that locale via a learned QA-bank entry instead of Fluent/C1.
+function isUiLocaleAnswer(answer) {
+  const a = String(answer || "")
+    .replace(/[\u200e\u200f\u202a-\u202e]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!a) return false;
+  if (
+    /^english(\s*[-_/]?\s*(us|uk|gb|au|united states|united kingdom|america))?(\s*\(\s*english[^)]*\s*\))?$/i.test(
+      a
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function looksLikeLanguageProficiencyLabel(label) {
+  const t = String(label || "");
+  return (
+    /\benglish\b.*\b(level|proficiency|fluency|language|conversation)\b|\bfluency in english\b|\bdo you have english\b/i.test(
+      t
+    ) ||
+    /\bpolish\b.*\b(level|proficiency|fluency|language)\b|\bproficiency in polish\b/i.test(t) ||
+    /\b(conversation|proficiency|fluency|language)\s*level\b/i.test(t)
+  );
 }
