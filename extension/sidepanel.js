@@ -849,19 +849,82 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
   // different framework/markup entirely. Polls GLOBALLY (not just within the widget's own
   // subtree) for whatever NEW file input appears after clicking, since it isn't confirmed
   // whether Angular inserts it back inside this same custom element or elsewhere in the DOM.
+  //
+  // muchbetter-careers-hibob-com-20260813T124619Z: clicking the FIRST button is wrong when a
+  // file is already shown — that's Delete (`#bf-delete-btn`), which opens a confirm dialog
+  // ("form in a dialog") instead of revealing a file input. Only click "Add file". After that,
+  // HiBob opens a CDK overlay; the real <input type=file> lives in the overlay (or behind a
+  // Browse/Computer control in that overlay), not in the widget.
+  function hibobOverlayRoot() {
+    return document.querySelector(".cdk-overlay-container, .cdk-overlay-pane, [role='dialog']");
+  }
+  function hibobAddFileButton(widget) {
+    const buttons = [...widget.querySelectorAll("button")];
+    return (
+      buttons.find((b) => /^\s*add file\s*$/i.test(b.textContent || "")) ||
+      buttons.find((b) => /add file|choose file|browse|upload file/i.test((b.textContent || "").trim())) ||
+      buttons.find((b) => b.getAttribute("data-icon-before") === "plus")
+    );
+  }
   async function revealHibobAttachmentInputs() {
     for (const widget of document.querySelectorAll("careers-ui-upload-document-control")) {
-      if (hasFileInput(widget)) continue; // already revealed
       const labelText = cleanedText(widget.querySelector(".label"));
       if (!labelText || EXCLUDE_RE.test(labelText) || !RESUME_RE.test(labelText)) continue;
-      const trigger = widget.querySelector("button");
+      const overlayHasFile = () => {
+        const overlay = hibobOverlayRoot();
+        return Boolean(overlay && collectFileInputs(overlay).length);
+      };
+      if (hasFileInput(widget) || overlayHasFile()) continue;
+      let trigger = hibobAddFileButton(widget);
+      // File already shown: only Delete exists. Clicking it was opening the confirm dialog
+      // instead of an upload picker. Confirm remove, then Add file.
+      if (!trigger) {
+        const del = widget.querySelector("#bf-delete-btn, .bf-delete-btn, button[data-icon-before='delete']");
+        if (del) {
+          del.click();
+          for (let attempt = 0; attempt < 12 && !hibobAddFileButton(widget); attempt++) {
+            await sleep(200);
+            const overlay = hibobOverlayRoot();
+            if (!overlay) continue;
+            const yes = [...overlay.querySelectorAll("button")].find((b) =>
+              /^(delete|yes|ok|confirm|remove)$/i.test((b.textContent || "").replace(/\s+/g, " ").trim())
+            );
+            if (yes) yes.click();
+          }
+          trigger = hibobAddFileButton(widget);
+        }
+      }
       if (!trigger) continue;
       const beforeCount = collectFileInputs(document).length;
       trigger.click();
-      for (let attempt = 0; attempt < 15 && collectFileInputs(document).length === beforeCount; attempt++) {
+      for (let attempt = 0; attempt < 20 && collectFileInputs(document).length === beforeCount && !overlayHasFile(); attempt++) {
         await sleep(200);
+        const overlay = hibobOverlayRoot();
+        if (!overlay || !(overlay.textContent || "").trim()) continue;
+        const browse = [...overlay.querySelectorAll("button, [role='button'], label, a, span")].find((el) => {
+          const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (!t || t.length > 40) return false;
+          return /^(browse|upload|choose file|select file|from computer|my computer|this device|computer)$/i.test(t) ||
+            /\b(browse|from computer|choose file|select file)\b/i.test(t);
+        });
+        if (browse) browse.click();
       }
     }
+  }
+
+  function findHibobResumeFileInput() {
+    const overlay = hibobOverlayRoot();
+    if (overlay) {
+      const inOverlay = collectFileInputs(overlay);
+      if (inOverlay.length) return inOverlay[0];
+    }
+    for (const widget of document.querySelectorAll("careers-ui-upload-document-control")) {
+      const labelText = cleanedText(widget.querySelector(".label"));
+      if (!labelText || EXCLUDE_RE.test(labelText) || !RESUME_RE.test(labelText)) continue;
+      const input = collectFileInputs(widget)[0];
+      if (input) return input;
+    }
+    return null;
   }
 
   // BambooHR Fabric FileUpload label lives on a sibling BodyText <p> ("Resume*"), not on the
@@ -971,7 +1034,10 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
 
     const candidates = collectFileInputs(document);
     let target =
-      findBambooResumeFileInput() || findSmartRecruitersResumeFileInput() || findJoinResumeFileInput();
+      findBambooResumeFileInput() ||
+      findSmartRecruitersResumeFileInput() ||
+      findJoinResumeFileInput() ||
+      findHibobResumeFileInput();
     if (!target) {
       target = candidates.find((input) => {
       const label = resolveFileInputLabel(input);
@@ -1018,6 +1084,16 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
     // for a plain, non-shadow input (composed only matters once a shadow boundary exists at all).
     target.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
     target.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    // HiBob overlay: after the file is set, the dialog still needs its own Attach/Save click
+    // (muchbetter-careers-hibob-com-20260813T124619Z — Add file opens a form dialog).
+    const hibobDialog = target.closest && (target.closest(".cdk-overlay-pane, [role='dialog']") || hibobOverlayRoot());
+    if (hibobDialog && /hibob\.com$/i.test(location.hostname || "")) {
+      const confirm = [...hibobDialog.querySelectorAll("button")].find((b) => {
+        const t = (b.textContent || "").replace(/\s+/g, " ").trim();
+        return /^(attach|save|upload|done|ok|submit|add)$/i.test(t);
+      });
+      if (confirm) confirm.click();
+    }
     // join.com Chakra/zag FileUpload sometimes also listens on the dropzone root; a synthetic
     // drop with the same DataTransfer helps the UI show the attached file name when change
     // alone doesn't refresh the card (harmless if no dropzone).
@@ -3061,6 +3137,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       wrap.click();
       if (element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
       if (element.checked || element.getAttribute("ischecked") === "true") return;
+    }
+    // HiBob (and similar): visible control is <label for="id" tabindex="0">, input is not wrapped.
+    if (want && element.id) {
+      let forLab = null;
+      try {
+        forLab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+      } catch {
+        forLab = null;
+      }
+      if (forLab) {
+        forLab.click();
+        if (element.checked || element.getAttribute("aria-checked") === "true") return;
+      }
     }
     // Same `_valueTracker` reset as nativeSet — React caches checkbox/radio as String(checked).
     // Without resetting to the PRE-change value, onChange can be skipped (DOM looks ticked,
@@ -6168,7 +6257,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Greenhouse requirement statements: "Hands-on experience with modern mobile…",
     // "5+ years of software engineering experience building… Python and TypeScript"
     if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using)\s+([^?.!]+)/i);
-    if (!m && /\b(proficiency|years).{0,40}\b(python|typescript|react|kubernetes|aws|docker|sql)\b/i.test(raw)) {
+    if (!m) m = raw.match(/\b(?:do you have|have you)\s+(.+?\bexperience\b.*)/i);
+    if (!m && /\b(proficiency|years).{0,80}\b(python|typescript|react|kubernetes|aws|docker|sql|java|spring|webflux)\b/i.test(raw)) {
       m = [raw, raw];
     }
     if (!m) {
@@ -6180,7 +6270,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const blob = profileSkillHaystack();
     // Tokenize skill phrase; also pull notable tech tokens from the whole label.
     const labelTechs = (raw.toLowerCase().match(
-      /\b(python|sql|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
+      /\b(python|sql|java|spring|webflux|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
     ) || []).map((t) => t.replace(/\s+/g, " "));
     const tokens = [
       ...skill.split(/[\s,/]+/).filter((t) => t.length > 2),
@@ -7270,7 +7360,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // real button's click handler, not this checkbox's native change event) never sees it —
     // confirmed live, this exact pattern silently left "Are you currently based in Poland?"
     // unanswered on the real page while Auto Fill's own report claimed success.
-    if (element.getAttribute("tabindex") === "-1") continue;
+    const hibobControl =
+      element.closest && element.closest("b-checkbox, b-radio-button, careers-ui-yes-no-question-control");
+    if (element.getAttribute("tabindex") === "-1" && !hibobControl) continue;
     if (workExpTouched.has(element)) continue;
     const label = labelForElement(element, element);
     if (shouldAutoCheckLoneCheckbox(element, label)) {
@@ -7279,6 +7371,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // nativeSetChecked is a no-op if the box is already on.
       const wrap = element.closest && element.closest("label");
       if (wrap) wrap.click();
+      else if (element.id) {
+        try {
+          const forLab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+          if (forLab) forLab.click();
+        } catch {
+          /* ignore */
+        }
+      }
       await fillSingle(element, true);
       if (element.getAttribute("ischecked") != null) {
         element.setAttribute("ischecked", "true");
@@ -7448,6 +7548,19 @@ async function fillGeneratedAnswersInPage(answers) {
       wrap.click();
       if (element.getAttribute("ischecked") != null) element.setAttribute("ischecked", "true");
       if (element.checked || element.getAttribute("ischecked") === "true") return;
+    }
+    // HiBob (and similar): visible control is <label for="id" tabindex="0">, input is not wrapped.
+    if (want && element.id) {
+      let forLab = null;
+      try {
+        forLab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+      } catch {
+        forLab = null;
+      }
+      if (forLab) {
+        forLab.click();
+        if (element.checked || element.getAttribute("aria-checked") === "true") return;
+      }
     }
     const tracker = element._valueTracker;
     if (tracker) {

@@ -591,6 +591,31 @@ function isVisible(element) {
       if (rr.width > 1 && rr.height > 1) return true;
     }
   }
+  // HiBob careers (`*.careers.hibob.com`): `.brd-input` / `.bchk-input` are clipped 1×1px
+  // a11y radios/checkboxes; the visible control is the sibling <label tabindex="0">.
+  // Confirmed live muchbetter-careers-hibob-com-20260813T124619Z: Yes/No questionnaire +
+  // consent never reached Auto Fill (groups=0) because the rect check below dropped them.
+  if (
+    element.tagName === "INPUT" &&
+    (element.type === "radio" || element.type === "checkbox") &&
+    (element.classList.contains("brd-input") ||
+      element.classList.contains("bchk-input") ||
+      (element.closest && element.closest("b-radio-button, b-checkbox, careers-ui-yes-no-question-control")))
+  ) {
+    let lab = null;
+    if (element.id) {
+      try {
+        lab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+      } catch {
+        lab = null;
+      }
+    }
+    if (!lab) lab = element.parentElement;
+    if (lab) {
+      const rr = lab.getBoundingClientRect();
+      if (rr.width > 1 && rr.height > 1) return true;
+    }
+  }
   const rect = element.getBoundingClientRect();
   if (rect.width <= 1 || rect.height <= 1) return false; // visually-hidden a11y decoys (Workable)
   if (element.offsetParent === null && style.position !== "fixed" && style.position !== "sticky") return false;
@@ -1023,6 +1048,15 @@ function collectRadioCheckboxGroups() {
         els[0].closest("fieldset, .question") &&
         els[0].closest("fieldset, .question").querySelector("legend.question-title, .question-title");
       if (qTitle && cleanedText(qTitle)) groupLabel = cleanedText(qTitle);
+    }
+    // HiBob Yes/No: question text is a sibling `.label` on
+    // `<careers-ui-yes-no-question-control>`, not aria-labelledby on the radiogroup
+    // (muchbetter-careers-hibob-com-20260813T124619Z). Climb never finds a fieldset, name is
+    // `bfe-tqr4-10`, so the group was dropped and radios vanished (clipped + tabindex=-1).
+    if (!groupLabel) {
+      const hibobQ = els[0].closest && els[0].closest("careers-ui-yes-no-question-control");
+      const hibobLab = hibobQ && hibobQ.querySelector(":scope > .label, .label");
+      if (hibobLab && cleanedText(hibobLab)) groupLabel = cleanedText(hibobLab);
     }
     if (!groupLabel) continue; // no real group question found — leave these to be handled individually
     groups.push({

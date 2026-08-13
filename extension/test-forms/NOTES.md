@@ -3187,6 +3187,22 @@ unverified outside a live browser).
     (Romania has no matching option among those three — leave for the applicant). Not yet
     confirmed live.
 
+121. **HiBob careers (muchbetter.careers.hibob.com): Attach Resume opened a dialog; Yes/No
+    radios never filled.** `Author: Cursor`. Capture `muchbetter-careers-hibob-com-20260813T124619Z`.
+    Auto Fill reported 4 text fields only (`groups=0`). Causes:
+    - **Radios**: `<careers-ui-yes-no-question-control>` uses clipped `.brd-input` radios
+      (`clip:rect(0 0 0 0); 1×1px`) inside `role=radiogroup` with no `aria-labelledby`. The
+      question lives on a sibling `.label`. Group detection dropped them (`if (!groupLabel)
+      continue`); `isVisible` then dropped the 1px inputs; leftover `tabindex="-1"` lone
+      boxes are skipped as Ashby decoys. Same for consent `.bchk-input`.
+    - **Attach**: `revealHibobAttachmentInputs` clicked the first `<button>` — when a file
+      is already shown that's **Delete**, which opens a confirm dialog (the "form in a
+      dialog"). Add file actually opens a CDK overlay where the real `<input type=file>` lives.
+    Fixed: HiBob Yes/No group label from `.label`; treat `.brd-input`/`.bchk-input` as visible
+    when the sibling label is; click `label[for]`; Attach only clicks "Add file", waits for
+    overlay file input / Browse, confirms Attach/Save; if only Delete exists, remove then
+    Add file. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
