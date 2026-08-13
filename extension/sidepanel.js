@@ -2844,7 +2844,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b|\bexperience\s+(?:owning|including|building|in|using)\b|\bhands-?on experience\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -6375,7 +6375,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (
       (cat === "skill_experience" ||
-        /\b(do you have|have you).{0,40}experience|\bexperience\s+(?:with|building|in)\b/i.test(String(label || ""))) &&
+        /\b(do you have|have you).{0,40}experience|\bexperience\s+(?:with|building|in|using|owning|including)\b/i.test(String(label || ""))) &&
       optionLabels.some((o) => /^(yes|no)$/i.test(String(o).trim()))
     ) {
       const skillPick = inferSkillExperienceYesNo(label);
@@ -6388,6 +6388,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   function profileSkillHaystack() {
     const parts = [];
+    if (profile && profile.summary) parts.push(profile.summary);
     const skills = profile && (profile.skills || profile.technical_skills);
     if (Array.isArray(skills)) parts.push(...skills);
     else if (skills && typeof skills === "object") {
@@ -6407,17 +6408,51 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return parts.join(" ").toLowerCase();
   }
 
+  function blobHasTech(blob, tok) {
+    const t = String(tok || "").toLowerCase().trim();
+    if (!t || t.length < 2) return false;
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    if (new RegExp(`\\b${esc(t)}\\b`, "i").test(blob)) return true;
+    // "react native" / "node.js" / "ci/cd" should match a resume that only says React / Node / CI CD.
+    const parts = t.split(/[\s/_-]+/).filter((p) => p.length >= 4);
+    return parts.some((p) => new RegExp(`\\b${esc(p)}\\b`, "i").test(blob));
+  }
+
+  function techEquivalents(tok) {
+    const t = String(tok || "").toLowerCase().trim();
+    const map = {
+      "react native": ["react", "reactjs", "react.js"],
+      reactjs: ["react", "react.js"],
+      "react.js": ["react", "reactjs"],
+      k8s: ["kubernetes"],
+      kubernetes: ["k8s"],
+      gcp: ["google cloud"],
+      "google cloud": ["gcp"],
+      "ci/cd": ["cicd", "ci cd", "continuous integration"],
+      nodejs: ["node.js", "node"],
+      "node.js": ["nodejs", "node"],
+      postgres: ["postgresql"],
+      postgresql: ["postgres"],
+      golang: ["go"],
+      "e-invoicing": ["invoicing", "invoice"],
+      einvoicing: ["e-invoicing", "invoicing", "invoice"],
+      "next.js": ["nextjs"],
+      nextjs: ["next.js"],
+    };
+    return map[t] || [];
+  }
+
   function inferSkillExperienceYesNo(label) {
     const raw = String(label || "");
+    const blob = profileSkillHaystack();
     // Classic: "Experience working with X?" / "Experience with X"
     let m = raw.match(/\bexperience\s+(?:working\s+)?with\s+([^?.!]+)/i);
     // "Do you have professional experience with Python and SQL at an advanced level?"
     if (!m) m = raw.match(/\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\s+([^?.!]+)/i);
-    // Greenhouse requirement statements: "Hands-on experience with modern mobile…",
-    // "5+ years of software engineering experience building… Python and TypeScript"
-    if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using)\s+([^?.!]+)/i);
+    // Greenhouse requirement statements: "Hands-on experience with …", "Experience owning …"
+    if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using|owning|including)\s+([^?.!]+)/i);
     if (!m) m = raw.match(/\b(?:do you have|have you)\s+(.+?\bexperience\b.*)/i);
-    if (!m && /\b(proficiency|years).{0,80}\b(python|typescript|react|kubernetes|aws|docker|sql|java|spring|webflux)\b/i.test(raw)) {
+    if (!m && /\b(proficiency|years).{0,80}\bexperience\b/i.test(raw)) {
       m = [raw, raw];
     }
     if (!m) {
@@ -6426,25 +6461,30 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     let skill = m[1].trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").trim();
     if (!skill) return null;
-    const blob = profileSkillHaystack();
-    // Tokenize skill phrase; also pull notable tech tokens from the whole label.
-    const labelTechs = (raw.toLowerCase().match(
-      /\b(python|sql|java|spring|webflux|typescript|javascript|react(?:\s*native)?|expo|zustand|sqlite|terraform|docker|kubernetes|helm|argo|aws|ci\/?cd|observability|payment|fiscali[sz]ation|e-?invoicing)\b/g
-    ) || []).map((t) => t.replace(/\s+/g, " "));
-    const tokens = [
-      ...skill.split(/[\s,/]+/).filter((t) => t.length > 2),
-      ...labelTechs,
-    ];
     const skipTok = new Set([
       "and", "the", "with", "for", "you", "have", "professional", "experience", "advanced",
-      "level", "modern", "using", "working", "hands", "years", "plus",
+      "level", "modern", "using", "working", "hands", "years", "plus", "highly", "relevant",
+      "including", "owning", "operations", "development", "applications", "strong",
+      "building", "shipping", "operating", "production", "delivery", "across", "such",
+      "from", "into", "that", "this", "your", "our", "must", "required", "preferred",
+      "processing", "query", "native",
     ]);
+    const tokens = skill
+      .split(/[\s,;]+/)
+      .map((t) => t.replace(/^[^\w+#./-]+|[^\w+#./-]+$/g, ""))
+      .filter((t) => t.length > 2 && !skipTok.has(t));
     const seen = new Set();
+    const hitsHaystack = (tok) =>
+      blobHasTech(blob, tok) || techEquivalents(tok).some((eq) => blobHasTech(blob, eq));
     for (const tok of tokens) {
-      if (seen.has(tok) || skipTok.has(tok)) continue;
+      if (seen.has(tok)) continue;
       seen.add(tok);
       if (tok === "go" && (/\bgolang\b/.test(blob) || /\bgo\s*\(/.test(blob))) return "Yes";
-      if (blob.includes(tok)) return "Yes";
+      if (hitsHaystack(tok)) return "Yes";
+    }
+    // Multi-word names stay intact in `skill` ("react native", "google cloud").
+    for (const name of ["react native", "google cloud", "ci/cd", "node.js", "next.js", "e-invoicing"]) {
+      if (skill.includes(name) && hitsHaystack(name)) return "Yes";
     }
     // Unknown skill on a Yes/No requirement — prefer No over inventing Yes.
     if (/\b(highly relevant|required|must have|hands-?on experience|years of|do you have|have you)\b/i.test(raw)) {
@@ -7046,7 +7086,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // structured phone hits (Cloudbeds GH: "mobile" → phone, skill_experience → "5+ years").
       if (
         (screenCat === "skill_experience" ||
-          /\b(hands-?on\s+)?experience\s+(with|building|in|using)\b|\b\d+\+?\s*years?\b.*\bexperience\b/i.test(
+          /\b(hands-?on\s+)?experience\s+(with|building|in|using|owning|including)\b|\b\d+\+?\s*years?\b.*\bexperience\b/i.test(
             label
           )) &&
         !comboboxHasDisplayValue(element)
@@ -10533,7 +10573,7 @@ function captureSampleInPage(profile, qaBank) {
     { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
     { key: "disability_status", re: /\bdisabilit/i },
     { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
+    { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b|\bexperience\s+(?:owning|including|building|in|using)\b|\bhands-?on experience\b/i },
   ];
   function detectCategory(text) {
     for (const { key, re } of CATEGORY_PATTERNS) {
@@ -11007,7 +11047,7 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "veteran_status", re: /veteran self-ident|\bveteran status\b|protected veteran|are you (a |an )?(protected )?veteran\b/i },
   { key: "disability_status", re: /\bdisabilit/i },
   { key: "race_ethnicity", re: /\brace\b|\bethnicity\b/i },
-  { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b/i },
+  { key: "skill_experience", re: /\bexperience\s+(?:working\s+)?with\b|\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\b|\bexperience\s+(?:owning|including|building|in|using)\b|\bhands-?on experience\b/i },
 ];
 function detectMatchCategory(text) {
   for (const { key, re } of MATCH_CATEGORY_PATTERNS) {

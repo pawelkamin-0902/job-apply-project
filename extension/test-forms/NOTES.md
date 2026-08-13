@@ -3238,6 +3238,24 @@ unverified outside a live browser).
     option (toggle); one hear-about attempt (`data-af-hear-about-tried`); GPT/QA
     coerce to a single LinkedIn-* option. Not yet confirmed live.
 
+124. **Cloudbeds Greenhouse (job-boards.greenhouse.io/cloudbedsthirdpartyboard): skill Yes/No
+    guessed No; salary left for the applicant.** `Author: Cursor`. Capture
+    `job-boards-greenhouse-io-20260813T133132Z`. Profile this run: Gabriel Barbosa.
+    Result: filled 15 (3 generated); 1 need-input: "What are your salary expectations?".
+    Skill Yes/No used `inferSkillExperienceYesNo`: Python/TypeScript → Yes, but React Native /
+    Expo / payment / fiscalization → No because the matcher required the exact phrase
+    (`blob.includes("react native")` fails when the resume only says React) and unknown
+    stacks defaulted to No. A first-pass family map (TypeScript → React Native) was the
+    wrong fix — that would Yes every adjacent stack. Fixed: tokenize the question, word-
+    boundary match against resume+summary, and only treat *equivalent names* as the same
+    skill (react.js/reactjs → react, react native → react, k8s → kubernetes, node.js →
+    node, postgres → postgresql, ci/cd → cicd). TypeScript alone does not imply React
+    Native. Also classify "Experience owning …" as skill_experience so Terraform/Docker/K8s
+    is not skipped. Salary: GPT batch had been setting `answerable: false`; the batch
+    prompt now ALWAYS answers salary/notice (no local/JD invented figure in the extension).
+    Companion `reload=False` — restart `python3 run.py` for the prompt. Not yet confirmed
+    live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

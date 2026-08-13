@@ -234,6 +234,13 @@ def build_batch_answer_system_prompt() -> str:
         "Answer exactly what each question asks, using only the parts of the saved Q&A bank actually "
         "relevant to it — don't pull in unrelated saved answers just because they're available.\n\n"
         "All answers should be truable.\n\n"
+        "Exception — salary / compensation / expected pay and notice period / available from / start date: "
+        "ALWAYS answer these (answerable true). Match the question's format exactly — currency named in "
+        "the field (USD, EUR, INR, …), and the period it implies (yearly/annual/CTC, monthly, hourly, "
+        "daily). If the period is unclear on free text, state it explicitly "
+        '(e.g. "6000 EUR per month"). Prefer any figure already in the Q&A/profile; otherwise choose a '
+        "concise professional figure consistent with the job level and location. Never set answerable "
+        "false for salary or notice.\n\n"
         "Salary / compensation / expected pay: match the question's format exactly — use the currency "
         "it names (USD, EUR, INR, etc.), and the period it implies (yearly/annual/CTC, monthly, hourly, "
         "or daily). If the period is unclear, state it explicitly (e.g. \"6000 EUR per month\"). Never "
