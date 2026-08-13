@@ -120,6 +120,37 @@ function stripSmartRecruitersSelectPrefix(text) {
 // falls back to its raw `name` attribute instead. A blank/garbled "First Name" is a bigger
 // problem than a wrong "Salutation", so this stays narrow until a fix exists that doesn't cost
 // the more consequential field its label.
+// Pinpoint HQ (careers.pod-point.com / pinpointhq.com) numbers section fieldsets
+// ("1. Personal Details", "2. Profile", "3. Questions"). Using that <legend> as EVERY
+// nested field's label made Address Line 1/2, Town, and Postcode all resolve to the
+// section title and reuse one QA answer (postcode "02-472") — confirmed live
+// careers-pod-point-com-20260813T152008Z.
+function isSectionFieldsetLegend(text) {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (/^\d+\.\s/.test(t)) return true;
+  return /^(personal details|profile|questions|diversity and inclusion)\b/i.test(t);
+}
+
+// Pinpoint address/question widgets: the real name is `label.external-form__label` as a
+// previous sibling of the control (no `for=` on Country / Address Line 1 / Town / Postcode).
+function findPinpointOwnLabel(element) {
+  if (!element || !element.closest) return null;
+  if (!element.closest(".external-form__fieldset, [id*='Form::Address'], [id*='Form::Questions::'], .pad-v-3")) {
+    return null;
+  }
+  let node = element;
+  for (let depth = 0; depth < 8 && node; depth++, node = node.parentElement) {
+    const prev = node.previousElementSibling;
+    if (prev && prev.matches && prev.matches("label.external-form__label")) {
+      const title = prev.querySelector(".external-form__label--title");
+      const text = cleanedText(title || prev);
+      if (text && !isSectionFieldsetLegend(text) && text.length < 240) return text;
+    }
+  }
+  return null;
+}
+
 function findLabelInAncestors(host) {
   let node = host.parentElement;
   for (let depth = 0; depth < 6 && node; depth++, node = node.parentElement) {
@@ -296,6 +327,8 @@ function resolveOwnLabel(element, host) {
     const phoneText = phoneLabel && cleanedText(phoneLabel);
     if (phoneText) return phoneText.replace(/\s*\(optional\)\s*/i, "").trim();
   }
+  const pinpointOwn = findPinpointOwnLabel(element);
+  if (pinpointOwn) return pinpointOwn;
   const parentLabel = element.closest ? element.closest("label") : null;
   if (parentLabel && cleanedText(parentLabel)) {
     const parentText = cleanedText(parentLabel);
@@ -323,7 +356,7 @@ function resolveOwnLabel(element, host) {
     if (legendText && /^(from|to)\b/i.test(legendText) && /^(month|year)$/i.test(datePart)) {
       return `${legendText} ${datePart}`;
     }
-    if (legendText) return legendText;
+    if (legendText && !isSectionFieldsetLegend(legendText)) return legendText;
   }
   // aria-labelledby handled above (before wrapping <label>).
   // A combobox's OWN aria-label is sometimes just its current, still-unselected placeholder
@@ -588,6 +621,34 @@ function isVisible(element) {
       element.closest("label");
     if (row) {
       const rr = row.getBoundingClientRect();
+      if (rr.width > 1 && rr.height > 1) return true;
+    }
+  }
+  // Pinpoint HQ: Yes/No radios are visually hidden inside `.checkable-input`; the visible
+  // control is `.checkable-input__label`. Same clipped-native-input shape as Comeet/HiBob —
+  // without this, referral Yes/No never entered collectRadioCheckboxGroups (groups=0) on
+  // careers.pod-point.com 20260813T152008Z.
+  if (
+    element.tagName === "INPUT" &&
+    (element.type === "radio" || element.type === "checkbox") &&
+    element.closest &&
+    element.closest(".checkable-input")
+  ) {
+    const row = element.closest(".checkable-input");
+    const lab = row && row.querySelector("label.checkable-input__label");
+    const sized = lab || row;
+    if (sized) {
+      const rr = sized.getBoundingClientRect();
+      if (rr.width > 1 && rr.height > 1) return true;
+    }
+  }
+  // Pinpoint react-select: the filter <input> can be ~2px wide inside a real visible control
+  // (`hide-sm-block` desktop widget). Treat the control box as the visibility source.
+  if (element.closest && element.closest(".react-select__control")) {
+    const control = element.closest(".react-select__control");
+    const cs = getComputedStyle(control);
+    if (cs.display !== "none" && cs.visibility !== "hidden") {
+      const rr = control.getBoundingClientRect();
       if (rr.width > 1 && rr.height > 1) return true;
     }
   }
@@ -936,7 +997,8 @@ function collectRadioCheckboxGroups() {
     for (let depth = 0; depth < 6 && node && !groupLabel; depth++, node = node.parentElement) {
       if (node.tagName === "FIELDSET") {
         const legend = node.querySelector("legend");
-        if (legend && cleanedText(legend)) groupLabel = cleanedText(legend);
+        const legendText = legend && cleanedText(legend);
+        if (legendText && !isSectionFieldsetLegend(legendText)) groupLabel = legendText;
         if (!groupLabel) {
           // Workable (and others) use <fieldset role="radiogroup" aria-labelledby="…_label">
           // with no <legend> — only YES/NO option labels live inside the fieldset.

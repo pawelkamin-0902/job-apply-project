@@ -3301,6 +3301,22 @@ unverified outside a live browser).
     Restored that path; retry change if the widget is still empty; succeed only
     when `.file-upload__filename` appears. Not yet confirmed live.
 
+129. **Pod Point Pinpoint (careers.pod-point.com): address fields all got postcode
+    `02-472`; Questions section left blank.** `Author: Cursor`. Capture
+    `careers-pod-point-com-20260813T152008Z`. Address Line 1/2, Town, and Postcode
+    have no `label[for]`; `resolveOwnLabel` used the section `<legend>` "1. Personal
+    Details…" and QA-matched that heading to stored postcode `02-472`. Country
+    already showed Poland so it was skipped. Questions (Right to Work, pronouns,
+    disability, reasonable adjustments, referred Yes/No) were not in
+    `singles=11 groups=0`: Pinpoint `.checkable-input` radios fail the 1px
+    visibility check, and section legends would have stolen radio group labels.
+    Fixed: Pinpoint `.external-form__label` sibling labels; ignore numbered
+    section legends; treat `.checkable-input` / `.react-select__control` as
+    visible; map Postcode/Town/Address Line 1 from profile; Line 2 stays empty;
+    `right to work` + `reasonable adjustments` categories; referral Yes/No → No.
+    Right to Work is a visa-status list — do not fill QA "No". Not yet confirmed
+    live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -2674,13 +2674,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Order matters here: more specific patterns are checked first, since a broader one
     // (e.g. "location") would otherwise swallow a field a later, narrower pattern should
     // have matched instead.
-    { re: /postal\s*code|zip\s*code|\bzip\b/i, get: (p) => p.contact.postal_code },
-    { re: /^street\b|address\s*line|^address\b/i, get: (p) => p.contact.street_address },
+    { re: /postal\s*code|zip\s*code|\bzip\b|\bpostcode\b|\bpost\s*code\b/i, get: (p) => p.contact.postal_code },
+    { re: /^street\b|address\s*line\s*1\b|^address$/i, get: (p) => p.contact.street_address },
     // Broadened beyond a bare leading "City" after a real Greenhouse form's "Enter your current
     // location city" fell through unmatched - "city" is the LAST word, not the first, in that
     // phrasing, so the anchored-to-start pattern never matched it even though it's asking for
     // exactly the same profile fact.
-    { re: /^city\b|\bcity\s*$/i, get: (p) => p.contact.city },
+    { re: /^city\b|\bcity\s*$|^town\b|\btown\s*$/i, get: (p) => p.contact.city },
     // ContactInfo.state was originally left out of structured matching entirely - some "State"
     // questions carry form-specific conditions a profile value can't know about (e.g. "select
     // N/A unless you live in the US or Australia"). Reported live: BambooHR's plain "Province"
@@ -2857,7 +2857,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
     { key: "eligible_to_work", re: /^eligible to work$/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
@@ -2903,7 +2903,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     },
     {
       key: "reasonable_accommodation",
-      re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
+      re: /\baccommodat|reasonable (support|adjustments)\b/i,
     },
     { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
     { key: "gender", re: /\bgender\b/i },
@@ -2950,6 +2950,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (cat === "hear_about" && /^https?:\/\//i.test(a)) return false;
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
+      // Pinpoint "Right to Work in the UK status" is a visa-status list, not Yes/No.
+      // Confirmed live careers-pod-point-com-20260813T152008Z: QA "No" was a learned miss.
+      if (/^(yes|no)$/i.test(a) && /right to work/i.test(String(label || ""))) return false;
     }
     if (cat === "nationality" && /^none$/i.test(a)) return false;
     if (cat === "disability_status" && /^\d+$/.test(a)) return false;
@@ -7511,6 +7514,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       (tag === "input" && /^(text|email|tel|url|search|number|range)?$/i.test(element.type || ""));
     const isCoverLetter = /\bcover(ing)?\s*letter\b/i.test(label) || /\bcover(ing)?\s*letter\b/i.test(ownLabel);
     const fieldRequired = isRequiredField(element, host) || isCoverLetter;
+    const screenCat = detectCategory(label) || detectCategory(ownLabel);
+    // Optional "reasonable adjustments" still has a safe default (No) — leaving it blank on
+    // Pinpoint (careers.pod-point.com 20260813T152008Z) looked like Auto Fill skipped the
+    // whole Questions section.
+    if (screenCat === "reasonable_accommodation" && !qaAnswerUsable) {
+      if (await fillSingle(element, "No")) {
+        filled.push({ label, value: "No", source: "learned" });
+        continue;
+      }
+    }
     // Optional free-text with no profile/QA answer (Facebook, Skill Set, etc.) — leave alone.
     // Confirmed live: listing them under "need your input" made Auto Fill feel worse than
     // filling manually, and GPT was asked to invent CAPTCHA/Facebook answers.
@@ -10431,13 +10444,13 @@ function captureSampleInPage(profile, qaBank) {
     // Order matters here: more specific patterns are checked first, since a broader one
     // (e.g. "location") would otherwise swallow a field a later, narrower pattern should
     // have matched instead.
-    { re: /postal\s*code|zip\s*code|\bzip\b/i, get: (p) => p.contact.postal_code },
-    { re: /^street\b|address\s*line|^address\b/i, get: (p) => p.contact.street_address },
+    { re: /postal\s*code|zip\s*code|\bzip\b|\bpostcode\b|\bpost\s*code\b/i, get: (p) => p.contact.postal_code },
+    { re: /^street\b|address\s*line\s*1\b|^address$/i, get: (p) => p.contact.street_address },
     // Broadened beyond a bare leading "City" after a real Greenhouse form's "Enter your current
     // location city" fell through unmatched - "city" is the LAST word, not the first, in that
     // phrasing, so the anchored-to-start pattern never matched it even though it's asking for
     // exactly the same profile fact.
-    { re: /^city\b|\bcity\s*$/i, get: (p) => p.contact.city },
+    { re: /^city\b|\bcity\s*$|^town\b|\btown\s*$/i, get: (p) => p.contact.city },
     // ContactInfo.state was originally left out of structured matching entirely - some "State"
     // questions carry form-specific conditions a profile value can't know about (e.g. "select
     // N/A unless you live in the US or Australia"). Reported live: BambooHR's plain "Province"
@@ -10557,7 +10570,7 @@ function captureSampleInPage(profile, qaBank) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
     { key: "eligible_to_work", re: /^eligible to work$/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
@@ -10597,7 +10610,7 @@ function captureSampleInPage(profile, qaBank) {
     },
     {
       key: "reasonable_accommodation",
-      re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
+      re: /\baccommodat|reasonable (support|adjustments)\b/i,
     },
     { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
     { key: "gender", re: /\bgender\b/i },
@@ -10639,6 +10652,9 @@ function captureSampleInPage(profile, qaBank) {
     if (cat === "hear_about" && /^https?:\/\//i.test(a)) return false;
     if (cat === "authorized_to_work" || cat === "requires_sponsorship") {
       if (/^\+\d{1,4}$/.test(a) || /^\d+$/.test(a)) return false;
+      // Pinpoint "Right to Work in the UK status" is a visa-status list, not Yes/No.
+      // Confirmed live careers-pod-point-com-20260813T152008Z: QA "No" was a learned miss.
+      if (/^(yes|no)$/i.test(a) && /right to work/i.test(String(label || ""))) return false;
     }
     if (cat === "nationality" && /^none$/i.test(a)) return false;
     if (cat === "disability_status" && /^\d+$/.test(a)) return false;
@@ -11035,7 +11051,7 @@ const MATCH_CATEGORY_PATTERNS = [
   // Kept in sync with runAutofillInPage's own CATEGORY_PATTERNS - "eligible to work" confirmed
   // live as a real wording variant (Globalization Partners' Greenhouse form) alongside
   // "authorized to work".
-  { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work/i },
+  { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
   { key: "eligible_to_work", re: /^eligible to work$/i },
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
   {
@@ -11075,7 +11091,7 @@ const MATCH_CATEGORY_PATTERNS = [
   },
   {
     key: "reasonable_accommodation",
-    re: /\baccommodat|reasonable support\b.*\brecruitment\b/i,
+    re: /\baccommodat|reasonable (support|adjustments)\b/i,
   },
   { key: "relocation", re: /\brelocat|willing to (move|relocate)/i },
   { key: "gender", re: /\bgender\b/i },
