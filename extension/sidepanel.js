@@ -3471,9 +3471,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const target = desired.toLowerCase();
     let matches = options.filter((o) => cleanedText(o).toLowerCase() === target);
     if (!matches.length) {
-      matches = options.filter(
-        (o) => cleanedText(o).toLowerCase().includes(target) || target.includes(cleanedText(o).toLowerCase())
-      );
+      // Large country lists: never use target.includes(option) ("romania" matches "oman").
+      if (options.length > 40) {
+        matches = options.filter((o) => {
+          const t = cleanedText(o).toLowerCase();
+          return t.startsWith(target) || t.includes(target);
+        });
+      } else {
+        matches = options.filter(
+          (o) => cleanedText(o).toLowerCase().includes(target) || target.includes(cleanedText(o).toLowerCase())
+        );
+      }
     }
     if (!matches.length) return false;
     if (select.multiple) {
@@ -4023,6 +4031,95 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return (
       selects.find((s) => /country/i.test(`${s.id || ""} ${s.name || ""}`)) || selects[0] || null
     );
+  }
+
+  // Force residence Country to profile.contact.country. Pinpoint/Chrome often write a wrong
+  // country (Poland) while earlier fields are filled — confirmed live careers-pod-point-com-
+  // 20260813T184058Z: Autofill itself left Country as Poland even though we requested Romania.
+  // Exact option match only (never "romania"⊇"oman" fuzzy).
+  async function forceResidenceCountryValue(element, countryName) {
+    const want = String(countryName || "").trim();
+    if (!want || !element) return false;
+    const wantLow = want.toLowerCase();
+    if (comboboxValueCommitted(element, want) || isReactSelectAlreadySet(element, want)) {
+      return true;
+    }
+    try {
+      if (element.setAttribute) element.setAttribute("autocomplete", "off");
+    } catch {
+      /* ignore */
+    }
+    clearReactSelectSelection(element);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const nativeSel = findPinpointCountryNativeSelect(element);
+    if (nativeSel) {
+      const opts = [...nativeSel.options];
+      const exact =
+        opts.find((o) => cleanedText(o).toLowerCase() === wantLow) ||
+        opts.find((o) => cleanedText(o).toLowerCase().startsWith(wantLow + " "));
+      if (exact) {
+        nativeSel.value = exact.value;
+        nativeSel.dispatchEvent(new Event("input", { bubbles: true }));
+        nativeSel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      const wrap =
+        element.closest("#address-country") ||
+        element.closest("[id*='Form::Address']") ||
+        (element.closest(".react-select") && element.closest(".react-select").parentElement);
+      const hidden =
+        wrap &&
+        wrap.querySelector(
+          'input[type="hidden"][name*="[country]"], input[type="hidden"][name*="country"]'
+        );
+      if (hidden && exact) {
+        const tracker = hidden._valueTracker;
+        if (tracker) {
+          try {
+            tracker.setValue(hidden.value);
+          } catch {
+            /* ignore */
+          }
+        }
+        hidden.value = exact.value;
+        hidden.dispatchEvent(new Event("input", { bubbles: true }));
+        hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (comboboxValueCommitted(element, want) || isReactSelectAlreadySet(element, want)) {
+        console.info(`[Auto Fill][country] native/hidden committed -> "${want}"`);
+        return true;
+      }
+    }
+
+    // react-select: open, type exact name, click exact option only.
+    const control =
+      (element.closest && element.closest('[class*="__control"]')) || element;
+    simulateClick(control);
+    element.focus();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    nativeSet(element, want);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    const options = [
+      ...document.querySelectorAll(
+        '[class*="__option"], [role="option"], [id*="-option-"]'
+      ),
+    ].filter((node) => {
+      const r = node.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && !isDisabledComboboxOption(node);
+    });
+    const match =
+      options.find((o) => cleanedText(o).toLowerCase() === wantLow) ||
+      options.find((o) => cleanedText(o).toLowerCase().startsWith(wantLow));
+    if (match) {
+      await commitComboboxOption(match, control);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    const ok = comboboxValueCommitted(element, want) || isReactSelectAlreadySet(element, want);
+    console.info(
+      `[Auto Fill][country] force "${want}" -> ${ok ? "ok" : "FAILED"} (display="${reactSelectDisplayValue(element)}")`
+    );
+    return ok;
   }
 
   function reactSelectDisplayValue(element) {
@@ -7042,6 +7139,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       structuredValue = null;
     }
+    if (
+      structuredValue &&
+      isResidenceCountryField &&
+      looksLikeComboboxPick(element)
+    ) {
+      if (await forceResidenceCountryValue(element, structuredValue)) {
+        filled.push({ label, value: String(structuredValue), source: "profile" });
+        continue;
+      }
+    }
     if (structuredValue && (await fillSingle(element, structuredValue))) {
       filled.push({ label, value: String(structuredValue), source: "profile" });
       // Diagnostic only (temporary, not a fix): reported live that an intl-tel-input-wrapped
@@ -7888,6 +7995,42 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!structured.value) continue;
     if (await fillSingle(element, structured.value)) {
       filled.push({ label, value: String(structured.value), source: "profile" });
+    }
+  }
+
+  // Residence Country final pass: Chrome autofill / Pinpoint often write Poland while name/
+  // phone/address fields are filled earlier in the same run — then a mid-loop Romania attempt
+  // loses. Force profile.contact.country again after the main singles pass.
+  // careers-pod-point-com-20260813T184058Z (user: not pre-filled; Autofill left Poland).
+  if (!onlyPhoneCountry && profile && profile.contact && profile.contact.country) {
+    const wantCountry = String(profile.contact.country).trim();
+    for (const { element, host } of collectFormFields().singles) {
+      if (!element.isConnected || isPhoneDialCodePicker(element)) continue;
+      const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+      const label = labelForElement(element, host);
+      if (
+        !/^country\b/i.test(ownLabel) &&
+        !/country of residence|current country of residence/i.test(ownLabel)
+      ) {
+        continue;
+      }
+      if (comboboxValueCommitted(element, wantCountry) || isReactSelectAlreadySet(element, wantCountry)) {
+        continue;
+      }
+      const prev = reactSelectDisplayValue(element);
+      if (await forceResidenceCountryValue(element, wantCountry)) {
+        const idx = filled.findIndex((f) => f.label === label || /^country\b/i.test(f.label));
+        const entry = { label, value: wantCountry, source: "profile" };
+        if (idx >= 0) filled[idx] = entry;
+        else filled.push(entry);
+        console.info(
+          `[Auto Fill][country] final-pass fixed "${prev}" -> "${wantCountry}"`
+        );
+      } else {
+        console.warn(
+          `[Auto Fill][country] final-pass still wrong (want "${wantCountry}", display="${reactSelectDisplayValue(element)}")`
+        );
+      }
     }
   }
 

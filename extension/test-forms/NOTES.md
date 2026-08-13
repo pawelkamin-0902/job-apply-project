@@ -3394,13 +3394,15 @@ unverified outside a live browser).
     `isSmartRecruitersRequiredField === false`, skip profile/QA/GPT for that single or
     group entirely. Required English / EU eligibility still fill. Not yet confirmed live.
 
-136. **Pod Point Country still Poland after Romania profile (20260813T184058Z).**
-    `Author: Cursor`. Log: `open/fill attempt -> "Romania"` with `displayBefore: Poland`,
-    then `skip discovery - already has display` → `already-set: Country -> Poland`.
-    react-select keeps the Poland chip and ignores type-to-filter until cleared; discovery
-    treated any chip as success. Fixed: clear `__clear-indicator` before replacing; try
-    Pinpoint native Country `<select>`; never already-set when display ≠ profile country;
-    bare "Country" retry candidates from `contact.country`. Not yet confirmed live.
+136. **Pod Point Country ends as Poland after Autofill (Romania profile)
+    (20260813T184058Z).** `Author: Cursor`. User clarification: Country was not
+    pre-filled with Poland — Autofill left Poland. Log: mid-loop
+    `open/fill attempt -> "Romania"` with display already Poland (set during the same
+    run while name/phone/address were filled — Chrome autofill / Pinpoint), then
+    `already-set: Country -> Poland`. Fixed: `forceResidenceCountryValue` (clear +
+    exact native/hidden/react-select pick, no fuzzy "oman"⊂"romania"); final-pass
+    after all singles to overwrite a wrong Country; large `<select>` country lists
+    use exact/startsWith only. Not yet confirmed live.
 
 ## Known gaps (not yet acted on)
 
