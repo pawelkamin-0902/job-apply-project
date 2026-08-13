@@ -3417,6 +3417,24 @@ unverified outside a live browser).
     - **Privacy**: expand consent regex; click `data-test="consent-box"` host + shadow
       input; dedicated `checkSmartRecruitersConsentBox` pass. Not yet confirmed live.
 
+138. **ABB Workday questionnaire (20260813T185959Z): Yes never committed, conditional
+    RTW missed, textareas reverted to red required.** `Author: Cursor`. Capture
+    `abb-wd3-myworkdayjobs-com-20260813T185959Z`. Filled 2 (salary/notice GPT) but
+    entitled burned ~51s on Yes with empty display verify; age/contractor/contact
+    discovery had Yes|No but `retry picks: []`; Save Sample later showed Yes +
+    "If yes… right to work" = Permanent Resident (absent from first detect); salary/
+    notice/benefits textareas empty after write (React revert → red required).
+    - **Display**: `reactSelectDisplayValue` reads Workday `<button aria-haspopup=listbox>`
+      text / aria-label (strip Required / trailing `;`).
+    - **Category**: `authorized_to_work` matches "legally entitled"; bare "right to work"
+      removed so the conditional status picklist is not treated as Yes/No auth.
+    - **Retry picks**: Yes for entitled/age/contact; No for contractor; EU/citizen/PR
+      prefs for "describes your right to work".
+    - **Options**: prefer `[data-automation-id=promptOption]` over leaf heuristic.
+    - **Rescan**: after main singles, wait and fill newly revealed Workday listboxes.
+    - **Text**: Workday `nativeSet` uses execCommand/insertText + char-by-char; gpt-fill
+      retries once if value didn't stick. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -2935,7 +2935,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
+    // ABB Workday 20260813T185959Z: "Are you legally entitled to work…" — bare "right to work"
+    // also matched the conditional "If yes… describes your right to work" status picklist, so
+    // keep entitled/authorized wording and drop the bare phrase (status field has its own pick).
+    {
+      key: "authorized_to_work",
+      re: /authori[sz]ed to work|legally authorised to work|legally entitled to work|\bentitled to work\b|(?:have|do) you.{0,40}right to work|right to work in (?:this|the)/i,
+    },
     { key: "eligible_to_work", re: /eligible to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
@@ -3202,6 +3208,70 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       } catch {
         /* not focusable */
       }
+    }
+    // Workday questionnaire textareas (ABB 20260813T185959Z): a single paste-style nativeSet
+    // left salary/notice looking filled briefly then React reverted them — red required errors
+    // returned. Same approach as Workday date spinbuttons: clear + char-by-char insertText,
+    // plus execCommand('insertText') when available.
+    const onWorkday = /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "");
+    const workdayText =
+      onWorkday &&
+      (element.tagName === "TEXTAREA" ||
+        (element.tagName === "INPUT" &&
+          /^(text|email|tel|search|url|password|)$/i.test(String(element.type || "text"))));
+    if (workdayText) {
+      const tracker = element._valueTracker;
+      if (tracker) {
+        try {
+          tracker.setValue(element.value);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (setter) setter.call(element, "");
+      else element.value = "";
+      if (typeof InputEvent === "function") {
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      }
+      let committed = false;
+      try {
+        if (typeof document.execCommand === "function") {
+          document.execCommand("selectAll", false, null);
+          committed = document.execCommand("insertText", false, str);
+        }
+      } catch {
+        committed = false;
+      }
+      if (!committed || String(element.value || "") !== str) {
+        let built = "";
+        for (const ch of str) {
+          built += ch;
+          if (tracker) {
+            try {
+              tracker.setValue(built.slice(0, -1));
+            } catch {
+              /* ignore */
+            }
+          }
+          if (setter) setter.call(element, built);
+          else element.value = built;
+          if (typeof InputEvent === "function") {
+            element.dispatchEvent(
+              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: ch })
+            );
+          } else {
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          element.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true, cancelable: true }));
+        }
+      }
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      try {
+        element.blur();
+      } catch {
+        /* ignore */
+      }
+      return;
     }
     // React's `_valueTracker` caches the last value it saw — without resetting it to the
     // PRE-change value, a native setter write often never fires onChange, so Ashby keeps
@@ -4185,6 +4255,29 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       return "";
     }
+    // Workday questionnaire: <button aria-haspopup="listbox">Yes</button> — committed value is
+    // the button's own text (or aria-label minus "Required"). Without this, Yes clicks looked
+    // uncommitted and Autofill burned ~50s then left the field unmatched
+    // (abb-wd3…20260813T185959Z "legally entitled to work").
+    if (
+      element &&
+      element.tagName === "BUTTON" &&
+      (element.getAttribute("aria-haspopup") === "listbox" || element.getAttribute("aria-haspopup") === "true")
+    ) {
+      const raw = String(element.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (raw && !isGenericSelectPlaceholder(raw) && !/^select one$/i.test(raw)) {
+        return raw.replace(/[;,\s]+$/g, "").trim() || raw;
+      }
+      const aria = ((element.getAttribute("aria-label") || "") + "")
+        .replace(/\s*required\s*$/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (aria && !isGenericSelectPlaceholder(aria) && !/^select one$/i.test(aria)) {
+        return aria.replace(/[;,\s]+$/g, "").trim() || aria;
+      }
+    }
     // Committed react-select value is the chip / single-value, never the filter <input>.
     // Reading `.value` first treated typed "LinkedIn Post" as committed, then the next
     // attempt typed "LinkedIn Ad" / "LinkedIn Jobs" and each click toggled a multi-select
@@ -4622,6 +4715,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (bootstrapItems.length) return bootstrapItems;
     const anyOptionRole = querySelectorAllDeep('[role="option"], [role="treeitem"], [role="menuitem"]').filter(isFreshAndVisible);
     if (anyOptionRole.length) return anyOptionRole;
+    // Workday prompt listbox rows (data-automation-id=promptOption) — often lack role=option
+    // until fully painted; leaf heuristic below can return a single unrelated node
+    // (abb-wd3…20260813T185959Z entitled discovery → 1 option).
+    const promptOpts = querySelectorAllDeep('[data-automation-id="promptOption"]').filter(isFreshAndVisible);
+    if (promptOpts.length) return promptOpts;
     return querySelectorAllDeep("li, div, span, button").filter((el) => {
       if (before.has(el)) return false; // only elements that appeared after the click
       if (el.closest && el.closest(".iti, .iti--container")) return false;
@@ -6798,6 +6896,52 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       const eligiblePick = inferEligibleToWorkYesNo(label);
       if (eligiblePick) add(optionLabels.find((o) => new RegExp(`^${eligiblePick}$`, "i").test(String(o).trim())) || eligiblePick);
     }
+    // Workday Yes/No listbox buttons (ABB 20260813T185959Z): discovery found Yes|No but
+    // retry picks stayed [] — authorized/age/contractor/contact never got a default.
+    if (
+      optionLabels.some((o) => /^yes$/i.test(String(o).trim())) &&
+      optionLabels.some((o) => /^no$/i.test(String(o).trim()))
+    ) {
+      const lab = String(label || "");
+      if (
+        cat === "authorized_to_work" ||
+        cat === "eligible_to_work" ||
+        /legally entitled|entitled to work|18 years|permitted to work|years old or elder/i.test(lab)
+      ) {
+        add("Yes");
+      }
+      if (
+        cat === "worked_here_before" ||
+        cat === "currently_employed_here" ||
+        /third[- ]party contractor|working for .{0,60} as a (third|contractor)/i.test(lab)
+      ) {
+        add("No");
+      }
+      if (/willing to be contacted|future job opportunities|talent related communications/i.test(lab)) {
+        add("Yes");
+      }
+    }
+    // Workday conditional after entitled Yes (ABB 20260813T185959Z): "If yes, please choose
+    // the option that best describes your right to work" — Permanent Resident / EU citizen / …
+    if (/describes your right to work|best describes your (?:right|eligibility)|if yes.{0,60}right to work/i.test(String(label || ""))) {
+      const prefs = [
+        /\b(eu|eea|european)\b/i,
+        /\bcitizen\b/i,
+        /permanent\s*resident/i,
+        /indefinite\s*leave|settled\s*status/i,
+        /work\s*(permit|visa|authori[sz]ation)/i,
+        /no\s*(visa\s*)?(required|needed)|unrestricted/i,
+      ];
+      for (const re of prefs) {
+        const hit = (optionLabels || []).find(
+          (o) => re.test(String(o)) && !/\b(not|no|without|do not|don't)\b/i.test(String(o))
+        );
+        if (hit) {
+          add(hit);
+          break;
+        }
+      }
+    }
     return candidates;
   }
 
@@ -8138,6 +8282,55 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
   }
 
+  // Workday questionnaire: answering "legally entitled…?" with Yes reveals a follow-up
+  // "If yes… right to work" listbox that was absent from the first collectFormFields pass
+  // (abb-wd3…20260813T185959Z). Re-scan briefly and fill new / still-empty Yes/No + RTW picks.
+  if (
+    !onlyPhoneCountry &&
+    /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "")
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    for (const { element, host } of collectFormFields().singles) {
+      if (!element.isConnected || !looksLikeComboboxPick(element)) continue;
+      const label = labelForElement(element, host);
+      if (filled.some((f) => f.label === label)) continue;
+      if (comboboxHasDisplayValue(element)) {
+        const cur = reactSelectDisplayValue(element);
+        if (cur && !isGenericSelectPlaceholder(cur)) {
+          filled.push({ label, value: cur, source: "already-set" });
+          continue;
+        }
+      }
+      let opts = [];
+      try {
+        opts = await discoverComboboxOptions(element);
+      } catch {
+        opts = [];
+      }
+      const picks = comboboxRetryCandidates(label, opts, null);
+      let done = false;
+      for (const pick of picks) {
+        if (await fillReactSelectByClick(element, pick)) {
+          filled.push({
+            label,
+            value: reactSelectDisplayValue(element) || pick,
+            source: "profile",
+          });
+          done = true;
+          break;
+        }
+      }
+      if (done) continue;
+      // Entitled / age confirmation still empty — force Yes even if discovery was thin.
+      if (
+        /legally entitled|entitled to work|18 years|permitted to work|years old or elder/i.test(label) &&
+        (await fillReactSelectByClick(element, "Yes"))
+      ) {
+        filled.push({ label, value: "Yes", source: "profile" });
+      }
+    }
+  }
+
   // Ungrouped single checkboxes (no shared `name`, so not caught above) — e.g. a lone
   // "Subscribe to updates" checkbox. Privacy/terms consents are auto-checked; others match
   // yes/no against the QA bank only.
@@ -8278,6 +8471,67 @@ async function fillGeneratedAnswersInPage(answers) {
       } catch {
         /* not focusable */
       }
+    }
+    // Kept in sync with runAutofillInPage — Workday questionnaire textareas (ABB 20260813T185959Z).
+    const onWorkday = /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "");
+    const workdayText =
+      onWorkday &&
+      (element.tagName === "TEXTAREA" ||
+        (element.tagName === "INPUT" &&
+          /^(text|email|tel|search|url|password|)$/i.test(String(element.type || "text"))));
+    if (workdayText) {
+      const tracker = element._valueTracker;
+      if (tracker) {
+        try {
+          tracker.setValue(element.value);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (setter) setter.call(element, "");
+      else element.value = "";
+      if (typeof InputEvent === "function") {
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+      }
+      let committed = false;
+      try {
+        if (typeof document.execCommand === "function") {
+          document.execCommand("selectAll", false, null);
+          committed = document.execCommand("insertText", false, str);
+        }
+      } catch {
+        committed = false;
+      }
+      if (!committed || String(element.value || "") !== str) {
+        let built = "";
+        for (const ch of str) {
+          built += ch;
+          if (tracker) {
+            try {
+              tracker.setValue(built.slice(0, -1));
+            } catch {
+              /* ignore */
+            }
+          }
+          if (setter) setter.call(element, built);
+          else element.value = built;
+          if (typeof InputEvent === "function") {
+            element.dispatchEvent(
+              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: ch })
+            );
+          } else {
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          element.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true, cancelable: true }));
+        }
+      }
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      try {
+        element.blur();
+      } catch {
+        /* ignore */
+      }
+      return;
     }
     const prev = element.value;
     const tracker = element._valueTracker;
@@ -8863,6 +9117,26 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return "";
     }
+    // Kept in sync with runAutofillInPage — Workday listbox <button> display (ABB 20260813T185959Z).
+    if (
+      element &&
+      element.tagName === "BUTTON" &&
+      (element.getAttribute("aria-haspopup") === "listbox" || element.getAttribute("aria-haspopup") === "true")
+    ) {
+      const raw = String(element.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (raw && !isGenericSelectPlaceholder(raw) && !/^select one$/i.test(raw)) {
+        return raw.replace(/[;,\s]+$/g, "").trim() || raw;
+      }
+      const aria = ((element.getAttribute("aria-label") || "") + "")
+        .replace(/\s*required\s*$/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (aria && !isGenericSelectPlaceholder(aria) && !/^select one$/i.test(aria)) {
+        return aria.replace(/[;,\s]+$/g, "").trim() || aria;
+      }
+    }
     // Committed react-select value is the chip / single-value, never the filter <input>.
     // Reading `.value` first treated typed "LinkedIn Post" as committed, then the next
     // attempt typed "LinkedIn Ad" / "LinkedIn Jobs" and each click toggled a multi-select
@@ -9268,6 +9542,9 @@ async function fillGeneratedAnswersInPage(answers) {
     if (bootstrapItems.length) return bootstrapItems;
     const anyOptionRole = querySelectorAllDeep('[role="option"], [role="treeitem"], [role="menuitem"]').filter(isFreshAndVisible);
     if (anyOptionRole.length) return anyOptionRole;
+    // Kept in sync with runAutofillInPage — Workday promptOption rows (ABB 20260813T185959Z).
+    const promptOpts = querySelectorAllDeep('[data-automation-id="promptOption"]').filter(isFreshAndVisible);
+    if (promptOpts.length) return promptOpts;
     return querySelectorAllDeep("li, div, span, button").filter((el) => {
       if (before.has(el)) return false;
       if (el.closest && el.closest(".iti, .iti--container")) return false;
@@ -10883,6 +11160,17 @@ async function fillGeneratedAnswersInPage(answers) {
           /* ignore */
         }
       }
+      // Workday: React can still revert after the first pass — wait briefly and rewrite once
+      // (abb-wd3…20260813T185959Z salary/notice empty after gpt-fill while UI flashed filled).
+      if (
+        /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "") &&
+        (el.tagName === "TEXTAREA" || el.tagName === "INPUT") &&
+        !textInputCommitted(el, value)
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        nativeSet(el, value);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
       ok = textInputCommitted(el, value);
     }
     if (ok) count++;
@@ -11213,7 +11501,11 @@ function captureSampleInPage(profile, qaBank) {
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
     // a saved answer for the same underlying question never got reused via category match.
-    { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
+    // Kept in sync with runAutofillInPage — ABB "legally entitled"; no bare "right to work".
+    {
+      key: "authorized_to_work",
+      re: /authori[sz]ed to work|legally authorised to work|legally entitled to work|\bentitled to work\b|(?:have|do) you.{0,40}right to work|right to work in (?:this|the)/i,
+    },
     { key: "eligible_to_work", re: /eligible to work/i },
     { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
     {
@@ -11693,8 +11985,11 @@ const MATCH_CATEGORY_PATTERNS = [
   },
   // Kept in sync with runAutofillInPage's own CATEGORY_PATTERNS - "eligible to work" confirmed
   // live as a real wording variant (Globalization Partners' Greenhouse form) alongside
-  // "authorized to work".
-  { key: "authorized_to_work", re: /authori[sz]ed to work|legally authorised to work|right to work/i },
+  // "authorized to work". ABB "legally entitled"; no bare "right to work" (status picklist).
+  {
+    key: "authorized_to_work",
+    re: /authori[sz]ed to work|legally authorised to work|legally entitled to work|\bentitled to work\b|(?:have|do) you.{0,40}right to work|right to work in (?:this|the)/i,
+  },
   { key: "eligible_to_work", re: /eligible to work/i },
   { key: "requires_sponsorship", re: /(require|need|will).{0,25}(sponsorship|visa)/i },
   {
