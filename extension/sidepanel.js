@@ -2336,6 +2336,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
   if (typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(`[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""}`);
+  console.info(
+    `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
+  );
 
   // Label resolution, visibility checks, honeypot/combobox detection, and group/native/shadow
   // field collection (cleanedText, normalizeLabel, resolveOwnLabel, labelForElement, isVisible,
