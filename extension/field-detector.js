@@ -1083,17 +1083,39 @@ function splRadioOptionLabel(el) {
   return normalizeLabel(cleanedText(el) || "");
 }
 
+function querySelectorAllDeepLocal(selector, root) {
+  const out = [];
+  const visit = (node) => {
+    if (!node || !node.querySelectorAll) return;
+    out.push(...node.querySelectorAll(selector));
+    for (const el of node.querySelectorAll("*")) {
+      if (el.shadowRoot) visit(el.shadowRoot);
+    }
+  };
+  visit(root || document);
+  return out;
+}
+
 function isVisibleSplRadio(el) {
   if (isVisible(el)) return true;
-  const row = (el.closest && (el.closest("sr-question-field-radio") || el.closest("spl-radio-group"))) || el;
+  const row =
+    (typeof closestCrossingShadow === "function" &&
+      (closestCrossingShadow(el, "sr-question-field-radio") || closestCrossingShadow(el, "spl-radio-group"))) ||
+    (el.closest && (el.closest("sr-question-field-radio") || el.closest("spl-radio-group"))) ||
+    el;
   const rect = row.getBoundingClientRect();
   return rect.width > 1 && rect.height > 1;
 }
 
 function collectSplRadioGroups(claimed) {
   const byKey = new Map();
-  for (const el of document.querySelectorAll("spl-radio")) {
-    const group = el.closest && el.closest("spl-radio-group");
+  // Live oneclick-ui puts <spl-radio> inside <sr-screening-questions-form>'s open shadow —
+  // document.querySelectorAll("spl-radio") returns [] (jobs-smartrecruiters-com-20260813T180741Z:
+  // groups=0 while 4 Yes/No radios were on screen).
+  for (const el of querySelectorAllDeepLocal("spl-radio")) {
+    const group =
+      (typeof closestCrossingShadow === "function" && closestCrossingShadow(el, "spl-radio-group")) ||
+      (el.closest && el.closest("spl-radio-group"));
     if (!group) continue;
     if (!isVisibleSplRadio(el)) continue;
     const name = (el.getAttribute("name") || "").trim();
@@ -1104,7 +1126,9 @@ function collectSplRadioGroups(claimed) {
   const groups = [];
   for (const radios of byKey.values()) {
     if (radios.length < 2) continue;
-    const group = radios[0].closest("spl-radio-group");
+    const group =
+      (typeof closestCrossingShadow === "function" && closestCrossingShadow(radios[0], "spl-radio-group")) ||
+      radios[0].closest("spl-radio-group");
     let groupLabel = group && findSmartRecruitersQuestionLabel(group);
     if (!groupLabel) groupLabel = findSmartRecruitersQuestionLabel(radios[0]);
     if (!groupLabel) continue;

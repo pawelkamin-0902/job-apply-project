@@ -2665,9 +2665,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
-    // Website ≠ LinkedIn — never fall back to the LinkedIn URL (SmartRecruiters/Redcare
-    // and similar forms have separate Website + LinkedIn fields).
-    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || null },
+    // Website ≠ LinkedIn — never fall back to LinkedIn, and never use a website value that
+    // is itself a LinkedIn URL (Stefan profile had website=linkedin on Redcare SR).
+    {
+      re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i,
+      get: (p) => {
+        const w = String((p.contact && p.contact.website) || "").trim();
+        if (!w || /linkedin\.com/i.test(w)) return null;
+        return w;
+      },
+    },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -6279,10 +6286,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return null;
     }
     const low = desired.toLowerCase();
+    const exact = texts.find((t) => t.toLowerCase() === low);
+    if (exact) return exact;
+    // "Native / Advanced" must map to Native, not Fluent (SR Redcare list).
     const pick =
-      (/\b(native|c2|fluent|mastery)\b/i.test(low) &&
-        (texts.find((t) => /\bC2\b/i.test(t)) ||
-          texts.find((t) => /fluent\s*\/\s*native|native|fluent/i.test(t)))) ||
+      (/\bnative\b|\bc2\b|\bmastery\b/i.test(low) &&
+        (texts.find((t) => /^native\b/i.test(t)) ||
+          texts.find((t) => /\bC2\b/i.test(t)) ||
+          texts.find((t) => /fluent\s*\/\s*native|\bnative\b/i.test(t)))) ||
+      (/\bfluent\b/i.test(low) &&
+        (texts.find((t) => /^fluent\b/i.test(t)) ||
+          texts.find((t) => /\bC2\b/i.test(t)) ||
+          texts.find((t) => /fluent/i.test(t)))) ||
       (/\b(advanced|c1|proficient|upper intermediate|b2)\b/i.test(low) &&
         (texts.find((t) => /\bC1\b/i.test(t)) ||
           texts.find((t) => /\bB2\b/i.test(t)) ||
@@ -6549,10 +6564,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!/eligible to work|authori[sz]ed to work/i.test(raw)) return null;
     const country = String((profile && profile.contact && profile.contact.country) || "").toLowerCase();
     if (!country) return null;
+    // EU member residence → Yes for "eligible to work in the EU?" — not Poland-only
+    // (Stefan Iacob / Bucharest, Romania on jobs-smartrecruiters-com-20260813T180741Z).
+    const euCountry =
+      /\b(poland|polska|romania|românia|germany|deutschland|france|spain|italy|italia|netherlands|belgium|sweden|portugal|austria|greece|ireland|denmark|finland|hungary|czech|slovakia|croatia|bulgaria|lithuania|latvia|estonia|slovenia|luxembourg|malta|cyprus)\b/i.test(
+        country
+      );
     const inEu = /\b(the\s+)?(eu|e\.u\.|europe|european union)\b/i.test(raw);
-    const inPoland = /\bpoland\b/i.test(raw);
-    const polish = /poland|polska/.test(country);
-    if ((inEu || inPoland) && polish) return "Yes";
+    if (inEu && euCountry) return "Yes";
+    const place = (raw.match(/\b(?:in|for)\s+(?:the\s+)?([A-Za-z][A-Za-z\s.-]{1,40}?)(?:\s*\(|\s*\?|$)/i) || [])[1];
+    if (place && (country.includes(place.trim().toLowerCase()) || place.trim().toLowerCase().includes(country))) {
+      return "Yes";
+    }
     return null;
   }
 
@@ -7301,7 +7324,30 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         filled.push({ label, value: cur, source: "already-set" });
         continue;
       }
-      const qaPicks = [qaMatch.answer];
+      const qaPicks = [];
+      // Language level: QA often stores "Native / Advanced" while SR offers Native/Fluent/…
+      // Blind fill reported success without committing (jobs-smartrecruiters-com-20260813T180741Z).
+      // Discover real options first, coerce, then try those labels.
+      const langProf =
+        detectCategory(label) === "english_proficiency" ||
+        detectCategory(label) === "polish_proficiency" ||
+        (typeof looksLikeLanguageProficiencyLabel === "function" && looksLikeLanguageProficiencyLabel(label));
+      if (langProf) {
+        let langOpts = findRadixHiddenSelectOptions(element);
+        if (!langOpts.length) langOpts = await discoverComboboxOptions(element);
+        const mapped =
+          (langOpts.length && coerceLanguageLevelForOptions(qaMatch.answer, langOpts)) ||
+          (langOpts.length && coerceComboboxAnswerForOptions(label, qaMatch.answer, langOpts)) ||
+          null;
+        if (mapped) qaPicks.push(mapped);
+        if (langOpts.length) {
+          const fluent =
+            coerceLanguageLevelForOptions("Fluent", langOpts) ||
+            langOpts.find((o) => /^fluent$/i.test(String(o).trim()));
+          if (fluent) qaPicks.push(fluent);
+        }
+      }
+      qaPicks.push(qaMatch.answer);
       if (
         (detectCategory(label) === "english_proficiency" || detectCategory(label) === "polish_proficiency") &&
         /\bdo you have\b/i.test(label)
@@ -7311,14 +7357,22 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       let qaComboboxDone = false;
       for (const qaPick of [...new Set(qaPicks.map(String).filter(Boolean))]) {
         if (fillGreenhouseViaReactFiber(element, qaPick)) {
-          filled.push({ label, value: qaPick, source: "learned" });
-          qaComboboxDone = true;
-          break;
+          const cur = reactSelectDisplayValue(element);
+          if (cur && !isGenericSelectPlaceholder(cur)) {
+            filled.push({ label, value: cur || qaPick, source: "learned" });
+            qaComboboxDone = true;
+            break;
+          }
         }
-        if (await fillReactSelectByClick(element, qaPick)) {
-          filled.push({ label, value: qaPick, source: "learned" });
-          qaComboboxDone = true;
-          break;
+        const clicked = await fillReactSelectByClick(element, qaPick);
+        if (clicked && clicked !== "no-match") {
+          const cur = reactSelectDisplayValue(element);
+          // SmartRecruiters can return true from click tiers without a committed value.
+          if (cur && !isGenericSelectPlaceholder(cur)) {
+            filled.push({ label, value: cur, source: "learned" });
+            qaComboboxDone = true;
+            break;
+          }
         }
       }
       if (qaComboboxDone) continue;
@@ -10090,6 +10144,11 @@ async function fillGeneratedAnswersInPage(answers) {
 
   for (let { idx, value, label } of answers) {
     let el = document.querySelector(`[data-af-idx="${idx}"]`);
+    // SmartRecruiters stamps live on shadow-internal <input>s — light-DOM querySelector
+    // misses them (screening notice/salary never got gpt-fill after generation).
+    if (!el && typeof querySelectorAllDeep === "function") {
+      el = querySelectorAllDeep(`[data-af-idx="${idx}"]`)[0] || null;
+    }
     if (!el && label) {
       el = findElementByLabel(label);
       if (el) {
@@ -10097,7 +10156,10 @@ async function fillGeneratedAnswersInPage(answers) {
         el.setAttribute("data-af-label", label);
       }
     }
-    if (!el) continue;
+    if (!el) {
+      console.warn(`[Auto Fill][gpt-fill] no element for idx=${idx} label="${label || ""}"`);
+      continue;
+    }
     // Coerce GPT/QA text into what the control accepts (₹ salary number, notice days, etc.).
     if (typeof coerceAnswerForField === "function") {
       const coerced = coerceAnswerForField(label || el.getAttribute("data-af-label") || "", el, value);
@@ -10519,9 +10581,16 @@ function captureSampleInPage(profile, qaBank) {
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
-    // Website ≠ LinkedIn — never fall back to the LinkedIn URL (SmartRecruiters/Redcare
-    // and similar forms have separate Website + LinkedIn fields).
-    { re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i, get: (p) => p.contact.website || null },
+    // Website ≠ LinkedIn — never fall back to LinkedIn, and never use a website value that
+    // is itself a LinkedIn URL (Stefan profile had website=linkedin on Redcare SR).
+    {
+      re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i,
+      get: (p) => {
+        const w = String((p.contact && p.contact.website) || "").trim();
+        if (!w || /linkedin\.com/i.test(w)) return null;
+        return w;
+      },
+    },
     {
       re: /^links?\b/i,
       get: (p) => [p.contact.linkedin, p.contact.website].filter(Boolean).join(", ") || null,
@@ -12163,7 +12232,12 @@ el("autofillBtn").addEventListener("click", async () => {
         });
         aiCandidates.forEach((item, i) => {
           const ans = byQuestionNumber.get(i + 1);
-          if (!ans || ans.answerable === false || !ans.answer) return;
+          if (!ans || ans.answerable === false || !ans.answer) {
+            if (isFormSpecificCompQuestion(item.label)) {
+              generationErrors.push(`${item.label}: model returned no answer`);
+            }
+            return;
+          }
           let value = ans.answer;
           if (item.kind === "select") {
             const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
@@ -12203,6 +12277,11 @@ el("autofillBtn").addEventListener("click", async () => {
               value = picked.join(", ");
             }
             finalFills.push({ frameId: item.frameId, idx: item.idx, value, kind: "generated", label: item.label });
+          } else if (isFormSpecificCompQuestion(item.label)) {
+            // Salary/notice must always get an answer (prompt says so); small local models
+            // still return answerable:false — surface it instead of silent "need your input"
+            // (jobs-smartrecruiters-com-20260813T180741Z).
+            generationErrors.push(`${item.label}: model returned no answer`);
           }
         } catch (err) {
           generationErrors.push(`${item.label}: ${err.message}`);

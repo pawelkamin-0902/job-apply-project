@@ -3350,7 +3350,24 @@ unverified outside a live browser).
 132. **Website field got LinkedIn URL.** `Author: Cursor`. Structured website/portfolio
     pattern used `p.contact.website || p.contact.linkedin`, so a separate Website field
     was filled with the LinkedIn profile when website was empty. Fixed: website/portfolio
-    only use `contact.website`; LinkedIn stays on LinkedIn fields. Not yet confirmed live.
+    only use `contact.website`; LinkedIn stays on LinkedIn fields. Also reject a
+    `contact.website` that is itself a linkedin.com URL. Not yet confirmed live.
+
+133. **SmartRecruiters screening still failing (Redcare 20260813T180741Z): radios
+    invisible; English fake-filled; notice/salary left for input.** `Author: Cursor`.
+    Profile: Stefan Iacob (Bucharest, Romania). Log: `groups=0 singles=4`, English
+    "Native / Advanced" reported learned but input stayed empty, notice+salary
+    `canGenerate=true` never gpt-filled.
+    - **Radios**: `<spl-radio>` lives inside `sr-screening-questions-form` open shadow —
+      `document.querySelectorAll("spl-radio")` returned []. Fixed: deep shadow walk +
+      `closestCrossingShadow` for group labels. EU eligibility Yes for any EU residence
+      country (not Poland-only — Romania).
+    - **English**: QA "Native / Advanced" tried as exact option; fill returned true without
+      a committed display. Fixed: discover options, coerce to Native/Fluent, only count
+      filled when display is non-empty.
+    - **Notice/salary**: stamp/`data-af-idx` lookup missed shadow inputs; empty model
+      answers were silent. Fixed: deep `data-af-idx` query; surface generationErrors when
+      salary/notice return no answer. Not yet confirmed live.
 
 ## Known gaps (not yet acted on)
 
