@@ -3276,6 +3276,21 @@ unverified outside a live browser).
     extra keyboard/pac-item work reverted (slow network); wait a bit longer (~10s)
     while the spinner is up.
 
+127. **Loka Greenhouse Attach Resume still not attached (fake filename).** `Author: Cursor`.
+    Capture `job-boards-greenhouse-io-20260813T143502Z`. After #126 the toast said
+    `Resume file attached (Dragos_Radu.pdf) → Resume/CV*` but the widget still showed
+    Attach / Google Drive / Enter manually plus a painted `data-af-resume-name` div.
+    Root cause: `data-allow-s3="false"` is FileUpload's unused default (Field never
+    passes `allowS3`); S3 uploaders are still created by `fetchFields` →
+    `JBEN_URL/uncacheable_attributes/presigned_fields`. Submit (`Na()`) only sends
+    `resume_url` from React `{file:{name,url}}`, not the native `<input type=file>`.
+    #126 skipped `change` and never waited for `uploadManager.uploaders.resume`, so
+    the form never got a URL. Fixed in `attachResumeFileInPage` /
+    `greenhouseRemixAttach`: wait for the real uploader (and retry `fetchFields` if
+    empty), then fire change so GH's own handler uploads and swaps in
+    `.file-upload__filename`. No fake name. Fail instead of claiming success.
+    Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

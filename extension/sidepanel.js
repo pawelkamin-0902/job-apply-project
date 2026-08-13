@@ -1074,69 +1074,125 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
 
-    // Greenhouse remix `.file-upload` (job-boards.greenhouse.io): a change/input event
-    // calls `uploader.uploadFile(...)` but the S3 uploader is never created when
-    // `data-allow-s3="false"`. That throws "Cannot read properties of undefined
-    // (reading 'uploadFile')" after Attach Resume already set input.files
-    // (lokainc Resume/CV*). If a real uploadFile exists on a React fiber, call it;
-    // otherwise leave the File on the native input for multipart submit and skip change.
-    function greenhouseRemixAttach(input, fileObj, dt) {
-      const wrap = input.closest && input.closest(".file-upload");
-      if (!wrap) return false;
-      input.files = dt.files;
-      const fiberKey = (el) =>
-        Object.keys(el || {}).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-      const fns = [];
-      const collect = (fiber) => {
-        const bags = [
-          fiber.memoizedProps,
-          fiber.pendingProps,
-          fiber.stateNode && fiber.stateNode.props,
-          fiber.stateNode,
-        ];
+    // Greenhouse remix `.file-upload` (job-boards.greenhouse.io): submit does NOT read
+    // the native <input type=file>. Na() only sends resume_url / resume_url_filename from
+    // React state `{file:{name,url}}` after S3 upload. The change handler always does
+    // `uploadManager.uploaders[id].uploadFile(...)`. `data-allow-s3="false"` is the
+    // FileUpload default (Field never passes allowS3) and does NOT mean S3 is off —
+    // uploaders are created by fetchFields → GET JBEN_URL/uncacheable_attributes/presigned_fields.
+    // Confirmed live lokainc Resume/CV* (20260813T143502Z): firing change before that fetch
+    // finished threw "Cannot read properties of undefined (reading 'uploadFile')"; skipping
+    // change and painting a fake `data-af-resume-name` left Attach/Google Drive/Enter manually
+    // in place, so the application had no resume_url. Wait for the real uploader, then let
+    // Greenhouse's own change handler upload and swap in `.file-upload__filename`.
+    function ghFiberKey(el) {
+      return Object.keys(el || {}).find((k) => k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
+    }
+    function findGhUploadContext(input, wrap) {
+      const fieldId = (input && input.id) || "resume";
+      let uploadManager = null;
+      let onChange = null;
+      const visit = (fiber) => {
+        const bags = [fiber.memoizedProps, fiber.pendingProps];
+        if (fiber.stateNode && fiber.stateNode.props) bags.push(fiber.stateNode.props);
         for (const bag of bags) {
           if (!bag || typeof bag !== "object") continue;
-          if (typeof bag.uploadFile === "function") fns.push(bag.uploadFile.bind(bag));
-          if (bag.uploader && typeof bag.uploader.uploadFile === "function") {
-            fns.push(bag.uploader.uploadFile.bind(bag.uploader));
+          if (bag.uploadManager && bag.uploadManager.uploaders) uploadManager = bag.uploadManager;
+          // FileUpload's onChange expects `{file:{name,url}}` (Field wraps that into the
+          // form value). Prefer the fiber that also has matching `id` + uploadManager.
+          if (typeof bag.onChange === "function" && bag.uploadManager && bag.id === fieldId) {
+            onChange = bag.onChange;
           }
         }
         let hook = fiber.memoizedState;
-        for (let n = 0; hook && n < 40; n++, hook = hook.next) {
+        for (let n = 0; hook && n < 50; n++, hook = hook.next) {
           const v = hook.memoizedState;
-          if (v && typeof v.uploadFile === "function") fns.push(v.uploadFile.bind(v));
-          if (v && v.current && typeof v.current.uploadFile === "function") {
-            fns.push(v.current.uploadFile.bind(v.current));
-          }
+          if (v && v.uploaders) uploadManager = v;
+          if (v && v.current && v.current.uploaders) uploadManager = v.current;
         }
       };
       for (const el of [input, wrap, wrap.querySelector("button.btn")]) {
         if (!el) continue;
-        const key = fiberKey(el);
+        const key = ghFiberKey(el);
         if (!key) continue;
-        for (let fiber = el[key], i = 0; fiber && i < 40; i++, fiber = fiber.return) collect(fiber);
+        for (let fiber = el[key], i = 0; fiber && i < 60; i++, fiber = fiber.return) visit(fiber);
       }
-      for (const fn of fns) {
-        try {
-          fn(fileObj);
-          return true;
-        } catch {
-          /* try next */
+      const uploaders = (uploadManager && uploadManager.uploaders) || {};
+      const uploader = uploaders[fieldId] || uploaders.resume || null;
+      return { fieldId, uploadManager, uploader, onChange };
+    }
+    async function greenhouseRemixAttach(input, fileObj, dt) {
+      const wrap = input.closest && input.closest(".file-upload");
+      if (!wrap) return { handled: false };
+      input.files = dt.files;
+      const fake = wrap.querySelector("[data-af-resume-name]");
+      if (fake) fake.remove();
+
+      let ctx = findGhUploadContext(input, wrap);
+      for (let i = 0; i < 50 && !(ctx.uploader && typeof ctx.uploader.uploadFile === "function"); i++) {
+        if (i === 5 && ctx.uploadManager && typeof ctx.uploadManager.fetchFields === "function") {
+          const jben = (typeof window !== "undefined" && window.ENV && window.ENV.JBEN_URL) || "";
+          if (jben) {
+            try {
+              await ctx.uploadManager.fetchFields([ctx.fieldId], jben);
+            } catch {
+              /* fetchFields throws if presigned_fields fails; keep polling */
+            }
+          }
         }
+        await sleep(200);
+        ctx = findGhUploadContext(input, wrap);
       }
-      let shown = wrap.querySelector("[data-af-resume-name]");
-      if (!shown) {
-        shown = document.createElement("div");
-        shown.setAttribute("data-af-resume-name", "1");
-        shown.style.marginTop = "8px";
-        const host = wrap.querySelector(".file-upload__wrapper") || wrap;
-        host.appendChild(shown);
+
+      const waitForFilename = async () => {
+        for (let i = 0; i < 50; i++) {
+          if (wrap.querySelector(".file-upload__filename")) return true;
+          await sleep(200);
+        }
+        return Boolean(wrap.querySelector(".file-upload__filename"));
+      };
+
+      if (ctx.uploader && typeof ctx.uploader.uploadFile === "function") {
+        input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+        if (await waitForFilename()) return { handled: true, attached: true };
+        // change ran but UI didn't swap — upload + FileUpload onChange ourselves
+        try {
+          await ctx.uploader.uploadFile(fileObj, () => {});
+          const url = ctx.uploader.fileUrl && ctx.uploader.fileUrl();
+          if (typeof ctx.onChange === "function" && url) ctx.onChange({ file: { name: fileObj.name, url } });
+        } catch (err) {
+          return {
+            handled: true,
+            attached: false,
+            reason: `Greenhouse resume upload failed: ${err && err.message ? err.message : err}`,
+          };
+        }
+        if (await waitForFilename()) return { handled: true, attached: true };
+        return {
+          handled: true,
+          attached: false,
+          reason: "Greenhouse resume uploaded but the form did not show the file. Try Attach Resume again.",
+        };
       }
-      shown.textContent = fileObj.name;
-      return true;
+
+      return {
+        handled: true,
+        attached: false,
+        reason: "Greenhouse resume uploader did not initialize (S3 presign). Try Attach Resume again after the page finishes loading.",
+      };
     }
 
-    if (!greenhouseRemixAttach(target, file, dataTransfer)) {
+    const ghAttach = await greenhouseRemixAttach(target, file, dataTransfer);
+    if (ghAttach.handled) {
+      if (!ghAttach.attached) {
+        return {
+          attached: false,
+          reason: ghAttach.reason || "Greenhouse resume did not attach.",
+          label: resolveFileInputLabel(target) || "",
+        };
+      }
+    } else {
       target.files = dataTransfer.files;
       // `composed: true` is required whenever `target` can be inside a shadow root (confirmed live:
       // SmartRecruiters' <spl-dropzone> resume widget) - `bubbles` alone only controls propagation
