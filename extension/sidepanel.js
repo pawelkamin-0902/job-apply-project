@@ -2597,6 +2597,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
+    {
+      re: /github\s*(user\s*name|username|handle|profile|url|link)|please enter your github|^github\s*$/i,
+      get: (p) => {
+        const c = (p && p.contact) || {};
+        for (const raw of [c.github, c.website]) {
+          if (!raw) continue;
+          const m = String(raw).match(/github\.com\/+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/i);
+          if (m && !/^(orgs|settings|topics|features|marketplace|explore)$/i.test(m[1])) return m[1];
+          if (!/[./:\s]/.test(String(raw).trim())) return String(raw).trim();
+        }
+        return null;
+      },
+    },
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
@@ -2786,6 +2799,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
     },
     { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
+    {
+      key: "familiar_with_employer",
+      re: /familiar with .{0,80}before (seeing|applying)|heard of (us|this (company|employer)|the company) before/i,
+    },
     // "Eligible to work" confirmed live as a real wording variant (Globalization Partners'
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
@@ -4468,12 +4485,29 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       return [];
     };
     const menuLoading = () => {
-      const el = document.querySelector(
-        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]'
-      );
-      if (!el) return false;
-      const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
+      // Scope to THIS widget. A document-wide query matches leftover spinners on Country /
+      // other react-selects and then we never read Places options (lokainc 20260813T133621Z).
+      const roots = [];
+      const shell = element.closest && element.closest(".select-shell");
+      if (shell) roots.push(shell);
+      const control =
+        (element.closest && element.closest('[class*="__control"]')) || element.parentElement;
+      if (control) roots.push(control);
+      const controlsId = element.getAttribute && element.getAttribute("aria-controls");
+      if (controlsId) {
+        const listbox = document.getElementById(controlsId);
+        if (listbox) roots.push(listbox.closest('[class*="__menu"]') || listbox);
+      }
+      const sel =
+        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]';
+      for (const root of roots) {
+        if (!root || !root.querySelector) continue;
+        const spin = root.querySelector(sel);
+        if (!spin) continue;
+        const rect = spin.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) return true;
+      }
+      return false;
     };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -4502,12 +4536,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let options = [];
     let stable = 0;
     let lastSig = "";
-    // Cap empty waits: 40×200ms (~8s) burned on non-Places selects misrouted as location
-    // (apaleo relocation plans 20260813T100213Z). Real Places menus usually appear in <1s.
+    // Always read options even while the spinner is up — Bucharest often appears around
+    // poll#8 while `__loadingIndicator` is still visible (lokainc 20260813T130714Z success
+    // vs 20260813T133621Z: 12-poll cap aborted at poll#10 still-loading). Empty
+    // (non-loading) waits still abort quickly so misrouted selects don't burn 8s.
     let emptyPolls = 0;
-    for (let poll = 0; poll < 12; poll++) {
+    for (let poll = 0; poll < 40; poll++) {
       await sleep(200);
-      if (menuLoading()) {
+      const found = readOptions();
+      const loading = !found.length && menuLoading();
+      if (loading) {
         if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
         stable = 0;
         lastSig = "";
@@ -4515,7 +4553,6 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         emptyPolls = 0;
         continue;
       }
-      const found = readOptions();
       const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
       if (!found.length) {
         emptyPolls += 1;
@@ -6357,6 +6394,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (
       cat === "worked_here_before" ||
       cat === "currently_employed_here" ||
+      cat === "familiar_with_employer" ||
       cat === "related_to_employee" ||
       cat === "employee_referral" ||
       cat === "lived_abroad"
@@ -6379,118 +6417,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       optionLabels.some((o) => /^(yes|no)$/i.test(String(o).trim()))
     ) {
       const skillPick = inferSkillExperienceYesNo(label);
-      const yes = optionLabels.find((o) => /^yes$/i.test(String(o).trim()));
-      const no = optionLabels.find((o) => /^no$/i.test(String(o).trim()));
-      add((skillPick === "Yes" ? yes : no) || skillPick || no || "No");
+      if (skillPick === "Yes") {
+        add(optionLabels.find((o) => /^yes$/i.test(String(o).trim())) || "Yes");
+      }
     }
     return candidates;
   }
 
-  function profileSkillHaystack() {
-    const parts = [];
-    if (profile && profile.summary) parts.push(profile.summary);
-    const skills = profile && (profile.skills || profile.technical_skills);
-    if (Array.isArray(skills)) parts.push(...skills);
-    else if (skills && typeof skills === "object") {
-      for (const v of Object.values(skills)) {
-        if (Array.isArray(v)) parts.push(...v);
-        else if (v) parts.push(String(v));
-      }
-    }
-    if (profile && Array.isArray(profile.experience)) {
-      for (const e of profile.experience) {
-        if (e && e.title) parts.push(e.title);
-        if (e && e.company) parts.push(e.company);
-        if (e && e.description) parts.push(e.description);
-        if (e && Array.isArray(e.bullets)) parts.push(...e.bullets);
-      }
-    }
-    return parts.join(" ").toLowerCase();
-  }
-
-  function blobHasTech(blob, tok) {
-    const t = String(tok || "").toLowerCase().trim();
-    if (!t || t.length < 2) return false;
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-    if (new RegExp(`\\b${esc(t)}\\b`, "i").test(blob)) return true;
-    // "react native" / "node.js" / "ci/cd" should match a resume that only says React / Node / CI CD.
-    const parts = t.split(/[\s/_-]+/).filter((p) => p.length >= 4);
-    return parts.some((p) => new RegExp(`\\b${esc(p)}\\b`, "i").test(blob));
-  }
-
-  function techEquivalents(tok) {
-    const t = String(tok || "").toLowerCase().trim();
-    const map = {
-      "react native": ["react", "reactjs", "react.js"],
-      reactjs: ["react", "react.js"],
-      "react.js": ["react", "reactjs"],
-      k8s: ["kubernetes"],
-      kubernetes: ["k8s"],
-      gcp: ["google cloud"],
-      "google cloud": ["gcp"],
-      "ci/cd": ["cicd", "ci cd", "continuous integration"],
-      nodejs: ["node.js", "node"],
-      "node.js": ["nodejs", "node"],
-      postgres: ["postgresql"],
-      postgresql: ["postgres"],
-      golang: ["go"],
-      "e-invoicing": ["invoicing", "invoice"],
-      einvoicing: ["e-invoicing", "invoicing", "invoice"],
-      "next.js": ["nextjs"],
-      nextjs: ["next.js"],
-    };
-    return map[t] || [];
-  }
-
+  // Yes/No "do you have experience with X?" — always Yes. Do not match individual
+  // techs in code (Python/SQL/AWS/React Native lists). If QA has a saved answer, that
+  // wins earlier; anything that isn't this pattern is left for GPT.
   function inferSkillExperienceYesNo(label) {
     const raw = String(label || "");
-    const blob = profileSkillHaystack();
-    // Classic: "Experience working with X?" / "Experience with X"
-    let m = raw.match(/\bexperience\s+(?:working\s+)?with\s+([^?.!]+)/i);
-    // "Do you have professional experience with Python and SQL at an advanced level?"
-    if (!m) m = raw.match(/\b(?:do you have|have you)\s+(?:professional\s+)?experience\s+with\s+([^?.!]+)/i);
-    // Greenhouse requirement statements: "Hands-on experience with …", "Experience owning …"
-    if (!m) m = raw.match(/\b(?:hands-?on\s+)?experience\s+(?:with|building|in|using|owning|including)\s+([^?.!]+)/i);
-    if (!m) m = raw.match(/\b(?:do you have|have you)\s+(.+?\bexperience\b.*)/i);
-    if (!m && /\b(proficiency|years).{0,80}\bexperience\b/i.test(raw)) {
-      m = [raw, raw];
+    if (
+      /\b(do you have|have you)\b.{0,80}\bexperience\b/i.test(raw) ||
+      /\b(hands-?on\s+)?experience\s+(?:working\s+)?(?:with|building|in|using|owning|including)\b/i.test(raw)
+    ) {
+      return "Yes";
     }
-    if (!m) {
-      if (/\b(do you have|have you).{0,40}experience|experience with\b/i.test(raw)) return "No";
-      return null;
-    }
-    let skill = m[1].trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").trim();
-    if (!skill) return null;
-    const skipTok = new Set([
-      "and", "the", "with", "for", "you", "have", "professional", "experience", "advanced",
-      "level", "modern", "using", "working", "hands", "years", "plus", "highly", "relevant",
-      "including", "owning", "operations", "development", "applications", "strong",
-      "building", "shipping", "operating", "production", "delivery", "across", "such",
-      "from", "into", "that", "this", "your", "our", "must", "required", "preferred",
-      "processing", "query", "native",
-    ]);
-    const tokens = skill
-      .split(/[\s,;]+/)
-      .map((t) => t.replace(/^[^\w+#./-]+|[^\w+#./-]+$/g, ""))
-      .filter((t) => t.length > 2 && !skipTok.has(t));
-    const seen = new Set();
-    const hitsHaystack = (tok) =>
-      blobHasTech(blob, tok) || techEquivalents(tok).some((eq) => blobHasTech(blob, eq));
-    for (const tok of tokens) {
-      if (seen.has(tok)) continue;
-      seen.add(tok);
-      if (tok === "go" && (/\bgolang\b/.test(blob) || /\bgo\s*\(/.test(blob))) return "Yes";
-      if (hitsHaystack(tok)) return "Yes";
-    }
-    // Multi-word names stay intact in `skill` ("react native", "google cloud").
-    for (const name of ["react native", "google cloud", "ci/cd", "node.js", "next.js", "e-invoicing"]) {
-      if (skill.includes(name) && hitsHaystack(name)) return "Yes";
-    }
-    // Unknown skill on a Yes/No requirement — prefer No over inventing Yes.
-    if (/\b(highly relevant|required|must have|hands-?on experience|years of|do you have|have you)\b/i.test(raw)) {
-      return "No";
-    }
-    if (/\bexperience with\b/i.test(raw)) return "No";
     return null;
   }
 
@@ -6599,6 +6543,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         detectCategory(group.label) === "related_to_employee" ||
         detectCategory(group.label) === "worked_here_before" ||
         detectCategory(group.label) === "currently_employed_here" ||
+        detectCategory(group.label) === "familiar_with_employer" ||
         detectCategory(group.label) === "lived_abroad") &&
       optionLabels.some((t) => /^no$/i.test(String(t).trim()))
     ) {
@@ -7082,8 +7027,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (looksLikeComboboxPick(element) && !isPhoneDialCodePicker(element)) {
       const screenCat = detectCategory(label);
-      // Greenhouse skill/requirement Yes/No statements — infer from profile BEFORE bad QA/
-      // structured phone hits (Cloudbeds GH: "mobile" → phone, skill_experience → "5+ years").
+      // Greenhouse "Do you have experience with X?" Yes/No — pick Yes (no per-tech matching).
       if (
         (screenCat === "skill_experience" ||
           /\b(hands-?on\s+)?experience\s+(with|building|in|using|owning|including)\b|\b\d+\+?\s*years?\b.*\bexperience\b/i.test(
@@ -7100,6 +7044,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (
         screenCat === "worked_here_before" ||
         screenCat === "currently_employed_here" ||
+        screenCat === "familiar_with_employer" ||
         screenCat === "related_to_employee" ||
         screenCat === "employee_referral" ||
         screenCat === "lived_abroad"
@@ -8810,12 +8755,29 @@ async function fillGeneratedAnswersInPage(answers) {
       return [];
     };
     const menuLoading = () => {
-      const el = document.querySelector(
-        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]'
-      );
-      if (!el) return false;
-      const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
+      // Scope to THIS widget. A document-wide query matches leftover spinners on Country /
+      // other react-selects and then we never read Places options (lokainc 20260813T133621Z).
+      const roots = [];
+      const shell = element.closest && element.closest(".select-shell");
+      if (shell) roots.push(shell);
+      const control =
+        (element.closest && element.closest('[class*="__control"]')) || element.parentElement;
+      if (control) roots.push(control);
+      const controlsId = element.getAttribute && element.getAttribute("aria-controls");
+      if (controlsId) {
+        const listbox = document.getElementById(controlsId);
+        if (listbox) roots.push(listbox.closest('[class*="__menu"]') || listbox);
+      }
+      const sel =
+        '[class*="__loadingIndicator"], [class*="__loading-indicator"], [class*="loading-indicator"]';
+      for (const root of roots) {
+        if (!root || !root.querySelector) continue;
+        const spin = root.querySelector(sel);
+        if (!spin) continue;
+        const rect = spin.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) return true;
+      }
+      return false;
     };
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -8844,12 +8806,16 @@ async function fillGeneratedAnswersInPage(answers) {
     let options = [];
     let stable = 0;
     let lastSig = "";
-    // Cap empty waits: 40×200ms (~8s) burned on non-Places selects misrouted as location
-    // (apaleo relocation plans 20260813T100213Z). Real Places menus usually appear in <1s.
+    // Always read options even while the spinner is up — Bucharest often appears around
+    // poll#8 while `__loadingIndicator` is still visible (lokainc 20260813T130714Z success
+    // vs 20260813T133621Z: 12-poll cap aborted at poll#10 still-loading). Empty
+    // (non-loading) waits still abort quickly so misrouted selects don't burn 8s.
     let emptyPolls = 0;
-    for (let poll = 0; poll < 12; poll++) {
+    for (let poll = 0; poll < 40; poll++) {
       await sleep(200);
-      if (menuLoading()) {
+      const found = readOptions();
+      const loading = !found.length && menuLoading();
+      if (loading) {
         if (poll % 5 === 0) log(`3 poll#${poll} still loading`);
         stable = 0;
         lastSig = "";
@@ -8857,7 +8823,6 @@ async function fillGeneratedAnswersInPage(answers) {
         emptyPolls = 0;
         continue;
       }
-      const found = readOptions();
       const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
       if (!found.length) {
         emptyPolls += 1;
@@ -10389,6 +10354,19 @@ function captureSampleInPage(profile, qaBank) {
     // LinkedIn as an example source (apaleo GH 20260813T100213Z: "How did you hear… LinkedIn,
     // or other sources" got the profile URL).
     { re: /linkedin\s*(profile|url|link|address)|^(linked\s*in|linkedin)\s*$/i, get: (p) => p.contact.linkedin },
+    {
+      re: /github\s*(user\s*name|username|handle|profile|url|link)|please enter your github|^github\s*$/i,
+      get: (p) => {
+        const c = (p && p.contact) || {};
+        for (const raw of [c.github, c.website]) {
+          if (!raw) continue;
+          const m = String(raw).match(/github\.com\/+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/i);
+          if (m && !/^(orgs|settings|topics|features|marketplace|explore)$/i.test(m[1])) return m[1];
+          if (!/[./:\s]/.test(String(raw).trim())) return String(raw).trim();
+        }
+        return null;
+      },
+    },
     // Must be a field ASKING for a website/portfolio, not a sentence that names one as an
     // example source. Confirmed live apaleo 20260813T124048Z: "How did you hear… (e.g., Apaleo
     // website, WeAreDevelopers, LinkedIn…)" matched /website/ and filled the profile URL.
@@ -10521,6 +10499,10 @@ function captureSampleInPage(profile, qaBank) {
       re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
     },
     { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
+    {
+      key: "familiar_with_employer",
+      re: /familiar with .{0,80}before (seeing|applying)|heard of (us|this (company|employer)|the company) before/i,
+    },
     // "Eligible to work" confirmed live as a real wording variant (Globalization Partners'
     // Greenhouse form: "Are you currently eligible to work in the country where this role is
     // posted without visa sponsorship?") that "authorized to work" alone didn't catch, meaning
@@ -10996,6 +10978,10 @@ const MATCH_CATEGORY_PATTERNS = [
     re: /(?:have you|did you).{0,50}(?:worked\s+(?:at|for|here)\b|been\s+employed\b)|(?:previously|prior).{0,20}(?:employed|worked)\s+(?:at|for|by|here)\b|\bemployed\s+by\b/i,
   },
   { key: "currently_employed_here", re: /(are you )?currently (working|employed)\b/i },
+  {
+    key: "familiar_with_employer",
+    re: /familiar with .{0,80}before (seeing|applying)|heard of (us|this (company|employer)|the company) before/i,
+  },
   // Kept in sync with runAutofillInPage's own CATEGORY_PATTERNS - "eligible to work" confirmed
   // live as a real wording variant (Globalization Partners' Greenhouse form) alongside
   // "authorized to work".

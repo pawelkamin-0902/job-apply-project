@@ -3256,6 +3256,17 @@ unverified outside a live browser).
     Companion `reload=False` — restart `python3 run.py` for the prompt. Not yet confirmed
     live.
 
+125. **Loka Greenhouse (job-boards.greenhouse.io/lokainc): Location (City) empty; skill
+    Yes/No filled No.** `Author: Cursor`. Capture `job-boards-greenhouse-io-20260813T133621Z`
+    (Dragos Radu). Places typed "Bucharest" and aborted at poll#10 still-loading (~2.4s);
+    the same query succeeded at poll#8 on `20260813T130714Z`. Cause: a 12-poll cap plus
+    skipping `readOptions` while any `__loadingIndicator` was visible. Fixed: read options
+    even while the spinner shows; wait up to ~8s while loading; abort empty (non-loading)
+    waits quickly. Skill Yes/No ("Do you have professional experience with Python and SQL…",
+    "…AWS…") had been answering No via per-tech resume matching. Don't hardcode tools in
+    code: "do you have experience with …" Yes/No → **Yes**. If QA has no answer and it
+    isn't that pattern, leave it for GPT. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
