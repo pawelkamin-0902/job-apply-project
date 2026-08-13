@@ -3224,6 +3224,20 @@ unverified outside a live browser).
     relocation regex no longer matches country "currently based in" lists. Not yet
     confirmed live.
 
+123. **Same Loka hear-about: still typed every LinkedIn-* label and toggled chips.**
+    `Author: Cursor`. After #122 the widget still opened 10+ times: it typed
+    "LinkedIn Post", then "LinkedIn Ad", then "LinkedIn Jobs", and clicking a
+    multi-select option that was already on **removed** it. Causes:
+    - `reactSelectDisplayValue` read the filter `<input>` *before* chips, so typed
+      text looked "committed" and the next pass typed a sibling label.
+    - LinkedIn family/includes matching treated "LinkedIn Ad" as a hit on
+      "LinkedIn Post" (and vice versa), so each retry clicked a *different* row.
+    - Type-to-filter + GPT retry walked every LinkedIn-* option.
+    Fixed: chips before filter text; ignore Greenhouse input.value; only family-match
+    bare `"LinkedIn"`; never type-filter hear-about; don't click an already-selected
+    option (toggle); one hear-about attempt (`data-af-hear-about-tried`); GPT/QA
+    coerce to a single LinkedIn-* option. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -3645,6 +3645,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const desiredText = (match.textContent || "").trim();
     const comboEl = () =>
       (controlEl && controlEl.closest && controlEl.closest('[role="combobox"]')) || controlEl;
+    const want = desiredText.replace(/\s+/g, " ").trim().toLowerCase();
+    if (clickEl.getAttribute && clickEl.getAttribute("aria-selected") === "true") return true;
+    const already = (reactSelectDisplayValue(comboEl()) || "")
+      .toLowerCase()
+      .split(/,\s*/)
+      .filter(Boolean);
+    if (want && already.some((p) => p === want)) return true;
     try {
       if (clickEl.scrollIntoView) clickEl.scrollIntoView({ block: "nearest" });
     } catch {
@@ -3872,10 +3879,28 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       return "";
     }
+    // Committed react-select value is the chip / single-value, never the filter <input>.
+    // Reading `.value` first treated typed "LinkedIn Post" as committed, then the next
+    // attempt typed "LinkedIn Ad" / "LinkedIn Jobs" and each click toggled a multi-select
+    // chip off/on (lokainc hear-about).
+    const control = element && element.closest && element.closest('[class*="__control"]');
+    if (control) {
+      const single = control.querySelector('[class*="__single-value"]');
+      if (single && cleanedText(single)) return cleanedText(single);
+      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
+        .map((el) => cleanedText(el))
+        .filter(Boolean);
+      if (multi.length) return multi.join(", ");
+    }
     // Oracle cx-select (and other ARIA combobox <input>s): the committed answer lives in
     // `.value`, not textContent — cleanedText() always returned "" so every fill looked
     // uncommitted (fa-euwp…oraclecloud.com 20260812T182256Z).
+    const reactSelectFilter =
+      element &&
+      element.closest &&
+      element.closest(".select-shell, [class*='__control']");
     if (
+      !reactSelectFilter &&
       element &&
       (element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
       String(element.value || "").trim()
@@ -3901,19 +3926,6 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           return v;
         }
       }
-    }
-    const control = element && element.closest && element.closest('[class*="__control"]');
-    if (control) {
-      const single = control.querySelector('[class*="__single-value"]');
-      if (single && cleanedText(single)) return cleanedText(single);
-      // Greenhouse remix multi-select (id `question_…[]`, `--is-multi`): the committed
-      // answer is a chip, not `__single-value`. Reading only single-value left display=""
-      // after a real pick, so verify failed and the menu reopened ~45 times
-      // (lokainc 20260813T130714Z "Where did you first find out about this job?").
-      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
-        .map((el) => cleanedText(el))
-        .filter(Boolean);
-      if (multi.length) return multi.join(", ");
     }
     // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
     // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
@@ -4685,6 +4697,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       comboboxTrace(element, `skip display already committed -> "${desiredText}"`, { displayAtStart });
       return true;
     }
+    const hearAboutField =
+      (typeof detectCategory === "function" && detectCategory(comboboxFieldLabel(element)) === "hear_about") ||
+      /\bfirst find out about this (job|role|position)\b/i.test(comboboxFieldLabel(element) || "");
+    if (hearAboutField && /linkedin/i.test(displayAtStart) && !/^https?:/i.test(displayAtStart)) {
+      comboboxTrace(element, `skip hear-about LinkedIn already picked -> "${displayAtStart}"`, {});
+      return true;
+    }
+    if (hearAboutField && element.getAttribute && element.getAttribute("data-af-hear-about-tried") === "1") {
+      comboboxTrace(element, `skip hear-about already attempted`, { displayAtStart });
+      return Boolean(displayAtStart && !isGenericSelectPlaceholder(displayAtStart));
+    }
+    if (hearAboutField && element.setAttribute) element.setAttribute("data-af-hear-about-tried", "1");
     comboboxTrace(element, `open/fill attempt -> "${desiredText}"`, { displayBefore: displayAtStart });
     // Residence Country must never try a phone dial-code — opens the list and ArrowDowns
     // through unrelated options (confirmed live Oportun question_* Country with "+48").
@@ -4826,13 +4850,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           options.find((o) => norm(o.textContent) === target) ||
           options.find((o) => norm(o.textContent).startsWith(target + ",") || norm(o.textContent).startsWith(target + " ")) ||
           options.find((o) => norm(o.textContent).startsWith(target)) ||
-          options.find((o) => norm(o.textContent).includes(target) || target.includes(norm(o.textContent))) ||
+          options.find((o) => {
+            const t = norm(o.textContent);
+            if (
+              /linkedin/i.test(target) &&
+              /linkedin/i.test(t) &&
+              !/^linkedin$/i.test(target) &&
+              t !== target
+            ) {
+              return false;
+            }
+            return t.includes(target) || target.includes(t);
+          }) ||
           (/^(yes|no)$/i.test(target) && options.find((o) => norm(o.textContent) === target)) ||
           (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
             options.find(
               (o) => /agree|accept|consent|confirm/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree|not confirm/i.test(norm(o.textContent))
             )) ||
-          (/linkedin/i.test(target) &&
+          (/^linkedin$/i.test(target) &&
             !/^https?:/i.test(target) &&
             (options.find((o) => /linkedin\s*post/i.test(norm(o.textContent))) ||
               options.find((o) => /linkedin/i.test(norm(o.textContent)) && !/^https?:/i.test(norm(o.textContent))))) ||
@@ -4972,6 +5007,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         `${tag} tier 3 keyboard-nav -> no committed match after ${keyboardSteps} step(s), saw: [${[...seen].join(", ")}]`
       );
       // Type-to-filter + pick (confirmed live GH remix: sponsorship Yes/No, experience levels).
+      // Hear-about is a fixed option list. Typing "LinkedIn Post" then "LinkedIn Ad" then
+      // "LinkedIn Jobs" into the filter (and clicking each) toggles multi-select chips.
+      {
+        const hearLabel = comboboxFieldLabel(element) || "";
+        const hearChip = reactSelectDisplayValue(element);
+        if (
+          (typeof detectCategory === "function" && detectCategory(hearLabel) === "hear_about") ||
+          /\bfirst find out about this (job|role|position)\b/i.test(hearLabel)
+        ) {
+          await dismissOpenGreenhouseComboboxes(element);
+          if (/linkedin/i.test(hearChip) && !/^https?:/i.test(hearChip)) {
+            console.info(`${tag} hear-about already has LinkedIn chip "${hearChip}" - stop`);
+            return true;
+          }
+          console.info(`${tag} hear-about skip type-to-filter (would type sibling LinkedIn labels)`);
+          return "no-match";
+        }
+      }
       element.focus();
       await ensureOpen();
       nativeSet(element, String(desiredText).trim());
@@ -5184,10 +5237,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         options.find((o) => textOf(o) === target) ||
         options.find((o) => textOf(o).startsWith(target + ",") || textOf(o).startsWith(target + " ")) ||
         options.find((o) => textOf(o).startsWith(target)) ||
-        options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) ||
+        options.find((o) => {
+          const t = textOf(o);
+          if (
+            /linkedin/i.test(target) &&
+            /linkedin/i.test(t) &&
+            !/^linkedin$/i.test(target) &&
+            t !== target
+          ) {
+            return false;
+          }
+          return t.includes(target) || target.includes(t);
+        }) ||
         (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
           options.find((o) => /agree|accept|consent|confirm/i.test(textOf(o)) && !/do not|don't|decline|not agree|not confirm/i.test(textOf(o)))) ||
-        (/linkedin/i.test(target) &&
+        (/^linkedin$/i.test(target) &&
           !/^https?:/i.test(target) &&
           (options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
             options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))))) ||
@@ -5390,7 +5454,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (!match && starts.length) match = starts[0];
     }
     if (!match) {
-      const includes = options.filter((o) => textOf(o).includes(target) || target.includes(textOf(o)));
+      const includes = options.filter((o) => {
+        const t = textOf(o);
+        if (
+          /linkedin/i.test(target) &&
+          /linkedin/i.test(t) &&
+          !/^linkedin$/i.test(target) &&
+          t !== target
+        ) {
+          return false;
+        }
+        return t.includes(target) || target.includes(t);
+      });
       if (includes.length && countryHint) {
         match = includes.find((o) => textOf(o).includes(countryHint)) || null;
       }
@@ -5404,7 +5479,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (
       !match &&
-      /linkedin/i.test(target) &&
+      /^linkedin$/i.test(target) &&
       !/^https?:/i.test(target)
     ) {
       match =
@@ -7013,7 +7088,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         const hearPick = hearAboutLinkedInOption(fiberOpts);
         if (hearPick) {
           if (fillGreenhouseViaReactFiber(element, hearPick) || (await fillReactSelectByClick(element, hearPick))) {
-            filled.push({ label, value: hearPick, source: "learned" });
+            filled.push({
+              label,
+              value: reactSelectDisplayValue(element) || hearPick,
+              source: "learned",
+            });
+            continue;
+          }
+          const cur = reactSelectDisplayValue(element);
+          if (/linkedin/i.test(cur) && !/^https?:/i.test(cur)) {
+            filled.push({ label, value: cur, source: "learned" });
             continue;
           }
         }
@@ -7307,6 +7391,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           }
           if (await fillReactSelectByClick(element, pick)) {
             filled.push({ label, value: pick, source: qaMatch && qaComboboxFailed ? "learned" : "profile" });
+            comboboxDone = true;
+            break;
+          }
+          const cur = reactSelectDisplayValue(element);
+          if (
+            detectCategory(label) === "hear_about" &&
+            /linkedin/i.test(cur) &&
+            !/^https?:/i.test(cur)
+          ) {
+            filled.push({ label, value: cur, source: "learned" });
             comboboxDone = true;
             break;
           }
@@ -7907,6 +8001,13 @@ async function fillGeneratedAnswersInPage(answers) {
     const desiredText = (match.textContent || "").trim();
     const comboEl = () =>
       (controlEl && controlEl.closest && controlEl.closest('[role="combobox"]')) || controlEl;
+    const want = desiredText.replace(/\s+/g, " ").trim().toLowerCase();
+    if (clickEl.getAttribute && clickEl.getAttribute("aria-selected") === "true") return true;
+    const already = (reactSelectDisplayValue(comboEl()) || "")
+      .toLowerCase()
+      .split(/,\s*/)
+      .filter(Boolean);
+    if (want && already.some((p) => p === want)) return true;
     try {
       if (clickEl.scrollIntoView) clickEl.scrollIntoView({ block: "nearest" });
     } catch {
@@ -8127,10 +8228,28 @@ async function fillGeneratedAnswersInPage(answers) {
       }
       return "";
     }
+    // Committed react-select value is the chip / single-value, never the filter <input>.
+    // Reading `.value` first treated typed "LinkedIn Post" as committed, then the next
+    // attempt typed "LinkedIn Ad" / "LinkedIn Jobs" and each click toggled a multi-select
+    // chip off/on (lokainc hear-about).
+    const control = element && element.closest && element.closest('[class*="__control"]');
+    if (control) {
+      const single = control.querySelector('[class*="__single-value"]');
+      if (single && cleanedText(single)) return cleanedText(single);
+      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
+        .map((el) => cleanedText(el))
+        .filter(Boolean);
+      if (multi.length) return multi.join(", ");
+    }
     // Oracle cx-select (and other ARIA combobox <input>s): the committed answer lives in
     // `.value`, not textContent — cleanedText() always returned "" so every fill looked
     // uncommitted (fa-euwp…oraclecloud.com 20260812T182256Z).
+    const reactSelectFilter =
+      element &&
+      element.closest &&
+      element.closest(".select-shell, [class*='__control']");
     if (
+      !reactSelectFilter &&
       element &&
       (element.tagName === "INPUT" || element.tagName === "TEXTAREA") &&
       String(element.value || "").trim()
@@ -8156,19 +8275,6 @@ async function fillGeneratedAnswersInPage(answers) {
           return v;
         }
       }
-    }
-    const control = element && element.closest && element.closest('[class*="__control"]');
-    if (control) {
-      const single = control.querySelector('[class*="__single-value"]');
-      if (single && cleanedText(single)) return cleanedText(single);
-      // Greenhouse remix multi-select (id `question_…[]`, `--is-multi`): the committed
-      // answer is a chip, not `__single-value`. Reading only single-value left display=""
-      // after a real pick, so verify failed and the menu reopened ~45 times
-      // (lokainc 20260813T130714Z "Where did you first find out about this job?").
-      const multi = [...control.querySelectorAll('[class*="__multi-value__label"]')]
-        .map((el) => cleanedText(el))
-        .filter(Boolean);
-      if (multi.length) return multi.join(", ");
     }
     // Rippling ATS (ats.rippling.com): the combobox div itself holds the selected label
     // (e.g. id=field-59 text "8 to 10 Years") — no react-select __single-value. Without this,
@@ -8888,6 +8994,17 @@ async function fillGeneratedAnswersInPage(answers) {
       return true;
     }
     if (isReactSelectAlreadySet(element, desiredText)) return true;
+    const displayAtStart = reactSelectDisplayValue(element);
+    const hearAboutField =
+      (typeof detectCategory === "function" && detectCategory(comboboxFieldLabel(element)) === "hear_about") ||
+      /\bfirst find out about this (job|role|position)\b/i.test(comboboxFieldLabel(element) || "");
+    if (hearAboutField && /linkedin/i.test(displayAtStart) && !/^https?:/i.test(displayAtStart)) {
+      return true;
+    }
+    if (hearAboutField && element.getAttribute && element.getAttribute("data-af-hear-about-tried") === "1") {
+      return Boolean(displayAtStart);
+    }
+    if (hearAboutField && element.setAttribute) element.setAttribute("data-af-hear-about-tried", "1");
     if (element.closest && element.closest(".select-shell") && fillGreenhouseViaReactFiber(element, desiredText)) {
       await dismissOpenGreenhouseComboboxes(element);
       return true;
@@ -9013,13 +9130,24 @@ async function fillGeneratedAnswersInPage(answers) {
           options.find((o) => norm(o.textContent) === target) ||
           options.find((o) => norm(o.textContent).startsWith(target + ",") || norm(o.textContent).startsWith(target + " ")) ||
           options.find((o) => norm(o.textContent).startsWith(target)) ||
-          options.find((o) => norm(o.textContent).includes(target) || target.includes(norm(o.textContent))) ||
+          options.find((o) => {
+            const t = norm(o.textContent);
+            if (
+              /linkedin/i.test(target) &&
+              /linkedin/i.test(t) &&
+              !/^linkedin$/i.test(target) &&
+              t !== target
+            ) {
+              return false;
+            }
+            return t.includes(target) || target.includes(t);
+          }) ||
           (/^(yes|no)$/i.test(target) && options.find((o) => norm(o.textContent) === target)) ||
           (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
             options.find(
               (o) => /agree|accept|consent|confirm/i.test(norm(o.textContent)) && !/do not|don't|decline|not agree|not confirm/i.test(norm(o.textContent))
             )) ||
-          (/linkedin/i.test(target) &&
+          (/^linkedin$/i.test(target) &&
             !/^https?:/i.test(target) &&
             (options.find((o) => /linkedin\s*post/i.test(norm(o.textContent))) ||
               options.find((o) => /linkedin/i.test(norm(o.textContent)) && !/^https?:/i.test(norm(o.textContent))))) ||
@@ -9159,6 +9287,24 @@ async function fillGeneratedAnswersInPage(answers) {
         `${tag} tier 3 keyboard-nav -> no committed match after ${keyboardSteps} step(s), saw: [${[...seen].join(", ")}]`
       );
       // Type-to-filter + pick (confirmed live GH remix: sponsorship Yes/No, experience levels).
+      // Hear-about is a fixed option list. Typing "LinkedIn Post" then "LinkedIn Ad" then
+      // "LinkedIn Jobs" into the filter (and clicking each) toggles multi-select chips.
+      {
+        const hearLabel = comboboxFieldLabel(element) || "";
+        const hearChip = reactSelectDisplayValue(element);
+        if (
+          (typeof detectCategory === "function" && detectCategory(hearLabel) === "hear_about") ||
+          /\bfirst find out about this (job|role|position)\b/i.test(hearLabel)
+        ) {
+          await dismissOpenGreenhouseComboboxes(element);
+          if (/linkedin/i.test(hearChip) && !/^https?:/i.test(hearChip)) {
+            console.info(`${tag} hear-about already has LinkedIn chip "${hearChip}" - stop`);
+            return true;
+          }
+          console.info(`${tag} hear-about skip type-to-filter (would type sibling LinkedIn labels)`);
+          return "no-match";
+        }
+      }
       element.focus();
       await ensureOpen();
       nativeSet(element, String(desiredText).trim());
@@ -9363,10 +9509,21 @@ async function fillGeneratedAnswersInPage(answers) {
         options.find((o) => textOf(o) === target) ||
         options.find((o) => textOf(o).startsWith(target + ",") || textOf(o).startsWith(target + " ")) ||
         options.find((o) => textOf(o).startsWith(target)) ||
-        options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) ||
+        options.find((o) => {
+          const t = textOf(o);
+          if (
+            /linkedin/i.test(target) &&
+            /linkedin/i.test(t) &&
+            !/^linkedin$/i.test(target) &&
+            t !== target
+          ) {
+            return false;
+          }
+          return t.includes(target) || target.includes(t);
+        }) ||
         (/^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target) &&
           options.find((o) => /agree|accept|consent|confirm/i.test(textOf(o)) && !/do not|don't|decline|not agree|not confirm/i.test(textOf(o)))) ||
-        (/linkedin/i.test(target) &&
+        (/^linkedin$/i.test(target) &&
           !/^https?:/i.test(target) &&
           (options.find((o) => /linkedin\s*post/i.test(textOf(o))) ||
             options.find((o) => /linkedin/i.test(textOf(o)) && !/^https?:/i.test(textOf(o))))) ||
@@ -9544,7 +9701,19 @@ async function fillGeneratedAnswersInPage(answers) {
       if (starts.length) match = starts[0];
     }
     if (!match) {
-      match = options.find((o) => textOf(o).includes(target) || target.includes(textOf(o))) || null;
+      match =
+        options.find((o) => {
+          const t = textOf(o);
+          if (
+            /linkedin/i.test(target) &&
+            /linkedin/i.test(t) &&
+            !/^linkedin$/i.test(target) &&
+            t !== target
+          ) {
+            return false;
+          }
+          return t.includes(target) || target.includes(t);
+        }) || null;
     }
     if (!match && /^(yes|agree|accept|i agree|confirm|i confirm)$/i.test(target)) {
       match = options.find((o) => {
@@ -9554,7 +9723,7 @@ async function fillGeneratedAnswersInPage(answers) {
     }
     if (
       !match &&
-      /linkedin/i.test(target) &&
+      /^linkedin$/i.test(target) &&
       !/^https?:/i.test(target)
     ) {
       match =
@@ -9940,7 +10109,22 @@ async function fillGeneratedAnswersInPage(answers) {
       } else ok = false;
     } else if (looksLikeComboboxPick(el)) {
       console.info(`[Auto Fill][gpt-fill] idx=${idx} combobox "${label}" -> "${value}"`);
-      ok = await fillReactSelectByClick(el, value);
+      const hearAboutCombobox =
+        (typeof detectCategory === "function" && detectCategory(label) === "hear_about") ||
+        /\bfirst find out about this (job|role|position)\b/i.test(label || "");
+      let pickValue = value;
+      if (hearAboutCombobox) {
+        const parts = String(value)
+          .split(/[,;\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        pickValue =
+          parts.find((p) => /linkedin\s*post/i.test(p)) ||
+          parts.find((p) => /linkedin/i.test(p) && !/^https?:/i.test(p)) ||
+          parts[0] ||
+          value;
+      }
+      ok = await fillReactSelectByClick(el, pickValue);
       if (
         ok &&
         (/greenhouse\.io$/i.test(location.hostname || "") ||
@@ -9948,14 +10132,22 @@ async function fillGeneratedAnswersInPage(answers) {
           (el.closest && el.closest(".select-shell, .cx-select-container")))
       ) {
         await new Promise((resolve) => setTimeout(resolve, 400));
-        if (!comboboxValueCommitted(el, value)) {
+        const displayNow = reactSelectDisplayValue(el);
+        if (hearAboutCombobox && /linkedin/i.test(displayNow) && !/^https?:/i.test(displayNow)) {
+          ok = true;
+        } else if (!comboboxValueCommitted(el, pickValue)) {
           // Display can lag after a real pick — retry once before treating GPT's option as unfilled.
-          console.warn(
-            `[Auto Fill][gpt-fill] commit verify missed for "${label}" value="${value}" (display="${reactSelectDisplayValue(el)}"), retrying`
-          );
-          ok = await fillReactSelectByClick(el, value);
-          await new Promise((resolve) => setTimeout(resolve, 350));
-          ok = comboboxValueCommitted(el, value) || ok;
+          // Hear-about: never retry a second LinkedIn-* label (that toggles multi-select chips).
+          if (hearAboutCombobox) {
+            ok = Boolean(displayNow);
+          } else {
+            console.warn(
+              `[Auto Fill][gpt-fill] commit verify missed for "${label}" value="${pickValue}" (display="${displayNow}"), retrying`
+            );
+            ok = await fillReactSelectByClick(el, pickValue);
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            ok = comboboxValueCommitted(el, pickValue) || ok;
+          }
         }
       }
     } else {
@@ -11460,6 +11652,31 @@ function coerceDemographicSelectAnswer(answer, options) {
   return null;
 }
 
+function isHearAboutQuestion(label) {
+  return /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i.test(
+    String(label || "")
+  );
+}
+
+function oneLinkedInHearOption(options) {
+  const labels = (options || []).map((o) => String(o || "").trim()).filter(Boolean);
+  return (
+    labels.find((t) => /linkedin\s*post/i.test(t)) ||
+    labels.find((t) => /linkedin\s*ad/i.test(t)) ||
+    labels.find((t) => /linkedin\s*inmail/i.test(t)) ||
+    labels.find((t) => /linkedin/i.test(t) && !/^https?:/i.test(t)) ||
+    null
+  );
+}
+
+function coerceSelectAnswersForField(label, answer, options, multi) {
+  if (isHearAboutQuestion(label)) {
+    const one = oneLinkedInHearOption(options) || coerceSelectAnswer(answer, options);
+    return one ? [one] : [];
+  }
+  return coerceSelectAnswers(answer, options, multi);
+}
+
 function coerceSelectAnswer(answer, options) {
   if (!answer || !options || !options.length) return null;
   const target = String(answer).trim();
@@ -11599,7 +11816,7 @@ el("autofillBtn").addEventListener("click", async () => {
           // then GPT (still wrongly kept as a candidate — see key bug below) fills the real one.
           const opts = realSelectOptions(item.options);
           if (opts.length > 1) {
-            const picked = coerceSelectAnswers(value, opts, Boolean(item.multi));
+            const picked = coerceSelectAnswersForField(item.label, value, opts, Boolean(item.multi));
             if (!picked.length) continue;
             value = picked.join(", ");
           }
@@ -11679,7 +11896,11 @@ el("autofillBtn").addEventListener("click", async () => {
     // Free-text generation + required multi-option select picks, via the same answer_provider.
     const aiCandidates = [
       ...generationCandidates.map((c) => ({ ...c, kind: "text" })),
-      ...selectPickCandidates.map((c) => ({ ...c, kind: "select", multi: Boolean(c.multi) })),
+      ...selectPickCandidates.map((c) => ({
+        ...c,
+        kind: "select",
+        multi: Boolean(c.multi) && !isHearAboutQuestion(c.label),
+      })),
     ];
 
     if (aiCandidates.length && (settings.answer_provider === "gpt-auto" || settings.answer_provider === "gpt-auto-headless")) {
@@ -11765,7 +11986,7 @@ el("autofillBtn").addEventListener("click", async () => {
           if (!ans || ans.answerable === false || !ans.answer) return;
           let value = ans.answer;
           if (item.kind === "select") {
-            const picked = coerceSelectAnswers(value, item.options, Boolean(item.multi));
+            const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
             if (!picked.length) return;
             value = picked.join(", ");
           }
@@ -11797,7 +12018,7 @@ el("autofillBtn").addEventListener("click", async () => {
           if (data.answerable !== false && data.answer) {
             let value = data.answer;
             if (item.kind === "select") {
-              const picked = coerceSelectAnswers(value, item.options, Boolean(item.multi));
+              const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
               if (!picked.length) continue;
               value = picked.join(", ");
             }
