@@ -187,6 +187,31 @@ function parseSmartRecruitersScreeningQuestions() {
   }
 }
 
+// Option labels for an SR select/radio from the form `definition` JSON (no need to open the
+// menu). Confirmed live jobs-smartrecruiters-com-20260813T184723Z: "How did you first hear
+// about IFS?" discovery found 0 DOM options while LinkedIn/Facebook/… were in definition.
+function smartRecruitersOptionsForLabel(label) {
+  const want = String(label || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!want) return [];
+  for (const q of parseSmartRecruitersScreeningQuestions()) {
+    const got = String((q && q.label) || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!got) continue;
+    if (!(got === want || want.startsWith(got) || got.startsWith(want.slice(0, Math.min(48, want.length))))) {
+      continue;
+    }
+    const field = Array.isArray(q.questionsFields) ? q.questionsFields[0] : null;
+    const vals = (field && (field.questionsFieldValues || field.values)) || [];
+    return vals.map((v) => String((v && v.label) || "").trim()).filter(Boolean);
+  }
+  return [];
+}
+
 function splFieldHost(el) {
   if (!el) return null;
   return closestCrossingShadow(

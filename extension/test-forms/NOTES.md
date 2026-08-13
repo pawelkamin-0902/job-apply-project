@@ -3404,6 +3404,19 @@ unverified outside a live browser).
     after all singles to overwrite a wrong Country; large `<select>` country lists
     use exact/startsWith only. Not yet confirmed live.
 
+137. **IFS SmartRecruiters (20260813T184723Z): Dutch/English radios, hear-about,
+    privacy consent.** `Author: Cursor`. Screening: English/Dutch Yes/No left for GPT;
+    gpt-fill `nativeSet` on `<spl-radio>` → Illegal invocation; hear-about discovery
+    0 options (menu opened, no click); privacy `spl-checkbox[data-test=consent-box]`
+    stayed invalid.
+    - **Fluency radios**: default English→Yes, other local languages→No (unless profile
+      mentions them) via `clickGroupOption` on spl-radio.
+    - **gpt-fill**: treat SPL-RADIO without `name` — peers from `spl-radio-group`.
+    - **Hear about**: options from `definition` JSON (`smartRecruitersOptionsForLabel`);
+      pick LinkedIn; accept non-fresh `spl-select-option` rows.
+    - **Privacy**: expand consent regex; click `data-test="consent-box"` host + shadow
+      input; dedicated `checkSmartRecruitersConsentBox` pass. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

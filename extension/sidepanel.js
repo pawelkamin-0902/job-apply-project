@@ -2550,7 +2550,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // Phenom Adobe (20260813T100512Z): required "I hereby certify … true and accurate" has
   // neither agree/consent/privacy in the sentence — still a per-application acknowledgement.
   const CONSENT_RE =
-    /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
+    /\b(i|you) agree\b|\bconsent\b|privacy polic|privacy notice|you declare that you have read|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
   function isConsentField(label) {
     return CONSENT_RE.test(label);
   }
@@ -2559,9 +2559,60 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (/\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
       return true;
     }
+    // SmartRecruiters oneclick consent: <spl-checkbox data-test="consent-box" required>
+    if (
+      element &&
+      ((element.getAttribute && element.getAttribute("data-test") === "consent-box") ||
+        (element.closest && element.closest('spl-checkbox[data-test="consent-box"], [data-test="consent-box"]')))
+    ) {
+      return true;
+    }
     // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
     // "required acknowledgement, tick it" rule. Optional newsletter boxes stay untouched.
     return typeof isRequiredField === "function" && isRequiredField(element, element);
+  }
+
+  async function checkSmartRecruitersConsentBox() {
+    const hosts = [
+      ...((typeof querySelectorAllDeep === "function" &&
+        querySelectorAllDeep('spl-checkbox[data-test="consent-box"], [data-test="consent-box"]')) ||
+        []),
+      ...document.querySelectorAll('spl-checkbox[data-test="consent-box"], [data-test="consent-box"]'),
+    ];
+    const host = hosts.find(Boolean);
+    if (!host) return false;
+    const labelText =
+      (host.textContent || "").replace(/\s+/g, " ").trim() ||
+      "You declare that you have read and agree to the privacy notice";
+    const already =
+      (host.getAttribute && host.getAttribute("value") === "true") ||
+      Boolean(
+        host.shadowRoot &&
+          host.shadowRoot.querySelector("input[type='checkbox']") &&
+          host.shadowRoot.querySelector("input[type='checkbox']").checked
+      );
+    if (already) return true;
+    simulateClick(host);
+    try {
+      host.click();
+    } catch {
+      /* ignore */
+    }
+    const input =
+      (host.shadowRoot && host.shadowRoot.querySelector("input[type='checkbox']")) ||
+      host.querySelector("input[type='checkbox']");
+    if (input && !input.checked && typeof nativeSetChecked === "function") {
+      nativeSetChecked(input, true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const ok =
+      (host.getAttribute && host.getAttribute("value") === "true") ||
+      (input && input.checked) ||
+      !(host.classList && host.classList.contains("ng-invalid"));
+    if (ok) {
+      console.info(`[Auto Fill] consent SR privacy checkbox -> yes ("${labelText.slice(0, 60)}")`);
+    }
+    return ok;
   }
 
   // ---- MATCH: structured profile fields ----
@@ -4528,6 +4579,16 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Prefer SmartRecruiters autocomplete rows before generic leaf heuristics.
     const srRaw = collectSrOptions(null, true);
     if (srRaw.length) return srRaw;
+    // SR select menus often keep <spl-select-option> in the DOM (not "fresh") — confirmed live
+    // IFS 20260813T184723Z: hear-about discovery -> 0 while LinkedIn options existed.
+    if (
+      element &&
+      (element.getAttribute("aria-expanded") === "true" ||
+        /smartrecruiters\.com$/i.test(location.hostname || ""))
+    ) {
+      const srAny = collectSrOptions(null, false);
+      if (srAny.length) return srAny;
+    }
 
     if (prefix) {
       for (const menu of querySelectorAllDeep(`[class*="${prefix}__menu"]`)) {
@@ -5889,9 +5950,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         await new Promise((resolve) => setTimeout(resolve, sfPick ? 200 : asyncList ? 150 : 100));
       }
       let options = [];
-      const maxAttempts = sfPick ? 8 : asyncList ? 6 : 4;
+      const isSR =
+        /smartrecruiters\.com$/i.test(location.hostname || "") ||
+        (element.closest && element.closest("sr-question-field-select, spl-autocomplete"));
+      const maxAttempts = sfPick ? 8 : isSR ? 12 : asyncList ? 6 : 4;
       for (let attempt = 0; attempt < maxAttempts && !options.length; attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, sfPick ? 80 : asyncList ? 100 : 70));
+        await new Promise((resolve) => setTimeout(resolve, sfPick ? 80 : isSR ? 120 : asyncList ? 100 : 70));
         options = findComboboxOptions(prefix, before, element);
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
@@ -6926,6 +6990,23 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         filled.push({ label: group.label, value: eligiblePick, source: "profile" });
         continue;
       }
+      // Language fluency Yes/No — don't leave for GPT (spl-radio gpt-fill Illegal invocation
+      // on jobs-smartrecruiters-com-20260813T184723Z English/Dutch).
+      if (/\bfluent\b/i.test(group.label) || /\bfluency\b/i.test(group.label)) {
+        let langPick = null;
+        if (/\benglish\b/i.test(group.label)) {
+          langPick = "Yes";
+        } else if (/\b(dutch|local language|german|french|spanish|italian|portuguese)\b/i.test(group.label)) {
+          // Non-English local language: Yes only if profile text mentions it.
+          const blob = JSON.stringify((profile && profile.contact) || {}) + JSON.stringify(profile || {});
+          const lang = (group.label.match(/\b(dutch|german|french|spanish|italian|portuguese)\b/i) || [])[1];
+          langPick = lang && new RegExp(lang, "i").test(blob) ? "Yes" : "No";
+        }
+        if (langPick && clickGroupOption(group.options, langPick)) {
+          filled.push({ label: group.label, value: langPick, source: "default" });
+          continue;
+        }
+      }
     }
     const groupEl = group.options[0] && group.options[0].element;
     const groupHost =
@@ -7147,6 +7228,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       isResidenceCountryField &&
       looksLikeComboboxPick(element)
     ) {
+      console.info(
+        `[Auto Fill][country] writing profile country=${JSON.stringify(structuredValue)} (display before=${JSON.stringify(reactSelectDisplayValue(element))})`
+      );
       if (await forceResidenceCountryValue(element, structuredValue)) {
         filled.push({ label, value: String(structuredValue), source: "profile" });
         continue;
@@ -7804,18 +7888,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
             .filter((t) => t && !isGenericSelectPlaceholder(t));
         }
       }
+      if (
+        !optionLabels.length &&
+        typeof smartRecruitersOptionsForLabel === "function"
+      ) {
+        optionLabels = smartRecruitersOptionsForLabel(label) || smartRecruitersOptionsForLabel(ownLabel) || [];
+      }
       if (!optionLabels.length) {
         optionLabels = await discoverComboboxOptions(element);
       }
-      // Diagnostic only (temporary, not a fix): reported live that several required combobox
-      // questions on the same page (multiple similarly-shaped "level of experience with X?"
-      // dropdowns) end up in "need your input" without ever becoming a GPT/select-pick
-      // candidate at all - meaning optionLabels came back empty here for them specifically, so
-      // they fall through to the generic catch-all with no options attached, further down.
-      // Logging every attempt (not just failures) so a repro's console shows exactly which
-      // fields succeeded vs failed discovery, in what order, instead of guessing why some
-      // structurally-identical fields on the same page work and others don't.
+      // SmartRecruiters select: definition has LinkedIn/… even when DOM discovery returns [].
+      if (
+        !optionLabels.length &&
+        typeof smartRecruitersOptionsForLabel === "function"
+      ) {
+        optionLabels = smartRecruitersOptionsForLabel(label) || [];
+      }
       console.info(`[Auto Fill][combobox-discovery] "${label}" -> ${optionLabels.length} option(s) found`);
+      if (
+        (detectCategory(label) === "hear_about" || detectCategory(ownLabel) === "hear_about") &&
+        optionLabels.length
+      ) {
+        const linkedIn =
+          optionLabels.find((t) => /^linkedin$/i.test(String(t).trim())) ||
+          optionLabels.find((t) => /linkedin/i.test(String(t)));
+        if (linkedIn && (await fillReactSelectByClick(element, linkedIn))) {
+          filled.push({ label, value: linkedIn, source: "default" });
+          continue;
+        }
+      }
       if (optionLabels.length === 1 && (await fillSingle(element, optionLabels[0]))) {
         filled.push({ label, value: optionLabels[0], source: "only-option" });
         continue;
@@ -8059,21 +8160,41 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // Phenom (and similar) bind via a wrapping <label> + custom `ischecked` attribute, not
       // a plain `.checked` write. Click the label first (same as grouped options); then
       // nativeSetChecked is a no-op if the box is already on.
-      const wrap = element.closest && element.closest("label");
-      if (wrap) wrap.click();
-      else if (element.id) {
+      const splHost =
+        (element.closest && element.closest("spl-checkbox")) ||
+        (element.tagName === "SPL-CHECKBOX" ? element : null);
+      if (splHost) {
+        simulateClick(splHost);
         try {
-          const forLab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
-          if (forLab) forLab.click();
+          splHost.click();
         } catch {
           /* ignore */
         }
+        const inner =
+          (splHost.shadowRoot && splHost.shadowRoot.querySelector("input[type='checkbox']")) ||
+          splHost.querySelector("input[type='checkbox']");
+        if (inner && typeof nativeSetChecked === "function") nativeSetChecked(inner, true);
+      } else {
+        const wrap = element.closest && element.closest("label");
+        if (wrap) wrap.click();
+        else if (element.id) {
+          try {
+            const forLab = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+            if (forLab) forLab.click();
+          } catch {
+            /* ignore */
+          }
+        }
+        await fillSingle(element, true);
       }
-      await fillSingle(element, true);
       if (element.getAttribute("ischecked") != null) {
         element.setAttribute("ischecked", "true");
       }
-      filled.push({ label, value: "yes", source: "consent" });
+      filled.push({
+        label: label && label !== "(no label)" ? label : "privacy / consent",
+        value: "yes",
+        source: "consent",
+      });
       continue;
     }
     const qaMatch = matchQaBank(label);
@@ -8084,6 +8205,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       unmatched.push({ label, type: element.type, canGenerate: false });
     }
   }
+  }
+
+  // SmartRecruiters privacy notice: required <spl-checkbox data-test="consent-box"> may be
+  // missed by loneCheckbox label resolution — force-check after the main pass
+  // (jobs-smartrecruiters-com-20260813T184723Z IFS).
+  if (!onlyPhoneCountry && (await checkSmartRecruitersConsentBox())) {
+    if (!filled.some((f) => /privacy|consent/i.test(f.label || ""))) {
+      filled.push({
+        label: "You declare that you have read and agree to the privacy notice",
+        value: "yes",
+        source: "consent",
+      });
+    }
   }
 
   // Ashby saves each text answer with a 500ms-debounced GraphQL mutation (flushed on blur).
@@ -10522,24 +10656,47 @@ async function fillGeneratedAnswersInPage(answers) {
     if (tag === "select") {
       ok = setSelectValue(el, value);
     } else if (
+      el.tagName === "SPL-RADIO" ||
       el.type === "radio" ||
       (el.type === "checkbox" && el.name) ||
-      (el.getAttribute && el.getAttribute("role") === "radio" && (el.name || el.getAttribute("name")))
+      (el.getAttribute && el.getAttribute("role") === "radio")
     ) {
       // Grouped radios/checkboxes: the stamped node is one option; pick the sibling(s) whose
       // label matches the AI/QA answer. Checkbox groups may be multi-select — answer can be
       // "GRPC, RabbitMQ" (Zoho screening). Confirmed live: previously only the first fuzzy
       // peer was checked, so "select all that apply" never got more than one tick.
-      const groupName = el.name || el.getAttribute("name");
+      // SmartRecruiters <spl-radio> often has name="" — peers must come from spl-radio-group
+      // (jobs-smartrecruiters-com-20260813T184723Z: English Yes nativeSet → Illegal invocation).
+      const groupName = el.name || (el.getAttribute && el.getAttribute("name")) || "";
       const inputType = el.type === "checkbox" ? "checkbox" : "radio";
-      let peers = groupName
-        ? [
-            ...document.querySelectorAll(`input[type="${inputType}"][name="${CSS.escape(groupName)}"]`),
-            ...(inputType === "radio"
-              ? [...document.querySelectorAll(`spl-radio[name="${CSS.escape(groupName)}"]`)]
-              : []),
-          ]
-        : [el];
+      let peers = [];
+      if (el.tagName === "SPL-RADIO" || (el.getAttribute && el.getAttribute("role") === "radio" && el.tagName.includes("-"))) {
+        const group =
+          (typeof closestCrossingShadow === "function" && closestCrossingShadow(el, "spl-radio-group")) ||
+          (el.closest && el.closest("spl-radio-group"));
+        if (group) {
+          peers =
+            typeof querySelectorAllDeep === "function"
+              ? querySelectorAllDeep("spl-radio", group)
+              : [...group.querySelectorAll("spl-radio")];
+        }
+        if (!peers.length && groupName) {
+          peers =
+            typeof querySelectorAllDeep === "function"
+              ? querySelectorAllDeep(`spl-radio[name="${CSS.escape(groupName)}"]`)
+              : [...document.querySelectorAll(`spl-radio[name="${CSS.escape(groupName)}"]`)];
+        }
+        if (!peers.length) peers = [el];
+      } else {
+        peers = groupName
+          ? [
+              ...document.querySelectorAll(`input[type="${inputType}"][name="${CSS.escape(groupName)}"]`),
+              ...(inputType === "radio"
+                ? [...document.querySelectorAll(`spl-radio[name="${CSS.escape(groupName)}"]`)]
+                : []),
+            ]
+          : [el];
+      }
       // Ashby hear-about checkboxes use a unique `name` per option inside one <fieldset>
       // (jobs.ashbyhq.com 20260813T092428Z). Shared-name lookup only sees the stamped box.
       if (peers.length < 2 && el.closest) {
@@ -11253,7 +11410,7 @@ function captureSampleInPage(profile, qaBank) {
   // per-company data-sharing consent question - only matched "i agree" before, missing this
   // equally common second-person phrasing of the exact same kind of consent decision.
   const CONSENT_RE =
-    /\b(i|you) agree\b|\bconsent\b|privacy polic|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
+    /\b(i|you) agree\b|\bconsent\b|privacy polic|privacy notice|you declare that you have read|terms (and|&)? ?conditions|terms of service|share your (cv|resume|data|information)|\b(i hereby )?certify\b|\btrue and accurate\b/i;
   function isConsentField(label) {
     return CONSENT_RE.test(label);
   }
