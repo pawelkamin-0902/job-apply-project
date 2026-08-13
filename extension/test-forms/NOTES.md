@@ -3291,6 +3291,16 @@ unverified outside a live browser).
     `.file-upload__filename`. No fake name. Fail instead of claiming success.
     Not yet confirmed live.
 
+128. **Attach Resume: "Greenhouse resume uploader did not initialize (S3 presign)".**
+    `Author: Cursor`. Live after #127: Attach Resume failed immediately with that
+    message and never put a file on Resume/CV*. Root cause: #127 waited for
+    `uploadManager.uploaders.resume` on React fiber from isolated-world
+    `executeScript`. That fiber is not readable there (same as Autofill "tier 1
+    React fiber" never committing on these boards), so change never ran. Before
+    #126/#127, set `input.files` + `change` was enough — the page handler uploads.
+    Restored that path; retry change if the widget is still empty; succeed only
+    when `.file-upload__filename` appears. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
