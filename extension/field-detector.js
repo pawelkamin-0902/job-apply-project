@@ -243,6 +243,81 @@ function isSmartRecruitersRequiredField(element, host) {
   return null;
 }
 
+// Pinpoint HQ (pinpointhq.com / careers.pod-point.com): required is marked with
+// `.external-form__label--required` on the field label (and/or `required` in the
+// react-on-rails component JSON). Native `required`/`aria-required` are often absent
+// on react-select filter inputs — confirmed live careers-pod-point-com-20260813T181131Z:
+// Country + Right to Work stayed optional, so residence Country was never filled (left as
+// Poland) and RTW was silently skipped while optional Gender/Ethnicity still opened.
+// Returns true / false / null (not a Pinpoint field — caller falls through).
+function isPinpointRequiredField(element, host) {
+  const el = element || host;
+  if (!el || !el.closest) return null;
+  const onPinpoint = el.closest(
+    ".external-form__fieldset, .external-form, [id*='Form::Address'], [id*='Form::Questions::'], [id*='Equalitymonitoring'], [id*='Phonenumberinput']"
+  );
+  if (!onPinpoint) return null;
+
+  function labelLooksRequired(labelEl) {
+    if (!labelEl) return false;
+    if (labelEl.classList && labelEl.classList.contains("external-form__label--required")) return true;
+    if (labelEl.querySelector && labelEl.querySelector(".external-form__label--required")) return true;
+    return false;
+  }
+
+  if (el.id) {
+    try {
+      const byFor = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (labelLooksRequired(byFor)) return true;
+      if (byFor && byFor.classList && byFor.classList.contains("external-form__label") && !labelLooksRequired(byFor)) {
+        // Explicit Pinpoint label without --required → optional (Gender, Ethnicity, …).
+        return false;
+      }
+    } catch (_) {
+      /* ignore invalid id */
+    }
+  }
+
+  let node = el;
+  for (let depth = 0; depth < 10 && node; depth++, node = node.parentElement) {
+    const prev = node.previousElementSibling;
+    if (prev && prev.matches && prev.matches("label.external-form__label")) {
+      return labelLooksRequired(prev);
+    }
+    // Address Country: label is previous sibling of #address-country wrapper.
+    if (node.id === "address-country" || (node.classList && node.classList.contains("pad-v-3"))) {
+      const own = node.querySelector(":scope > label.external-form__label, :scope > .external-form__label");
+      if (own) return labelLooksRequired(own);
+    }
+  }
+
+  // react-on-rails JSON on the nearest component root (questionDetails.required / required).
+  let root = el;
+  for (let depth = 0; depth < 12 && root; depth++, root = root.parentElement) {
+    if (!root.id || !/react-component/i.test(root.id)) continue;
+    const script =
+      (root.nextElementSibling &&
+        root.nextElementSibling.matches &&
+        root.nextElementSibling.matches("script.js-react-on-rails-component") &&
+        root.nextElementSibling) ||
+      (root.parentElement &&
+        root.parentElement.querySelector(`script.js-react-on-rails-component[data-dom-id="${CSS.escape(root.id)}"]`));
+    if (!script) continue;
+    try {
+      const data = JSON.parse(script.textContent || "{}");
+      if (data && data.questionDetails && typeof data.questionDetails.required === "boolean") {
+        return data.questionDetails.required;
+      }
+      if (typeof data.required === "boolean") return data.required;
+    } catch (_) {
+      /* ignore */
+    }
+    break;
+  }
+
+  return null;
+}
+
 // Climbs from `host` looking for a <label> that belongs specifically to it, stopping once an
 // ancestor contains more than one form control (past that point a label found there would
 // belong to the whole group, not this one field). This is the fallback for sites where every

@@ -3369,6 +3369,24 @@ unverified outside a live browser).
       answers were silent. Fixed: deep `data-af-idx` query; surface generationErrors when
       salary/notice return no answer. Not yet confirmed live.
 
+134. **Pod Point Pinpoint (careers.pod-point.com 20260813T181131Z): Country left as
+    Poland; optional Gender/Ethnicity open/close thrash; required Right to Work
+    skipped.** `Author: Cursor`. Profile: Stefan Iacob (Romania). Filled 12 (3 matched)
+    but never logged Country; Gender/Ethnicity each burned discovery+GPT while the page
+    marks them `required:false` under optional equality monitoring.
+    - **Required detection**: Pinpoint uses `.external-form__label--required` (and
+      react-on-rails `required` JSON), not native `required` on react-select inputs.
+      `isRequiredField` treated Country + Right to Work as optional → residence Country
+      structured value was nulled and silently `continue`d; RTW never discovered.
+      Fixed: `isPinpointRequiredField` in field-detector.js.
+    - **Country**: also exempt residence Country from the "skip optional combobox
+      structured fill" guard so profile `contact.country` always overwrites a wrong
+      default (Poland → Romania).
+    - **Optional EEO**: `shouldSkipOptionalDemographic` skips Gender / Ethnicity /
+      Sexuality / Religion / Age / equality_monitoring / optional disability self-ID
+      even when QA has Male/White — no open/close. Required Disability Confident still
+      fills. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -2393,6 +2393,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (srReq === true) return true;
       if (srReq === false) return false;
     }
+    // Pinpoint HQ: Country / Right to Work use `.external-form__label--required` (no native
+    // required on the react-select input). Without this, residence Country was treated as
+    // optional and never overwritten (Poland left while profile is Romania) —
+    // careers-pod-point-com-20260813T181131Z.
+    if (typeof isPinpointRequiredField === "function") {
+      const ppReq = isPinpointRequiredField(element, host);
+      if (ppReq === true) return true;
+      if (ppReq === false) return false;
+    }
     if (element.required) return true;
     if (element.getAttribute && element.getAttribute("aria-required") === "true") return true;
     if (host && host !== element && host.getAttribute && host.getAttribute("aria-required") === "true") return true;
@@ -2933,6 +2942,33 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (re.test(text)) return key;
     }
     return null;
+  }
+
+  // Optional EEO / equality-monitoring widgets (Gender, Ethnicity, Sexuality, …) must not be
+  // opened even when the QA bank has an answer — confirmed live careers-pod-point-com-
+  // 20260813T181131Z: optional Gender/Ethnicity each burned open/discovery/GPT while required
+  // Right to Work was skipped. Required Disability Confident stays fillable via isRequiredField.
+  function shouldSkipOptionalDemographic(label, element, host) {
+    if (typeof isRequiredField === "function" && isRequiredField(element, host)) return false;
+    const id = (element && element.id) || "";
+    const name = (element && element.name) || "";
+    if (/equality_monitoring/i.test(`${id} ${name}`)) return true;
+    if (element && element.closest && element.closest("[id*='Equalitymonitoring']")) return true;
+    const cat = detectCategory(label || "");
+    if (
+      cat === "gender" ||
+      cat === "race_ethnicity" ||
+      cat === "hispanic_latino" ||
+      cat === "veteran_status"
+    ) {
+      return true;
+    }
+    // Optional disability self-ID under EEO (not required Disability Confident screening).
+    if (cat === "disability_status") return true;
+    if (/\b(sexuality|sexual orientation|religion or belief|age bracket|pronouns)\b/i.test(label || "")) {
+      return true;
+    }
+    return false;
   }
 
   // Salary / notice / available-from answers are form-specific (currency, monthly vs yearly,
@@ -6766,6 +6802,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // of pattern order, filling City/Neighborhood/Municipality/... with the street address
     // instead of their own real values.
     const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+    // Optional demographic / EEO comboboxes: never open/fill (even with QA).
+    if (shouldSkipOptionalDemographic(ownLabel, element, host) || shouldSkipOptionalDemographic(label, element, host)) {
+      if (looksLikeComboboxPick(element) || /equality_monitoring/i.test(element.id || "")) {
+        comboboxTrace(element, "skip optional demographic", {});
+      }
+      continue;
+    }
     const weIdx = workExperienceIndexFromLabel(label);
     if (weIdx !== null) {
       // Explicit request: Auto Fill must NOT touch Work Experience Role Description / bullets
@@ -6881,6 +6924,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // `required` — skipping them left `_systemfield_location` empty (20260813T092428Z).
     // Relocation-plans selects are fixed option lists ("Based in Germany|…"), not a city —
     // apaleo 20260813T100213Z / 20260813T124048Z: profile/QA "Poland"/"Romania" was thrown at Places.
+    // Residence Country must still fill from profile even when required-marker detection misses
+    // (Pinpoint left Poland while contact.country was Romania — 20260813T181131Z).
+    const isResidenceCountryField =
+      !isPhoneDialCodePicker(element) &&
+      (/^country\b/i.test(ownLabel) ||
+        /country of residence|current country of residence/i.test(ownLabel) ||
+        /what country are you currently based|country you(?:'re| are) currently based in/i.test(
+          `${ownLabel} ${label}`
+        ));
     if (structuredValue && /relocat|relocation\s*plans|based (in|outside) the/i.test(`${ownLabel} ${label}`)) {
       structuredValue = null;
     }
@@ -6898,7 +6950,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       structuredValue &&
       looksLikeComboboxPick(element) &&
       !isRequiredField(element, host) &&
-      !isLocationAutocompleteField
+      !isLocationAutocompleteField &&
+      !isResidenceCountryField
     ) {
       structuredValue = null;
     }
@@ -10158,6 +10211,13 @@ async function fillGeneratedAnswersInPage(answers) {
     }
     if (!el) {
       console.warn(`[Auto Fill][gpt-fill] no element for idx=${idx} label="${label || ""}"`);
+      continue;
+    }
+    if (
+      typeof shouldSkipOptionalDemographic === "function" &&
+      shouldSkipOptionalDemographic(label || el.getAttribute("data-af-label") || "", el, el)
+    ) {
+      console.info(`[Auto Fill][gpt-fill] skip optional demographic idx=${idx} "${label || ""}"`);
       continue;
     }
     // Coerce GPT/QA text into what the control accepts (₹ salary number, notice days, etc.).
