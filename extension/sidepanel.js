@@ -1659,6 +1659,46 @@ function extractPageInfo() {
     return acceptDescription(document.body.innerText || "");
   }
 
+  // Greenhouse LinkedIn-syndication boards append "-LinkedIn" to the token / title
+  // ("SingleStore-LinkedIn") — that's the job-board channel, not the employer.
+  function tidyExtractedCompanyName(name) {
+    let s = String(name || "").replace(/\s+/g, " ").trim();
+    s = s.replace(/\s+logo$/i, "").trim();
+    s = s.replace(/[- ]linkedin$/i, "").trim();
+    if (/^(greenhouse|job application|careers?)$/i.test(s)) return "";
+    return s;
+  }
+
+  function companyFromGreenhouseTitle(title) {
+    const raw = String(title || "").replace(/\s+/g, " ").trim();
+    const m = raw.match(/^job application for .+ at (.+)$/i) || raw.match(/\bat\s+([A-Z][\w& .'-]{1,60})$/);
+    return m ? tidyExtractedCompanyName(m[1]) : "";
+  }
+
+  function greenhouseLogoAltCompany() {
+    for (const img of document.querySelectorAll("img[alt]")) {
+      const alt = String(img.getAttribute("alt") || "").replace(/\s+/g, " ").trim();
+      if (!alt || alt.length > 80) continue;
+      if (!/\blogo\b/i.test(alt)) continue;
+      const name = tidyExtractedCompanyName(alt);
+      if (name && name.length >= 2) return name;
+    }
+    return "";
+  }
+
+  function companyFromGreenhousePath() {
+    const parts = location.pathname.split("/").filter(Boolean);
+    let slug = parts[0] || "";
+    if (!slug || /^(embed|jobs|job)$/i.test(slug)) return "";
+    slug = slug.replace(/-linkedin$/i, "");
+    if (!slug) return "";
+    return slug
+      .split(/[-_]+/)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
+  }
+
   function extractCompany() {
     // 1. schema.org JobPosting structured data (most reliable when present — this is
     // what Google for Jobs requires, so many ATS platforms already include it).
@@ -1741,6 +1781,21 @@ function extractPageInfo() {
       const slug = location.pathname.split("/").filter(Boolean)[0];
       if (slug) return slug.charAt(0).toUpperCase() + slug.slice(1);
     }
+    // Greenhouse job-boards.greenhouse.io/{board}/jobs/… is the same shared-domain shape:
+    // no JSON-LD hiringOrganization, no og:site_name, and the domain fallback below
+    // deliberately skips greenhouse.io (would return "Greenhouse"). Confirmed live
+    // job-boards-greenhouse-io-20260814T051728Z (SingleStore): <title> is
+    // "Job Application for Senior Software Engineer, Helios at SingleStore-LinkedIn"
+    // but the generic `\bat\s+([A-Z][\w& .]+)$` pattern rejected the hyphen, so company
+    // came back empty. Prefer the title's "at {Company}", then the board-token path.
+    if (/(^|\.)greenhouse\.io$/i.test(location.hostname || "")) {
+      const fromGhTitle = companyFromGreenhouseTitle(document.title || "");
+      if (fromGhTitle) return fromGhTitle;
+      const logoAlt = greenhouseLogoAltCompany();
+      if (logoAlt) return logoAlt;
+      const fromPath = companyFromGreenhousePath();
+      if (fromPath) return fromPath;
+    }
     // 3. og:site_name meta tag.
     const ogSite = document.querySelector('meta[property="og:site_name"]');
     if (ogSite && ogSite.content && ogSite.content.trim()) return ogSite.content.trim();
@@ -1758,11 +1813,13 @@ function extractPageInfo() {
       if (text && text.length < 100) return text;
     }
     // 5. Page title patterns like "Job Title at Company" or "Company - Job Title".
+    // Include hyphen / apostrophe — Greenhouse (and others) use "at SingleStore-LinkedIn",
+    // "at Third-Party Job Posts", "O'Reilly". The old `[\w& .]` class silently dropped those.
     const title = document.title || "";
-    let m = title.match(/\bat\s+([A-Z][\w& .]{1,40})$/);
-    if (m) return m[1].trim();
-    m = title.match(/^([A-Z][\w& .]{1,40})\s*[-|]/);
-    if (m) return m[1].trim();
+    let m = title.match(/\bat\s+([A-Z][\w& .'-]{1,60})$/);
+    if (m) return tidyExtractedCompanyName(m[1].trim());
+    m = title.match(/^([A-Z][\w& .'-]{1,60})\s*[-|]/);
+    if (m) return tidyExtractedCompanyName(m[1].trim());
     // 6. Last resort: derive from the page's own domain — only meaningful when the
     // company hosts the posting themselves, not on a third-party ATS's own domain
     // (which would otherwise just give back "Greenhouse", "Lever", etc).

@@ -3453,6 +3453,14 @@ unverified outside a live browser).
       languages / LGBTQ voluntary survey; optional affiliation follow-ups.
     - **ZAR**: add FX + `currencyCodeFromLabel("(ZAR)")` for salary coerce. Not yet confirmed live.
 
+140. **Greenhouse job-boards company extract empty (SingleStore, 20260814T051728Z).**
+    `Author: Cursor`. Capture `job-boards-greenhouse-io-20260814T051728Z`. Page
+    [job-boards.greenhouse.io/singlestore-linkedin/jobs/8080307](https://job-boards.greenhouse.io/singlestore-linkedin/jobs/8080307?gh_src=dnsf4q051us):
+    no JSON-LD hiringOrganization, no og:site_name; domain fallback skips greenhouse.io.
+    `<title>` is "Job Application for … at SingleStore-LinkedIn" but `\bat\s+([A-Z][\w& .]+)$`
+    rejected the hyphen. Fixed: Greenhouse title/logo-alt/path extract (strip `-LinkedIn`
+    board suffix); generic "at Company" class now allows hyphen/apostrophe. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
