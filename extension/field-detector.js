@@ -568,10 +568,25 @@ function resolveOwnLabel(element, host) {
   if (pinpointOwn) return pinpointOwn;
   const parentLabel = element.closest ? element.closest("label") : null;
   if (parentLabel && cleanedText(parentLabel)) {
+    // Lever EEO: <label><div class="application-label">Gender</div><select>…all options…</select>
+    // — cleanedText(label) concatenated "GenderSelect ...MaleFemaleDecline…"
+    // (jobs-lever-co-20260813T202607Z). Prefer the dedicated application-label node.
+    const leverAppLab = parentLabel.querySelector && parentLabel.querySelector(".application-label");
+    if (leverAppLab && cleanedText(leverAppLab)) return cleanedText(leverAppLab);
     const parentText = cleanedText(parentLabel);
     const ownValue = (element.value || "").trim();
     if (!(ownValue && parentText.includes(ownValue) && parentText.length > ownValue.length + 20)) {
-      return parentText;
+      // If a wrapping label's text is mostly <select> option soup, ignore it.
+      if (
+        element.tagName === "SELECT" &&
+        parentLabel.querySelector("select") === element &&
+        parentText.length > 40 &&
+        /select\s*\.\.\./i.test(parentText)
+      ) {
+        /* fall through */
+      } else {
+        return parentText;
+      }
     }
   }
   // <fieldset><legend> is the standard, authoritative way to associate a label with a group of
@@ -1402,6 +1417,35 @@ function collectRadioCheckboxGroups() {
       const hibobLab = hibobQ && hibobQ.querySelector(":scope > .label, .label");
       if (hibobLab && cleanedText(hibobLab)) groupLabel = cleanedText(hibobLab);
     }
+    // Lever: shared-name Yes/No (and multi-select) checkboxes sit under
+    // `.application-question` with the real question in `.application-label` — no fieldset /
+    // role="group". Name is `cards[uuid][fieldN]` (brackets excluded by the name fallback
+    // above), so every option used to fall through as a lone checkbox labeled "Yes"/"No"
+    // and Autofill checked BOTH (jobs-lever-co-20260813T202607Z Lyra).
+    if (!groupLabel) {
+      const leverQ =
+        els[0].closest &&
+        els[0].closest(
+          "li.application-question, .application-question, .custom-question, [data-qa='candidatePronounsCheckboxes']"
+        );
+      let leverLab =
+        leverQ && leverQ.querySelector(".application-label, .application-label .text, .text");
+      // Pronouns: label is a preceding sibling of the checkbox list, not inside the ul.
+      if (!leverLab && els[0].closest) {
+        const pronounsUl = els[0].closest("#candidatePronounsCheckboxes, [data-qa='candidatePronounsCheckboxes']");
+        const field = pronounsUl && pronounsUl.closest(".application-field, .application-question, label, li");
+        leverLab =
+          (field && field.querySelector(".application-label")) ||
+          (field && field.previousElementSibling && field.previousElementSibling.classList &&
+            field.previousElementSibling.classList.contains("application-label") &&
+            field.previousElementSibling) ||
+          (pronounsUl &&
+            pronounsUl.parentElement &&
+            pronounsUl.parentElement.parentElement &&
+            pronounsUl.parentElement.parentElement.querySelector(".application-label"));
+      }
+      if (leverLab && cleanedText(leverLab)) groupLabel = cleanedText(leverLab);
+    }
     if (!groupLabel) continue; // no real group question found — leave these to be handled individually
     groups.push({
       kind: els[0].type === "checkbox" ? "checkbox-group" : "radio-group",
@@ -1802,7 +1846,13 @@ var FX_TO_USD = {
   JPY: 0.0067,
   SGD: 0.74,
   AED: 0.27,
+  ZAR: 0.055,
 };
+
+function currencyCodeFromLabel(label) {
+  const m = String(label || "").match(/\(\s*(USD|EUR|GBP|INR|PLN|AUD|CAD|CHF|JPY|SGD|AED|ZAR|RON|CZK|HUF|SEK|NOK|DKK|CHF)\s*\)/i);
+  return m ? m[1].toUpperCase() : null;
+}
 
 function convertCurrencyAmount(amount, fromCode, toCode) {
   const from = String(fromCode || "").toUpperCase();
@@ -1817,7 +1867,7 @@ function convertCurrencyAmount(amount, fromCode, toCode) {
 function parseSalaryBlob(text) {
   const s = String(text || "").trim();
   if (!s) return null;
-  const currencyMatch = s.match(/\b(USD|EUR|GBP|INR|PLN|AUD|CAD|CHF|JPY|SGD|AED)\b|(?:^|[\s])([€£$₹])/i);
+  const currencyMatch = s.match(/\b(USD|EUR|GBP|INR|PLN|AUD|CAD|CHF|JPY|SGD|AED|ZAR|RON|CZK|HUF|SEK|NOK|DKK)\b|(?:^|[\s])([€£$₹])/i);
   let currency = null;
   if (currencyMatch) {
     currency = (currencyMatch[1] || "").toUpperCase() || null;
@@ -1908,7 +1958,7 @@ function coerceAnswerForField(label, element, answer) {
     else if (wantPeriod === "year" && parsed.period === "hour") amount = Math.round(amount * 2080);
     else if (wantPeriod === "month" && parsed.period === "hour") amount = Math.round(amount * 160);
 
-    const targetCur = fieldCurrencyCode(element);
+    const targetCur = fieldCurrencyCode(element) || currencyCodeFromLabel(label);
     if (targetCur && parsed.currency && targetCur !== parsed.currency) {
       amount = convertCurrencyAmount(amount, parsed.currency, targetCur);
     }

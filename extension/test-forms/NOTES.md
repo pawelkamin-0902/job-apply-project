@@ -3435,6 +3435,24 @@ unverified outside a live browser).
     - **Text**: Workday `nativeSet` uses execCommand/insertText + char-by-char; gpt-fill
       retries once if value didn't stick. Not yet confirmed live.
 
+139. **Lever Lyra (20260813T202607Z): Yes+No both checked, option labels as questions,
+    EEO flood, ZAR salary.** `Author: Cursor`. Capture `jobs-lever-co-20260813T202607Z`.
+    `groups=0` / `loneCheckboxes=78`: shared-name Lever checkboxes under
+    `.application-question` never got a group label (no fieldset; `cards[…]` names
+    excluded), so each option was a lone field labeled "Yes"/"No"/"Gender non-conforming".
+    Autofill QA-matched and checked both Yes and No; consent path checked "No"; optional
+    pronouns/languages/EEO flooded "need your input"; Gender select label became
+    "GenderSelect ...MaleFemale…".
+    - **Group**: resolve Lever `.application-label` in `collectRadioCheckboxGroups`.
+    - **Labels**: prefer `.application-label` inside wrapping `<label>` (not select option soup).
+    - **Lone checkbox**: never auto-check Yes/No or `.options-list` rows as "required consent";
+      skip optional demographics / option-only unmatched noise.
+    - **Yes/No checkboxes**: after pick, uncheck the other; affiliate employee → No;
+      authorised/located for other countries → No; sponsorship → No.
+    - **Skip**: pronouns, `eeo[*]`, `surveysResponses[*]`, gender identity / sexuality /
+      languages / LGBTQ voluntary survey; optional affiliation follow-ups.
+    - **ZAR**: add FX + `currencyCodeFromLabel("(ZAR)")` for salary coerce. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

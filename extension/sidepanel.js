@@ -2567,6 +2567,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       return true;
     }
+    // Never treat bare Yes/No (or other MCQ option rows) as "required consent" just because
+    // the parent Lever question is required — when grouping misses `.application-label`,
+    // Autofill checked BOTH Yes and No (jobs-lever-co-20260813T202607Z).
+    if (/^(yes|no)$/i.test(String(label || "").trim())) return false;
+    if (
+      element &&
+      element.closest &&
+      element.closest("ul.options-list, .options-list, .application-answer, #candidatePronounsCheckboxes")
+    ) {
+      return false;
+    }
     // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
     // "required acknowledgement, tick it" rule. Optional newsletter boxes stay untouched.
     return typeof isRequiredField === "function" && isRequiredField(element, element);
@@ -3014,6 +3025,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const name = (element && element.name) || "";
     if (/equality_monitoring/i.test(`${id} ${name}`)) return true;
     if (element && element.closest && element.closest("[id*='Equalitymonitoring']")) return true;
+    // Lever voluntary EEO + diversity survey (jobs-lever-co-20260813T202607Z).
+    if (/^eeo\[/i.test(name) || /^surveysResponses\[/i.test(name) || /^pronouns$/i.test(name)) return true;
+    if (element && element.closest && element.closest("#candidatePronounsCheckboxes, [data-qa='candidatePronounsCheckboxes']")) {
+      return true;
+    }
     const cat = detectCategory(label || "");
     if (
       cat === "gender" ||
@@ -3025,7 +3041,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     // Optional disability self-ID under EEO (not required Disability Confident screening).
     if (cat === "disability_status") return true;
-    if (/\b(sexuality|sexual orientation|religion or belief|age bracket|pronouns)\b/i.test(label || "")) {
+    if (
+      /\b(sexuality|sexual orientation|gender identity|religion or belief|age bracket|pronouns?)\b/i.test(
+        label || ""
+      ) ||
+      /\bfluent in any of the following languages\b|\bidentify as lgbtq/i.test(label || "") ||
+      /^(he\/him|she\/her|they\/them|prefer not to answer)$/i.test(String(label || "").trim())
+    ) {
       return true;
     }
     return false;
@@ -3695,6 +3717,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         // so there's no second toggle left to undo it (see its own comment for why it's needed
         // at all, over a plain assignment).
         nativeSetChecked(el, true);
+      }
+    }
+    // Lever (and similar) Yes/No use checkboxes with a shared name — both can stay checked.
+    // After picking Yes, explicitly clear No (and vice versa)
+    // (jobs-lever-co-20260813T202607Z had both filled when grouping was broken).
+    if (el && (el.type || "").toLowerCase() === "checkbox") {
+      const yesNoOpts = options.filter((o) => /^(yes|no)$/i.test(String(o.optionLabel || "").trim()));
+      if (yesNoOpts.length === 2) {
+        for (const o of options) {
+          if (!o.element || o.element === el) continue;
+          if ((o.element.type || "").toLowerCase() !== "checkbox") continue;
+          if (!/^(yes|no)$/i.test(String(o.optionLabel || "").trim())) continue;
+          if (o.element.checked) nativeSetChecked(o.element, false);
+        }
       }
     }
     return true;
@@ -6978,7 +7014,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   function inferEligibleToWorkYesNo(label) {
     const raw = String(label || "");
-    if (!/eligible to work|authori[sz]ed to work/i.test(raw)) return null;
+    if (!/eligible to work|authori[sz]ed to work|entitled to work/i.test(raw)) return null;
     const country = String((profile && profile.contact && profile.contact.country) || "").toLowerCase();
     if (!country) return null;
     // EU member residence → Yes for "eligible to work in the EU?" — not Poland-only
@@ -6990,8 +7026,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const inEu = /\b(the\s+)?(eu|e\.u\.|europe|european union)\b/i.test(raw);
     if (inEu && euCountry) return "Yes";
     const place = (raw.match(/\b(?:in|for)\s+(?:the\s+)?([A-Za-z][A-Za-z\s.-]{1,40}?)(?:\s*\(|\s*\?|$)/i) || [])[1];
-    if (place && (country.includes(place.trim().toLowerCase()) || place.trim().toLowerCase().includes(country))) {
-      return "Yes";
+    if (place) {
+      const asked = place.trim().toLowerCase();
+      if (country.includes(asked) || asked.includes(country)) return "Yes";
+      // Different country named in the question (e.g. South Africa vs Poland profile) → No
+      // (jobs-lever-co-20260813T202607Z Lyra).
+      if (asked.length >= 4) return "No";
     }
     return null;
   }
@@ -7029,6 +7069,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   if (!onlyPhoneCountry) {
   for (const group of groups) {
+    if (shouldSkipOptionalDemographic(group.label, group.options[0] && group.options[0].element, group.options[0] && group.options[0].element)) {
+      continue;
+    }
+    // Lever optional follow-ups after "employee of Lyra…?" (affiliation / "if other") —
+    // leave blank when answering No to the parent (jobs-lever-co-20260813T202607Z).
+    if (
+      /if yes to the previous question|select your affiliation|if you selected .other|internal mobility policy/i.test(
+        group.label || ""
+      )
+    ) {
+      continue;
+    }
     // Privacy/terms consent: auto-agree when a Yes/Agree-style option exists.
     if (isConsentField(group.label)) {
       const consentPick =
@@ -7102,7 +7154,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         detectCategory(group.label) === "worked_here_before" ||
         detectCategory(group.label) === "currently_employed_here" ||
         detectCategory(group.label) === "familiar_with_employer" ||
-        detectCategory(group.label) === "lived_abroad") &&
+        detectCategory(group.label) === "lived_abroad" ||
+        /employee of .{0,60}affiliated|currently or previously\)\s*\?/i.test(group.label) ||
+        /are you an employee of\b/i.test(group.label)) &&
       optionLabels.some((t) => /^no$/i.test(String(t).trim()))
     ) {
       if (clickGroupOption(group.options, "No")) {
@@ -7133,6 +7187,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (eligiblePick && clickGroupOption(group.options, eligiblePick)) {
         filled.push({ label: group.label, value: eligiblePick, source: "profile" });
         continue;
+      }
+      if (
+        detectCategory(group.label) === "requires_sponsorship" &&
+        optionLabels.some((t) => /^no$/i.test(String(t).trim()))
+      ) {
+        if (clickGroupOption(group.options, "No")) {
+          filled.push({ label: group.label, value: "No", source: "default" });
+          continue;
+        }
       }
       // Language fluency Yes/No — don't leave for GPT (spl-radio gpt-fill Illegal invocation
       // on jobs-smartrecruiters-com-20260813T184723Z English/Dutch).
@@ -8349,6 +8412,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (element.getAttribute("tabindex") === "-1" && !hibobControl) continue;
     if (workExpTouched.has(element)) continue;
     const label = labelForElement(element, element);
+    if (shouldSkipOptionalDemographic(label, element, element)) continue;
+    // Bare option labels ("Yes"/"No"/"He/him"/languages) are not questions — never QA-match
+    // or report them as needing input (jobs-lever-co-20260813T202607Z).
+    if (
+      /^(yes|no)$/i.test(String(label || "").trim()) ||
+      (element.closest &&
+        element.closest("ul.options-list, .options-list, .application-answer") &&
+        !isConsentField(label))
+    ) {
+      continue;
+    }
     if (shouldAutoCheckLoneCheckbox(element, label)) {
       // Phenom (and similar) bind via a wrapping <label> + custom `ischecked` attribute, not
       // a plain `.checked` write. Click the label first (same as grouped options); then
