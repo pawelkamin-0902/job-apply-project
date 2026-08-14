@@ -5519,6 +5519,36 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       {
         const visible = liveOptions();
         if (visible.length && !matchOption(visible)) {
+          // Greenhouse School/Company lists render one page (~100) of thousands, so "not on
+          // this page" says nothing about whether the option exists — only typing narrows it
+          // (singlestore GH 20260814T080943Z: School "University of Helsinki" was declared a
+          // no-match against page 1). Short lists (Yes/No, OFCCP wording) really have no
+          // match, so they keep returning immediately instead of paying for a search.
+          if (visible.length >= 25 && /[a-z]/i.test(desiredText) && element.tagName === "INPUT") {
+            nativeSet(element, desiredText);
+            let typedMatch = null;
+            for (let poll = 0; poll < 10 && !typedMatch; poll++) {
+              await new Promise((resolve) => setTimeout(resolve, 120));
+              typedMatch = matchOption(liveOptions());
+            }
+            if (typedMatch && (await commitComboboxOption(typedMatch, control || element))) {
+              await new Promise((resolve) => setTimeout(resolve, 350));
+              const displayAfterSearch = reactSelectDisplayValue(element);
+              if (
+                comboboxValueCommitted(element, desiredText) ||
+                (displayAfterSearch &&
+                  !isGenericSelectPlaceholder(displayAfterSearch) &&
+                  answerCouldMatchOptions(desiredText, [displayAfterSearch]))
+              ) {
+                console.info(`${tag} tier 2b type-to-search -> COMMITTED (display="${displayAfterSearch}")`);
+                await dismissOpenGreenhouseComboboxes(element);
+                watchComboboxDisplay(element, `after tier-2b commit "${desiredText}"`);
+                return true;
+              }
+            }
+            // Leave no typed query behind — a stuck filter looks like a half-filled field.
+            nativeSet(element, "");
+          }
           console.info(
             `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
           );
@@ -8269,6 +8299,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           }
         }
         if (comboboxDone) continue;
+        // Optional picker we couldn't commit — the applicant can leave it blank, so asking
+        // them for it (and letting the AI option-pick loose on a 100-entry school list) is
+        // worse than saying nothing. singlestore GH 20260814T080943Z: optional School
+        // (aria-required="false") was reported because a QA answer matched none of the
+        // rendered options.
+        if (!isRequiredField(element, host)) {
+          comboboxTrace(element, `skip optional combobox - no committed pick`, {
+            optionCount: optionLabels.length,
+          });
+          continue;
+        }
         const idx = stampIdx(element, label);
         unmatched.push({
           idx,
@@ -8358,12 +8399,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (isFreeText && !fieldRequired && !qaAnswerUsable && (!structured.isStructuredCategory || !structuredValue)) {
       continue;
     }
-    if (
-      looksLikeComboboxPick(element) &&
-      !fieldRequired &&
-      !qaAnswerUsable &&
-      !isLocationAutocompleteField
-    ) {
+    // Same for an optional picker whose QA answer was tried and didn't commit: the attempt
+    // was worth making, reporting the failure is not (singlestore GH 20260814T080943Z).
+    if (looksLikeComboboxPick(element) && !fieldRequired && !isLocationAutocompleteField) {
       continue;
     }
     const gptBatchEligible =
@@ -10337,6 +10375,36 @@ async function fillGeneratedAnswersInPage(answers) {
       {
         const visible = liveOptions();
         if (visible.length && !matchOption(visible)) {
+          // Greenhouse School/Company lists render one page (~100) of thousands, so "not on
+          // this page" says nothing about whether the option exists — only typing narrows it
+          // (singlestore GH 20260814T080943Z: School "University of Helsinki" was declared a
+          // no-match against page 1). Short lists (Yes/No, OFCCP wording) really have no
+          // match, so they keep returning immediately instead of paying for a search.
+          if (visible.length >= 25 && /[a-z]/i.test(desiredText) && element.tagName === "INPUT") {
+            nativeSet(element, desiredText);
+            let typedMatch = null;
+            for (let poll = 0; poll < 10 && !typedMatch; poll++) {
+              await new Promise((resolve) => setTimeout(resolve, 120));
+              typedMatch = matchOption(liveOptions());
+            }
+            if (typedMatch && (await commitComboboxOption(typedMatch, control || element))) {
+              await new Promise((resolve) => setTimeout(resolve, 350));
+              const displayAfterSearch = reactSelectDisplayValue(element);
+              if (
+                comboboxValueCommitted(element, desiredText) ||
+                (displayAfterSearch &&
+                  !isGenericSelectPlaceholder(displayAfterSearch) &&
+                  answerCouldMatchOptions(desiredText, [displayAfterSearch]))
+              ) {
+                console.info(`${tag} tier 2b type-to-search -> COMMITTED (display="${displayAfterSearch}")`);
+                await dismissOpenGreenhouseComboboxes(element);
+                watchComboboxDisplay(element, `after tier-2b commit "${desiredText}"`);
+                return true;
+              }
+            }
+            // Leave no typed query behind — a stuck filter looks like a half-filled field.
+            nativeSet(element, "");
+          }
           console.info(
             `${tag} tier 3 keyboard-nav skipped - "${desiredText}" matches none of ${visible.length} visible option(s)`
           );

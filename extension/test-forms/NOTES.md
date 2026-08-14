@@ -3493,6 +3493,26 @@ unverified outside a live browser).
     Not yet confirmed live. Note `tools/simulate-autofill.js` is a stale verbatim mirror
     (its website pattern still predates finding 132), so it cannot verify either fix.
 
+143. **Optional Greenhouse fields reported as "need your input" (SingleStore
+    20260814T080943Z).** `Author: Cursor`. Capture `job-boards-greenhouse-io-20260814T080943Z`.
+    Both reported fields are explicitly optional in the page — School is
+    `aria-required="false"` with a plain "School" label, Website is a custom question with no
+    asterisk — yet Auto Fill asked the applicant for them.
+    - **School**: the combobox discovery branch pushed `unmatched` whenever no pick committed,
+      with no required check (the optional-skip above it only applies when there is *no*
+      usable QA answer, and there was one: "University of Helsinki"). Fixed: an optional
+      picker with no committed pick is skipped silently, and the end-of-loop combobox guard
+      no longer reports optional pickers just because a QA answer was tried.
+    - Why the pick failed at all: Greenhouse renders one page of ~100 schools out of
+      thousands, so tier 2 saw no match and the "no-match" sentinel returned before anything
+      typed the query. Added tier 2b: when the list is large (≥25 rendered) and the desired
+      text matches nothing on the page, type it, poll ~1.2s for the filtered option, commit
+      it, and clear the query if it never appears. Short lists (Yes/No, OFCCP disability
+      wording) still bail immediately, which is what finding on Cloudbeds asked for.
+    - **Website**: same shape as finding 142's Website URL, already covered by the
+      optional-structured-null skip added there.
+    Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
