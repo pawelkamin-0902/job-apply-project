@@ -3597,6 +3597,34 @@ unverified outside a live browser).
     consent labels that got *more* accurate, and no capture in the corpus has a required lone
     radio left for the new guard to change. Not yet confirmed live.
 
+147. **Breezy SkySpecs (20260814T131823Z): grouping now worked, but three answers were still
+    wrong.** `Author: Cursor`. Capture `skyspecs-breezy-hr-20260814T131823Z`. After finding 146
+    the four screening questions and the EEO block grouped correctly, yet:
+    - A saved QA "7+ years" ticked **5-6 Years**. `wordOverlapScore` drops tokens of 2
+      characters or less, so both sides reduce to `{years}` and score 1.0 — every "N years"
+      answer lands on whichever bucket comes first. The form's options are 5-6 / 4-5 / 2-4;
+      7+ is not among them.
+    - The EEO radios were forced to "I don't wish to answer" even though the QA bank already
+      held White / Male / Not a veteran / No disability. Finding 146's decline default ran
+      *before* `matchQaBank`.
+    - "Have you worked on data pipelines…?" ticked **both** "Yes – designed & owned" and
+      "Yes – contributed". GPT returned "Yes, contributed"; `fillGeneratedAnswersInPage`
+      splits checkbox-group answers on commas, so "Yes" matched the first option and
+      "contributed" the second.
+    Fixed: `clickGroupOption` refuses a fuzzy match when both the desired answer and the
+    option name numbers and share none of them; required EEO groups now apply a saved QA
+    answer (via `coerceDemographicSelectAnswer`, then prefix match so "White" maps onto
+    "White (not Hispanic or Latino)") and only decline when nothing is saved; GPT matches a
+    checkbox option as a whole (punctuation-insensitive) before splitting, and a group that
+    offers a lone No/None is treated as pick-one so a leftover tick is cleared.
+    Years-of-experience checkbox groups now use the existing `pickExperienceYearsOption`
+    helper (previously combobox-only), so 10 years of profile history maps onto this form's
+    highest bucket (5-6 Years) instead of a leftover "7+" from another posting. Small
+    enumerated groups (2–8 options) are GPT-eligible so comfort-level isn't left blank.
+    Verified offline: "Yes, contributed" now ticks only that option (the previous code
+    double-ticked); EEO follows the QA bank when present and declines when not. Not yet
+    confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

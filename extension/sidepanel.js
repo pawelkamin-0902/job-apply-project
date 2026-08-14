@@ -3768,8 +3768,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (!best && /^(yes|true|y)$/i.test(target)) best = options.find((o) => /^yes$/i.test(norm(o.optionLabel)));
     if (!best && /^(no|false|n)$/i.test(target)) best = options.find((o) => /^no$/i.test(norm(o.optionLabel)));
     if (!best) {
+      // Numbers carry the whole meaning of a bucket answer, and wordOverlapScore drops tokens
+      // of 2 characters or less — so "7+ years" vs "5-6 Years" compares {years} against
+      // {years} and scores a perfect 1.0, handing every "N years" answer to whichever bucket
+      // happens to come first. Confirmed live skyspecs-breezy-hr-20260814T131823Z: a saved
+      // "7+ years" ticked "5-6 Years" out of [5-6, 4-5, 2-4]. When both sides name numbers
+      // and share none, they are different answers — leave it for a real option pick.
+      const numsIn = (s) => (String(s || "").match(/\d+/g) || []);
+      const wantNums = numsIn(desiredText);
       let bestScore = 0;
       for (const o of options) {
+        const optNums = numsIn(o.optionLabel);
+        if (wantNums.length && optNums.length && !optNums.some((n) => wantNums.includes(n))) continue;
         const score = wordOverlapScore(o.optionLabel, desiredText);
         if (score > bestScore) {
           bestScore = score;
@@ -7275,9 +7285,28 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // had instead ticked the first option of each: White / Male / protected veteran).
       const demoEl = group.options[0] && group.options[0].element;
       if (demoEl && typeof isRequiredField === "function" && isRequiredField(demoEl, demoEl)) {
+        const demoOptions = group.options.map((o) => o.optionLabel).filter(Boolean);
+        // The applicant's own saved answer comes first: they already told a previous form
+        // their race / gender / veteran status, and declining here would silently replace it
+        // (skyspecs-breezy-hr-20260814T131823Z answered "I don't wish to answer" four times
+        // over a QA bank holding White / Male / Not a veteran / No disability).
+        const demoQa = typeof matchQaBank === "function" ? matchQaBank(group.label) : null;
+        const demoAnswer = demoQa && demoQa.answer;
+        const demoPick =
+          demoAnswer &&
+          ((typeof coerceDemographicSelectAnswer === "function" &&
+            coerceDemographicSelectAnswer(demoAnswer, demoOptions)) ||
+            demoOptions.find((t) => String(t).toLowerCase().trim() === String(demoAnswer).toLowerCase().trim()) ||
+            // "White" → "White (not Hispanic or Latino)", "Male" → "Male".
+            demoOptions.find((t) => String(t).toLowerCase().trim().startsWith(String(demoAnswer).toLowerCase().trim())));
+        if (demoPick && clickGroupOption(group.options, demoPick)) {
+          filled.push({ label: group.label, value: demoPick, source: "learned" });
+          continue;
+        }
+        // Nothing saved: pick the explicit non-disclosure option rather than invent one.
         const declineRe =
           /don'?t wish to answer|do not (wish|want) to answer|prefer not to (answer|say)|decline to (self-?identify|answer)|choose not to (self-?identify|answer)/i;
-        const decline = group.options.map((o) => o.optionLabel).find((t) => declineRe.test(String(t || "")));
+        const decline = demoOptions.find((t) => declineRe.test(String(t || "")));
         if (decline && clickGroupOption(group.options, decline)) {
           filled.push({ label: group.label, value: decline, source: "default" });
           continue;
@@ -7353,6 +7382,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       if (clickGroupOption(group.options, "No")) {
         filled.push({ label: group.label, value: "No", source: "default" });
+        continue;
+      }
+    }
+    if (detectCategory(group.label) === "years_experience") {
+      const total = computeTotalYearsExperience();
+      const bucket = pickExperienceYearsOption(total, optionLabels);
+      if (bucket && clickGroupOption(group.options, bucket)) {
+        filled.push({ label: group.label, value: bucket, source: "profile" });
         continue;
       }
     }
@@ -7451,15 +7488,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (optionLabels.length > 1 && group.options[0] && group.options[0].element) {
       const idx = stampIdx(group.options[0].element, group.label);
       const yesNoGroup = optionLabels.some((t) => /^(yes|no)$/i.test(String(t).trim()));
+      // Small enumerated buckets (Breezy years / comfort, Ashby 1/2/3/4/5+) are pick-one
+      // questions the form happens to render as checkboxes — GPT can choose among them.
+      // A 20-item "select all that apply" skills list is not that and stays out of the batch.
+      const smallEnum = optionLabels.length >= 2 && optionLabels.length <= 8;
+      const exclusiveNo = optionLabels.some((t) => /^(no|none( of the above)?)$/i.test(String(t).trim()));
       unmatched.push({
         idx,
         label: group.label,
         type: group.kind,
-        canGenerate: yesNoGroup,
-        gptBatchEligible: yesNoGroup,
+        canGenerate: yesNoGroup || smallEnum,
+        gptBatchEligible: yesNoGroup || smallEnum,
         options: optionLabels,
-        // checkbox-group = select-all-that-apply; radio/button = single pick.
-        multi: group.kind === "checkbox-group",
+        // checkbox-group = select-all-that-apply unless it offers a lone No/None, which is
+        // a pick-one question wearing checkboxes (Breezy ETL / REST / years).
+        multi: group.kind === "checkbox-group" && !exclusiveNo,
       });
       continue;
     }
@@ -11412,12 +11455,28 @@ async function fillGeneratedAnswersInPage(answers) {
         }
         return (typeof labelForElement === "function" ? labelForElement(p, p) : "") || "";
       };
+      // Match the answer as a whole before splitting it on commas: an option like
+      // "Yes – contributed" comes back from the model as "Yes, contributed", and splitting
+      // that turned one answer into two ticks — "Yes – designed & owned" (matched by "Yes")
+      // plus "Yes – contributed" — two contradictory answers to one question
+      // (skyspecs-breezy-hr-20260814T131823Z). Punctuation-insensitive so the dash, the comma
+      // and the ampersand spacing don't have to agree.
+      const normOpt = (s) =>
+        String(s || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      const wholePeer = peers.find((p) => normOpt(labelOf(p)) === normOpt(value));
       const parts = String(value)
         .split(/[,;]/)
         .map((s) => s.trim())
         .filter(Boolean);
-      const targets = parts.length ? parts : [String(value).trim()];
+      const targets = wholePeer ? [labelOf(wholePeer)] : parts.length ? parts : [String(value).trim()];
       let any = false;
+      const picked = [];
+      console.info(
+        `[Auto Fill][gpt-fill] idx=${idx} ${inputType}-group "${label}" -> "${String(value).slice(0, 80)}"`
+      );
       for (const targetRaw of targets) {
         const target = targetRaw.toLowerCase();
         let peer =
@@ -11447,7 +11506,21 @@ async function fillGeneratedAnswersInPage(answers) {
           if (peer.tagName === "SPL-RADIO") peer.click();
           else if (peerLabel) peerLabel.click();
           else nativeSetChecked(peer, true);
+          picked.push(peer);
           any = true;
+        }
+      }
+      // Checkboxes that offer a plain "No" / "None of the above" are a pick-one question the
+      // form happens to render as checkboxes (Breezy: "Yes – designed & owned | Yes –
+      // contributed | No"), unlike a real "select all that apply" skills list. Clear anything
+      // else left ticked so the answer can't read as two contradictory ones.
+      if (inputType === "checkbox" && picked.length === 1) {
+        const exclusive = peers.some((p) => /^(no|none( of the above)?)$/i.test(labelOf(p).trim()));
+        if (exclusive) {
+          for (const p of peers) {
+            if (p === picked[0] || !p.checked) continue;
+            nativeSetChecked(p, false);
+          }
         }
       }
       if (!any) ok = false;
