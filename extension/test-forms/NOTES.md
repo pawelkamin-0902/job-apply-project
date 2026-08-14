@@ -3513,6 +3513,36 @@ unverified outside a live browser).
       optional-structured-null skip added there.
     Not yet confirmed live.
 
+144. **Ashby Snowflake (20260814T081324Z): Yes/No answers stay visibly selected but Submit
+    reports them missing.** `Author: Cursor`. Capture `jobs-ashbyhq-com-20260814T081324Z`.
+    All three Yes/No questions (sponsorship, worked-at-Snowflake, currently authorized) were
+    filled and the captured DOM still shows the right option carrying `_active_1svni_57`,
+    yet Submit answered "Missing entry for required field" for exactly those three.
+    Read Ashby's own bundle (`cdn.ashbyprd.com/frontend_non_user/27c39d9…/assets/index-BfZujDTE.js`)
+    to settle what that means:
+    - The Yes/No widget is **controlled**: `active` is derived from the parent's value, so
+      the class proves our click reached React state. Its parent (`yEe`) saves in a
+      `useEffect` on that value with an `ApiSetFormValue` mutation — no debounce, one
+      request per answer, and `onError` swallows both network errors and Ashby's own
+      GraphQL errors, so a failed save is completely silent.
+    - `ApiSubmitSingleApplicationFormAction` sends **no field values at all** (just the
+      org/posting/formRender/action ids + recaptcha token) — Submit validates whatever those
+      per-field mutations stored server-side. Local state looking right is therefore no
+      evidence the answer exists.
+    The groups loop was fully synchronous, so three of those saves went out in the same tick
+    (and the post-fill text settle re-saved every input 80ms apart, another burst) — each
+    mutation returns the whole form render, so overlapping saves are exactly the shape that
+    loses answers. The text fields survived because finding 141 had already spaced them out.
+    Fixed: Ashby group clicks are paced (650ms after any group that filled, plus one settle
+    before the singles loop), the post-fill re-save gap went 80ms → 250ms, gpt-fill waits
+    650ms after clicking a button-group option, and a post-fill recovery pass re-applies any
+    Ashby button group that ended up with *nothing* selected — never one that is already
+    active, since Ashby's handler toggles (`t===true ? undefined : true`), so re-clicking a
+    selected option would clear it. Also stopped stamping `type="submit"` onto Ashby's bare
+    Yes/No buttons: `el.type` reads "submit" when the attribute is absent, so restoring
+    through the property added an attribute that was never in the markup — the capture shows
+    it on precisely the buttons we clicked. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

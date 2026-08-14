@@ -3740,18 +3740,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         : [];
       const isYesNoPair =
         siblingLabels.length === 2 && siblingLabels.includes("yes") && siblingLabels.includes("no");
-      const savedType = el.type;
-      if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+      // `el.type` reads "submit" even with no type attribute (that's the default), so
+      // restoring through the property stamps an explicit type="submit" onto markup that
+      // never had one — Ashby's Yes/No buttons are bare <button>s. Restore the attribute.
+      const hadTypeAttr = el.hasAttribute("type");
+      const savedTypeAttr = hadTypeAttr ? el.getAttribute("type") : null;
+      const neutralizeSubmit = isYesNoPair && (el.type === "submit" || el.type === "reset");
+      if (neutralizeSubmit) {
         try {
-          el.type = "button";
+          el.setAttribute("type", "button");
         } catch {
           /* ignore */
         }
       }
       el.click();
-      if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+      if (neutralizeSubmit) {
         try {
-          el.type = savedType;
+          if (hadTypeAttr) el.setAttribute("type", savedTypeAttr);
+          else el.removeAttribute("type");
         } catch {
           /* ignore */
         }
@@ -7193,8 +7199,26 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     await fillWorkdayExperienceFromProfile(filled, workExpTouched);
   }
 
+  // Ashby persists every answer with its own ApiSetFormValue mutation (verified in Ashby's
+  // own bundle: the Yes/No widget is controlled, and its parent fires the mutation from a
+  // useEffect on the value, with all errors silently swallowed). Submit sends no values at
+  // all — the server validates what those mutations stored. Clicking several Yes/No groups
+  // in the same tick fires them concurrently, and Snowflake 20260814T081324Z came back with
+  // all three Yes/No answers visibly selected (the active class is React state) but
+  // "Missing entry for required field" for exactly those three. Pace the clicks so each
+  // save round-trips before the next one starts.
+  const onAshbyForm = /(^|\.)ashbyhq\.com$/i.test(location.hostname || "");
+  const ASHBY_SAVE_MS = 650;
+  let ashbyFilledMark = filled.length;
+  const ashbySettle = async () => {
+    if (!onAshbyForm || filled.length === ashbyFilledMark) return;
+    ashbyFilledMark = filled.length;
+    await new Promise((resolve) => setTimeout(resolve, ASHBY_SAVE_MS));
+  };
+
   if (!onlyPhoneCountry) {
   for (const group of groups) {
+    await ashbySettle();
     if (shouldSkipOptionalDemographic(group.label, group.options[0] && group.options[0].element, group.options[0] && group.options[0].element)) {
       continue;
     }
@@ -7373,6 +7397,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     unmatched.push({ label: group.label, type: group.kind, canGenerate: false });
   }
   }
+  // Let the last group's save land before the text fields start saving over the same form.
+  await ashbySettle();
 
   for (let { element, host } of singles) {
     if (onlyPhoneCountry && !isPhoneDialCodePicker(element)) continue;
@@ -8635,8 +8661,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // ScorePlay 20260814T053828Z: a bare second focus/blur on GPT textareas flushed EMPTY
   // GraphQL state (React never saw insertFromPaste), then Submit listed those fields as
   // missing. Re-run nativeSet (insertText) so the debounce saves the visible value.
-  if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
+  if (onAshbyForm) {
     await new Promise((resolve) => setTimeout(resolve, 550));
+    // Ashby's Yes/No widget is controlled by React state, so an active option proves the
+    // click landed in the browser — it does NOT prove the save reached the server. Recover
+    // only groups that lost their state entirely: Ashby's handler TOGGLES (clicking the
+    // selected option clears it), so re-clicking an active option would unanswer it.
+    for (const g of collectFormFields().groups) {
+      if (g.kind !== "button-group") continue;
+      const recorded = filled.find((f) => f.label === g.label);
+      if (!recorded || !recorded.value) continue;
+      const opts = (g.options || []).filter((o) => o.element && o.element.isConnected);
+      if (!opts.length) continue;
+      const anyActive = opts.some((o) => {
+        const el = o.element;
+        const cls = String((el.getAttribute && el.getAttribute("class")) || "");
+        if (/(^|[\s_-])(active|selected|checked)/i.test(cls)) return true;
+        return ["aria-pressed", "aria-checked", "aria-selected"].some(
+          (a) => el.getAttribute && el.getAttribute(a) === "true"
+        );
+      });
+      // Ashby backs the pair with a hidden checkbox — a checked one is a Yes still in place.
+      const container = opts[0].element.parentElement;
+      const proxy = container && container.querySelector('input[type="checkbox"][tabindex="-1"]');
+      if (anyActive || (proxy && proxy.checked)) continue;
+      if (clickGroupOption(opts, String(recorded.value))) {
+        console.info(`[Auto Fill][ashby] re-applied "${g.label}" -> ${recorded.value}`);
+        await new Promise((resolve) => setTimeout(resolve, ASHBY_SAVE_MS));
+      }
+    }
     for (const el of document.querySelectorAll("input, textarea")) {
       if (!el || !el.isConnected) continue;
       const t = (el.type || "").toLowerCase();
@@ -8647,7 +8700,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (!v) continue;
       if (el.closest && el.closest("lyte-autocomplete")) continue;
       nativeSet(el, v);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      // Each blur flushes its own save of the whole form render — at 80ms several were in
+      // flight at once, the same burst that lost the Yes/No answers (Snowflake
+      // 20260814T081324Z), so give each one room to land.
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
@@ -11316,7 +11372,6 @@ async function fillGeneratedAnswersInPage(answers) {
           return t.includes(target) || target.includes(t);
         });
       if (match) {
-        const savedType = match.type;
         const siblingLabels = match.parentElement
           ? [...match.parentElement.children]
               .filter((c) => c.tagName === "BUTTON")
@@ -11324,20 +11379,31 @@ async function fillGeneratedAnswersInPage(answers) {
           : [];
         const isYesNoPair =
           siblingLabels.length === 2 && siblingLabels.includes("yes") && siblingLabels.includes("no");
-        if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+        // Restore the type ATTRIBUTE, not the property: `.type` reads "submit" by default,
+        // so writing it back marks a bare <button> (Ashby's Yes/No) as an explicit submit.
+        const hadTypeAttr = match.hasAttribute("type");
+        const savedTypeAttr = hadTypeAttr ? match.getAttribute("type") : null;
+        const neutralizeSubmit = isYesNoPair && (match.type === "submit" || match.type === "reset");
+        if (neutralizeSubmit) {
           try {
-            match.type = "button";
+            match.setAttribute("type", "button");
           } catch {
             /* ignore */
           }
         }
         match.click();
-        if (isYesNoPair && (savedType === "submit" || savedType === "reset")) {
+        if (neutralizeSubmit) {
           try {
-            match.type = savedType;
+            if (hadTypeAttr) match.setAttribute("type", savedTypeAttr);
+            else match.removeAttribute("type");
           } catch {
             /* ignore */
           }
+        }
+        // Ashby saves this answer with its own mutation and swallows failures — give it
+        // room instead of racing the next generated answer's save.
+        if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
+          await new Promise((resolve) => setTimeout(resolve, 650));
         }
       } else ok = false;
     } else if (looksLikeComboboxPick(el)) {
@@ -11458,7 +11524,9 @@ async function fillGeneratedAnswersInPage(answers) {
       if (!v) continue;
       if (el.closest && el.closest("lyte-autocomplete")) continue;
       nativeSet(el, v);
-      await new Promise((resolve) => setTimeout(resolve, 80));
+      // Serialized for the same reason as the fill pass: each blur saves the whole form
+      // render, and overlapping saves lose answers (Snowflake 20260814T081324Z).
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
