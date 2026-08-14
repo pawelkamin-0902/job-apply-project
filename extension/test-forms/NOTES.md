@@ -3541,7 +3541,21 @@ unverified outside a live browser).
     selected option would clear it. Also stopped stamping `type="submit"` onto Ashby's bare
     Yes/No buttons: `el.type` reads "submit" when the attribute is absent, so restoring
     through the property added an attribute that was never in the markup — the capture shows
-    it on precisely the buttons we clicked. Not yet confirmed live.
+    it on precisely the buttons we clicked.     Not yet confirmed live.
+
+145. **Optional "save data for 2 years" / talent-pool checkboxes were auto-ticked.**
+    `Author: Cursor`. Example: Sumsub Teamtailor
+    `careers-sumsub-com-20260729T165702Z` —
+    `candidate[consent_given_future_jobs]` ("I agree that … can store my personal data for
+    two years … I understand this is optional") has no `required` attribute, yet Auto Fill
+    checked it because `shouldAutoCheckLoneCheckbox` returned true for *any*
+    `isConsentField` match ("I agree…") with no required gate. The same hole existed for
+    consent radio groups, native `<select>` consent, and Greenhouse combobox consent, and
+    `comboboxRetryCandidates` even defaulted **Yes** for "future job opportunities".
+    Fixed: only auto-agree consent when `isRequiredField` is true; added
+    `isOptionalOptInConsent` (retention-for-N-years / talent pool / newsletter / "this is
+    optional") that always leaves the control blank and never reports it; removed the
+    marketing Yes default. Required privacy/terms checkboxes still auto-tick.
 
 ## Known gaps (not yet acted on)
 

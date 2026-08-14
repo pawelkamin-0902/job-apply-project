@@ -2611,11 +2611,31 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function isConsentField(label) {
     return CONSENT_RE.test(label);
   }
-  function shouldAutoCheckLoneCheckbox(element, label) {
-    if (isConsentField(label)) return true;
-    if (/\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
+  // Optional marketing / talent-pool / "keep my data for 2 years" opt-ins. These match
+  // CONSENT_RE ("I agree…") but are deliberately not required — auto-ticking them opts the
+  // applicant into retention/marketing they never asked for (Sumsub Teamtailor
+  // careers-sumsub-com-20260729T165702Z: "store my personal data for two years… I understand
+  // this is optional"). Never fill, never report.
+  function isOptionalOptInConsent(label) {
+    const t = String(label || "");
+    if (/i understand this is optional|this is optional/i.test(t)) return true;
+    if (
+      /store (my |your )?(personal )?data for|keep (my |your )?(application|data|information) for|retain (my |your )?(personal )?(data|information) for/i.test(
+        t
+      ) &&
+      /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b|future job|contacting me|talent (pool|community|network)/i.test(
+        t
+      )
+    ) {
       return true;
     }
+    return /future job opportunit|talent (pool|community|network)|willing to be contacted|talent[- ]related communications|receive (email |marketing )?updates|newsletter|marketing communications|join our talent/i.test(
+      t
+    );
+  }
+  function shouldAutoCheckLoneCheckbox(element, label) {
+    // Optional retention/marketing opt-ins: leave blank even when the label says "I agree".
+    if (isOptionalOptInConsent(label)) return false;
     // SmartRecruiters oneclick consent: <spl-checkbox data-test="consent-box" required>
     if (
       element &&
@@ -2634,6 +2654,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       element.closest("ul.options-list, .options-list, .application-answer, #candidatePronounsCheckboxes")
     ) {
       return false;
+    }
+    // Only auto-tick when the form actually requires it. Optional "I agree to store my data
+    // for 2 years" / newsletter boxes used to match isConsentField and get checked with no
+    // required check (careers-sumsub-com-20260729T165702Z).
+    if (isConsentField(label) || /\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
+      return typeof isRequiredField === "function" && isRequiredField(element, element);
     }
     // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
     // "required acknowledgement, tick it" rule. Optional newsletter boxes stay untouched.
@@ -7085,9 +7111,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       ) {
         add("No");
       }
-      if (/willing to be contacted|future job opportunities|talent related communications/i.test(lab)) {
-        add("Yes");
-      }
+      // Do NOT default Yes for "future job opportunities" / talent communications —
+      // those are almost always optional marketing opt-ins (Sumsub 20260729T165702Z).
     }
     // Workday conditional after entitled Yes (ABB 20260813T185959Z): "If yes, please choose
     // the option that best describes your right to work" — Permanent Resident / EU citizen / …
@@ -7231,8 +7256,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       continue;
     }
-    // Privacy/terms consent: auto-agree when a Yes/Agree-style option exists.
+    // Optional talent-pool / "keep data for 2 years" opt-ins — leave blank.
+    if (isOptionalOptInConsent(group.label)) continue;
+    // Privacy/terms consent: auto-agree only when the group is actually required.
     if (isConsentField(group.label)) {
+      const groupEl = group.options[0] && group.options[0].element;
+      if (groupEl && typeof isRequiredField === "function" && !isRequiredField(groupEl, groupEl)) {
+        continue;
+      }
       const consentPick =
         clickGroupOption(group.options, "I agree") ||
         clickGroupOption(group.options, "Agree") ||
@@ -7434,6 +7465,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (looksLikeComboboxPick(element) || /equality_monitoring/i.test(element.id || "")) {
         comboboxTrace(element, "skip optional demographic", {});
       }
+      continue;
+    }
+    // Optional "save data for 2 years" / talent-pool / newsletter selects & boxes — leave blank.
+    if (isOptionalOptInConsent(ownLabel) || isOptionalOptInConsent(label)) {
       continue;
     }
     const weIdx = workExperienceIndexFromLabel(label);
@@ -7822,6 +7857,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.warn("[Auto Fill][phone-watch] country picker FAILED to commit any value");
     }
     if (looksLikeComboboxPick(element) && isConsentField(label)) {
+      // Optional retention/marketing selects — leave blank (same rule as lone checkboxes).
+      if (isOptionalOptInConsent(label) || (typeof isRequiredField === "function" && !isRequiredField(element, host))) {
+        continue;
+      }
       let optionLabels = [];
       try {
         optionLabels = findRadixHiddenSelectOptions(element) || [];
@@ -7942,9 +7981,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
       // GDPR / acknowledgement dropdowns — prefer Confirm/Agree before a stale QA phrase
       // like "Acknowledge/Confirm" that isn't a real option (apaleo 20260813T100213Z).
+      // Only when required — optional privacy/marketing selects stay blank.
       if (
         /acknowledg|gdpr|privacy|consent/i.test(label) &&
         !isConsentField(label) &&
+        !isOptionalOptInConsent(label) &&
+        !(typeof isRequiredField === "function" && !isRequiredField(element, host)) &&
         !comboboxHasDisplayValue(element)
       ) {
         const ackPicks = ["Confirm", "I Confirm", "I agree", "Agree"];
@@ -8122,8 +8164,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const tag = element.tagName.toLowerCase();
 
     // Privacy/terms consent on a native <select> (All Jobs Pro: multi_consent) — auto-pick
-    // "I agree" / "Yes" when present, same as checkbox/radio consent groups above.
-    if (tag === "select" && isConsentField(label)) {
+    // "I agree" / "Yes" when present AND required. Optional retention/marketing selects
+    // (e.g. "save data for 2 years") stay blank.
+    if (tag === "select" && (isConsentField(label) || isOptionalOptInConsent(label))) {
+      if (isOptionalOptInConsent(label) || (typeof isRequiredField === "function" && !isRequiredField(element, host))) {
+        continue;
+      }
       const consentLabels = [...element.options]
         .map((o) => cleanedText(o).trim())
         .filter(Boolean);
@@ -8587,6 +8633,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       (element.closest &&
         element.closest("ul.options-list, .options-list, .application-answer") &&
         !isConsentField(label))
+    ) {
+      continue;
+    }
+    // Optional "store my data for 2 years" / talent-pool / newsletter — leave blank, do not
+    // QA-match or report as needing input (careers-sumsub-com-20260729T165702Z).
+    if (
+      isOptionalOptInConsent(label) ||
+      (isConsentField(label) && typeof isRequiredField === "function" && !isRequiredField(element, element))
     ) {
       continue;
     }
