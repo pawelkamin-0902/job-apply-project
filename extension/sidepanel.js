@@ -2629,6 +2629,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     ) {
       return true;
     }
+    // SMS/text opt-in sitting under a required phone field (Breezy `smsConsent`: "By
+    // providing your phone number you agree to receive informational text messages…") — the
+    // phone field's own asterisk made it read as required (skyspecs-breezy-hr-20260814T111134Z).
+    if (/\b(text messages?|sms)\b/i.test(t) && /\b(receive|opt[- ]?in|agree)\b/i.test(t)) return true;
     return /future job opportunit|talent (pool|community|network)|willing to be contacted|talent[- ]related communications|receive (email |marketing )?updates|newsletter|marketing communications|join our talent/i.test(
       t
     );
@@ -2636,6 +2640,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function shouldAutoCheckLoneCheckbox(element, label) {
     // Optional retention/marketing opt-ins: leave blank even when the label says "I agree".
     if (isOptionalOptInConsent(label)) return false;
+    // Voluntary EEO self-ID is never an acknowledgement to tick.
+    if (element && element.closest && element.closest('[data-section="eeoc"], .eeoc-form-container')) {
+      return false;
+    }
+    // A radio is one option among several, so "this control is required" only ever means the
+    // GROUP needs an answer — ticking the one we happened to reach is a guess, and on Breezy
+    // it picked the first EEO option outright (White / Male / protected veteran). Radios only
+    // auto-tick when their own text is a genuine acknowledgement, handled below.
+    const isRadio = String((element && element.type) || "").toLowerCase() === "radio";
     // SmartRecruiters oneclick consent: <spl-checkbox data-test="consent-box" required>
     if (
       element &&
@@ -2661,6 +2674,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     if (isConsentField(label) || /\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
       return typeof isRequiredField === "function" && isRequiredField(element, element);
     }
+    if (isRadio) return false;
     // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
     // "required acknowledgement, tick it" rule. Optional newsletter boxes stay untouched.
     return typeof isRequiredField === "function" && isRequiredField(element, element);
@@ -3111,6 +3125,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // 20260813T181131Z: optional Gender/Ethnicity each burned open/discovery/GPT while required
   // Right to Work was skipped. Required Disability Confident stays fillable via isRequiredField.
   function shouldSkipOptionalDemographic(label, element, host) {
+    // Voluntary self-identification block ("You are requested (not required) to complete the
+    // personal data below"). Checked BEFORE the required gate on purpose: Breezy's EEO radios
+    // are Angular `ng-required="!eeoc.gender"`, so while unanswered they carry a real
+    // `required` attribute and read as required — which is how Auto Fill came to tick White /
+    // Male / "I IDENTIFY AS … PROTECTED VETERAN" on skyspecs-breezy-hr-20260814T111134Z.
+    if (element && element.closest && element.closest('[data-section="eeoc"], .eeoc-form-container')) {
+      return true;
+    }
     if (typeof isRequiredField === "function" && isRequiredField(element, host)) return false;
     const id = (element && element.id) || "";
     const name = (element && element.name) || "";
@@ -7245,6 +7267,22 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   for (const group of groups) {
     await ashbySettle();
     if (shouldSkipOptionalDemographic(group.label, group.options[0] && group.options[0].element, group.options[0] && group.options[0].element)) {
+      // Voluntary self-ID that the form still enforces: Breezy's EEO radios are
+      // ng-required="!eeoc.gender", so while unanswered they carry a real required attribute
+      // and Submit shows "A response is required". Leaving them blank would block the
+      // application, but inventing a race/gender/veteran status is not ours to do — pick the
+      // explicit non-disclosure option (skyspecs-breezy-hr-20260814T111134Z, where Auto Fill
+      // had instead ticked the first option of each: White / Male / protected veteran).
+      const demoEl = group.options[0] && group.options[0].element;
+      if (demoEl && typeof isRequiredField === "function" && isRequiredField(demoEl, demoEl)) {
+        const declineRe =
+          /don'?t wish to answer|do not (wish|want) to answer|prefer not to (answer|say)|decline to (self-?identify|answer)|choose not to (self-?identify|answer)/i;
+        const decline = group.options.map((o) => o.optionLabel).find((t) => declineRe.test(String(t || "")));
+        if (decline && clickGroupOption(group.options, decline)) {
+          filled.push({ label: group.label, value: decline, source: "default" });
+          continue;
+        }
+      }
       continue;
     }
     // Lever optional follow-ups after "employee of Lyra…?" (affiliation / "if other") —

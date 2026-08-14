@@ -3557,6 +3557,46 @@ unverified outside a live browser).
     optional") that always leaves the control blank and never reports it; removed the
     marketing Yes default. Required privacy/terms checkboxes still auto-tick.
 
+146. **Breezy HR: every multi-choice question fell apart into single options, and the EEO
+    block got self-identified as White / Male / protected veteran.** `Author: Cursor`.
+    Capture `skyspecs-breezy-hr-20260814T111134Z` (same shape in the two 2026-07-23 eCore
+    captures). Breezy renders `<li class="question"><div class="multiplechoice"><h3>{question}
+    </h3><ul class="options"><li class="option"><input><span>{option}</span></li>…` — no
+    fieldset, no role=group, no id/label[for] on the options. Three failures stacked up:
+    - The group-label climb found nothing, so the shared `name` fallback won and sent the
+      machine id `section_1750669039657_question_1` downstream as the question text.
+    - Option labels came from the previous-sibling climb, which reads the PREVIOUS `<li>`, so
+      every option was one off and the first fell through to the raw name.
+    - EEO names (`gender`, `race_ethnicity`, `eeoc.veteran_status`) are shorter than the
+      20-char bar that fallback demands, so those groups were dropped entirely and their
+      options surfaced as 16 lone radios. Breezy marks them `ng-required="!eeoc.gender"`,
+      which puts a real `required` attribute on each unanswered radio, and
+      `shouldAutoCheckLoneCheckbox`'s final "required ⇒ tick it" rule then ticked whichever
+      option it reached first: White, Male, and "I IDENTIFY AS … PROTECTED VETERAN". The
+      leftovers ("Female", "I don't wish to answer" ×2) were reported as needing input, which
+      is what surfaced the bug.
+    Fixed in `field-detector.js`: option text now comes from an unwrapped `<span>`/`<strong>`
+    immediately after a checkbox/radio (before the previous-sibling climb); group labels come
+    from `.multiplechoice h3`; EEO groups with no heading (Breezy's OFCCP veteran/disability
+    text) derive a label from their eeoc-scoped name so `detectCategory` sees "veteran status"
+    / "race ethnicity"; and `section_<digits>_question_<n>` is excluded from the name fallback
+    (kept to that exact shape — a bare `\d{6,}` test also swallowed Rippling's
+    `customQuestions.<hex>.<uuid>` names and broke five groups there).
+    In `sidepanel.js`: `shouldSkipOptionalDemographic` now skips anything inside
+    `[data-section="eeoc"]` **before** the required gate, since Angular's transient `required`
+    is not a statement that the answer is mandatory to us; lone radios never auto-tick on
+    required alone (a radio is one option of several — same class of bug as the Lever Yes/No
+    double-tick); and the SMS opt-in ("By providing your phone number you agree to receive
+    informational text messages…", which had been resolving to the label "Phone Number" and
+    inheriting that field's asterisk) is now `isOptionalOptInConsent`.
+    Because Breezy *does* enforce the EEO radios on submit ("A response is required"), leaving
+    them blank would block the application — so when a skipped demographic group is actually
+    required, Auto Fill picks the explicit non-disclosure option ("I don't wish to answer",
+    "I CHOOSE NOT TO SELF-IDENTIFY…") instead of inventing an identity. Verified offline
+    against all 735 captures: the only detection changes are the three Breezy files plus two
+    consent labels that got *more* accurate, and no capture in the corpus has a required lone
+    radio left for the new guard to change. Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

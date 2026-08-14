@@ -589,6 +589,23 @@ function resolveOwnLabel(element, host) {
       }
     }
   }
+  // A checkbox/radio whose own text is an unwrapped sibling right after it —
+  // `<li class="option"><input type="checkbox"><span>5-6 Years</span></li>` (Breezy HR, and a
+  // common Angular/handwritten-form shape). With no id/label[for] and no wrapping <label>,
+  // resolution used to fall through to the previous-sibling climb, which reads the PREVIOUS
+  // option's text: skyspecs-breezy-hr-20260814T111134Z came back one off for every option
+  // ("5-6 Years" labelled the 4-5 Years box) and the first option, having no previous sibling
+  // and sharing its <ul> with the other two inputs, fell all the way through to the raw name.
+  // Same shape carries Breezy's SMS opt-in text, which otherwise resolved to "Phone Number".
+  const cbType = ((element.type || "") + "").toLowerCase();
+  if (cbType === "checkbox" || cbType === "radio") {
+    let sib = element.nextElementSibling;
+    for (let i = 0; i < 2 && sib; i++, sib = sib.nextElementSibling) {
+      if (!/^(SPAN|LABEL|STRONG|B|EM)$/.test(sib.tagName)) continue;
+      const sibText = cleanedText(sib);
+      if (sibText && sibText.length <= 400) return sibText;
+    }
+  }
   // <fieldset><legend> is the standard, authoritative way to associate a label with a group of
   // controls - checked before aria-label/aria-labelledby since Workday's own custom "Select
   // One" button carries a generic, useless aria-label ("Select One Required" - just its own
@@ -1387,6 +1404,25 @@ function collectRadioCheckboxGroups() {
         (paylocityWrap && paylocityWrap.querySelector("p > label, p label, p"));
       if (paylocityTitle && cleanedText(paylocityTitle)) groupLabel = cleanedText(paylocityTitle);
     }
+    // Breezy HR: every question is `<li class="question"><div class="multiplechoice">
+    // <h3>{question}<span class="required">*</span></h3><ul class="options">…`. No fieldset,
+    // no role=group, and the shared name is machine-generated
+    // (`section_1750669039657_question_1`), so the name fallback below used to win and send
+    // that name downstream as the question — skyspecs-breezy-hr-20260814T111134Z reported all
+    // four screening questions by their name, with canGenerate=false.
+    if (!groupLabel) {
+      const breezyQ = els[0].closest && els[0].closest(".multiplechoice, li.question");
+      const breezyH = breezyQ && breezyQ.querySelector("h3, h4, .question-title");
+      if (breezyH && cleanedText(breezyH)) groupLabel = cleanedText(breezyH);
+    }
+    // Voluntary EEO blocks whose only "question" is a heading-less paragraph (Breezy's
+    // veteran/disability OFCCP text). Deriving the label from the eeoc-scoped name keeps the
+    // options grouped AND lets detectCategory see "veteran status" / "race ethnicity" /
+    // "gender", which is what marks them optional-demographic and leaves them alone.
+    if (!groupLabel && els[0].closest && els[0].closest('[data-section="eeoc"], .eeoc-form-container')) {
+      const n = (els[0].name || "").trim().replace(/^eeoc[._-]/i, "").replace(/[._-]+/g, " ").trim();
+      if (n) groupLabel = n;
+    }
     // Comeet stamps the full question text on each radio's `name` (and often a nearby
     // `legend.question-title`). Use that when fieldset climb missed — name values like
     // "gender" stay excluded by requiring spaces / "?" / length.
@@ -1396,7 +1432,12 @@ function collectRadioCheckboxGroups() {
       const n = els[0].name.trim();
       if (
         !/[\[\]]/.test(n) &&
-        !/answers_attributes|application_form|multiQuestionAnswer/i.test(n)
+        !/answers_attributes|application_form|multiQuestionAnswer/i.test(n) &&
+        // Breezy `section_1750669039657_question_1` is a timestamped id, not a question. Kept
+        // to this exact shape: a bare `\d{6,}` test also swallowed Rippling's
+        // `customQuestions.<hex>.<uuid>` names, and those groups have no other label source,
+        // so they fell apart into lone Yes/No checkboxes (ats-rippling-com-20260803T083443Z).
+        !/^section_\d+_question_\d+$/i.test(n)
       ) {
         if (n.length > 20 || /\s/.test(n) || /\?/.test(n)) groupLabel = n;
       }
