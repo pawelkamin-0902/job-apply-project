@@ -3288,17 +3288,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         /* not focusable */
       }
     }
-    // Workday questionnaire textareas (ABB 20260813T185959Z): a single paste-style nativeSet
-    // left salary/notice looking filled briefly then React reverted them — red required errors
-    // returned. Same approach as Workday date spinbuttons: clear + char-by-char insertText,
-    // plus execCommand('insertText') when available.
+    // Workday questionnaire textareas (ABB 20260813T185959Z) and Ashby application
+    // textareas (jobs-ashbyhq-com-20260814T053828Z): a paste-style nativeSet left the
+    // DOM looking filled, but React never updated, so Submit reported "Missing entry
+    // for required field". execCommand('insertText') produces a trusted input event
+    // Chrome treats as typing; Ashby only persists that to GraphQL on blur.
     const onWorkday = /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "");
-    const workdayText =
-      onWorkday &&
+    const onAshby = /(^|\.)ashbyhq\.com$/i.test(location.hostname || "");
+    const needsInsertTextCommit =
+      (onWorkday || onAshby) &&
       (element.tagName === "TEXTAREA" ||
         (element.tagName === "INPUT" &&
           /^(text|email|tel|search|url|password|)$/i.test(String(element.type || "text"))));
-    if (workdayText) {
+    if (needsInsertTextCommit) {
       const tracker = element._valueTracker;
       if (tracker) {
         try {
@@ -3322,26 +3324,28 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         committed = false;
       }
       if (!committed || String(element.value || "") !== str) {
-        let built = "";
-        for (const ch of str) {
-          built += ch;
-          if (tracker) {
-            try {
-              tracker.setValue(built.slice(0, -1));
-            } catch {
-              /* ignore */
-            }
+        if (tracker) {
+          try {
+            tracker.setValue(element.value);
+          } catch {
+            /* ignore */
           }
-          if (setter) setter.call(element, built);
-          else element.value = built;
-          if (typeof InputEvent === "function") {
+        }
+        if (setter) setter.call(element, str);
+        else element.value = str;
+        if (typeof InputEvent === "function") {
+          try {
             element.dispatchEvent(
-              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: ch })
+              new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
             );
-          } else {
-            element.dispatchEvent(new Event("input", { bubbles: true }));
+          } catch {
+            /* ignore */
           }
-          element.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true, cancelable: true }));
+          element.dispatchEvent(
+            new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+          );
+        } else {
+          element.dispatchEvent(new Event("input", { bubbles: true }));
         }
       }
       element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -8548,25 +8552,22 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // nativeSet already focus/blurs, but the mutation still needs a beat to finish before Submit
   // reads server-side values — confirmed live: immediate Submit after Auto Fill still showed
   // "Missing entry" for Name/Email/salary even when the DOM looked filled.
-  // Also re-focus/blur non-empty text fields once at the end: if React onChange only landed
-  // after `_valueTracker` reset (20260812T152002Z Full Name / authorised-to-work), the first
-  // blur may have run before state committed, so a second blur pair flushes the save.
+  // ScorePlay 20260814T053828Z: a bare second focus/blur on GPT textareas flushed EMPTY
+  // GraphQL state (React never saw insertFromPaste), then Submit listed those fields as
+  // missing. Re-run nativeSet (insertText) so the debounce saves the visible value.
   if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     for (const el of document.querySelectorAll("input, textarea")) {
       if (!el || !el.isConnected) continue;
       const t = (el.type || "").toLowerCase();
       if (t && t !== "text" && t !== "email" && t !== "tel" && t !== "search" && t !== "url" && el.tagName !== "TEXTAREA") {
         continue;
       }
-      if (!String(el.value || "").trim()) continue;
+      const v = String(el.value || "").trim();
+      if (!v) continue;
       if (el.closest && el.closest("lyte-autocomplete")) continue;
-      try {
-        el.focus();
-        el.blur();
-      } catch {
-        /* ignore */
-      }
+      nativeSet(el, v);
+      await new Promise((resolve) => setTimeout(resolve, 80));
     }
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
@@ -8603,14 +8604,16 @@ async function fillGeneratedAnswersInPage(answers) {
         /* not focusable */
       }
     }
-    // Kept in sync with runAutofillInPage — Workday questionnaire textareas (ABB 20260813T185959Z).
+    // Kept in sync with runAutofillInPage — Workday + Ashby insertText commit
+    // (jobs-ashbyhq-com-20260814T053828Z: GPT textareas looked filled, Submit said missing).
     const onWorkday = /(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$/i.test(location.hostname || "");
-    const workdayText =
-      onWorkday &&
+    const onAshby = /(^|\.)ashbyhq\.com$/i.test(location.hostname || "");
+    const needsInsertTextCommit =
+      (onWorkday || onAshby) &&
       (element.tagName === "TEXTAREA" ||
         (element.tagName === "INPUT" &&
           /^(text|email|tel|search|url|password|)$/i.test(String(element.type || "text"))));
-    if (workdayText) {
+    if (needsInsertTextCommit) {
       const tracker = element._valueTracker;
       if (tracker) {
         try {
@@ -8634,26 +8637,28 @@ async function fillGeneratedAnswersInPage(answers) {
         committed = false;
       }
       if (!committed || String(element.value || "") !== str) {
-        let built = "";
-        for (const ch of str) {
-          built += ch;
-          if (tracker) {
-            try {
-              tracker.setValue(built.slice(0, -1));
-            } catch {
-              /* ignore */
-            }
+        if (tracker) {
+          try {
+            tracker.setValue(element.value);
+          } catch {
+            /* ignore */
           }
-          if (setter) setter.call(element, built);
-          else element.value = built;
-          if (typeof InputEvent === "function") {
+        }
+        if (setter) setter.call(element, str);
+        else element.value = str;
+        if (typeof InputEvent === "function") {
+          try {
             element.dispatchEvent(
-              new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: ch })
+              new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
             );
-          } else {
-            element.dispatchEvent(new Event("input", { bubbles: true }));
+          } catch {
+            /* ignore */
           }
-          element.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true, cancelable: true }));
+          element.dispatchEvent(
+            new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+          );
+        } else {
+          element.dispatchEvent(new Event("input", { bubbles: true }));
         }
       }
       element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -11271,6 +11276,11 @@ async function fillGeneratedAnswersInPage(answers) {
     } else {
       console.info(`[Auto Fill][gpt-fill] idx=${idx} text "${label}" -> "${String(value).slice(0, 80)}"`);
       nativeSet(el, value);
+      // Ashby: wait for the 500ms GraphQL debounce after each generated textarea so the
+      // next field's focus doesn't cancel an in-flight save (ScorePlay 20260814T053828Z).
+      if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
+        await new Promise((resolve) => setTimeout(resolve, 550));
+      }
       // Oracle HCM Knockout `textInput` binding: a second focus→input→blur pass helps the
       // observable commit when the first synthetic write was ignored (salary textarea stayed
       // empty in model while canGenerate was true — 20260812T182256Z).
@@ -11324,23 +11334,21 @@ async function fillGeneratedAnswersInPage(answers) {
   document.querySelectorAll("[data-af-idx]").forEach((el) => el.removeAttribute("data-af-idx"));
   document.querySelectorAll("[data-af-label]").forEach((el) => el.removeAttribute("data-af-label"));
   // Same Ashby post-fill settle as runAutofillInPage — generated answers also need the
-  // blur-triggered GraphQL save to finish before Submit.
+  // blur-triggered GraphQL save to finish before Submit. Re-nativeSet so insertText
+  // commits (jobs-ashbyhq-com-20260814T053828Z GPT textareas).
   if (/(^|\.)ashbyhq\.com$/i.test(location.hostname || "")) {
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     for (const el of document.querySelectorAll("input, textarea")) {
       if (!el || !el.isConnected) continue;
       const t = (el.type || "").toLowerCase();
       if (t && t !== "text" && t !== "email" && t !== "tel" && t !== "search" && t !== "url" && el.tagName !== "TEXTAREA") {
         continue;
       }
-      if (!String(el.value || "").trim()) continue;
+      const v = String(el.value || "").trim();
+      if (!v) continue;
       if (el.closest && el.closest("lyte-autocomplete")) continue;
-      try {
-        el.focus();
-        el.blur();
-      } catch {
-        /* ignore */
-      }
+      nativeSet(el, v);
+      await new Promise((resolve) => setTimeout(resolve, 80));
     }
     await new Promise((resolve) => setTimeout(resolve, 600));
   }

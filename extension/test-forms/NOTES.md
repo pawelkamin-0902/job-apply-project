@@ -3461,6 +3461,16 @@ unverified outside a live browser).
     rejected the hyphen. Fixed: Greenhouse title/logo-alt/path extract (strip `-LinkedIn`
     board suffix); generic "at Company" class now allows hyphen/apostrophe. Not yet confirmed live.
 
+141. **Ashby ScorePlay (20260814T053828Z): GPT textareas look filled, Submit says
+    missing.** `Author: Cursor`. Capture `jobs-ashbyhq-com-20260814T053828Z`.
+    "What sparked your interest…", "Why … good fit", "expected annual gross salary"
+    were gpt-filled (DOM showed text) but Submit: "Missing entry for required field".
+    Ashby persists via a 500ms-debounced GraphQL mutation on blur; `insertFromPaste`
+    never updated React, so blur saved empty and a later re-render wiped the DOM.
+    Fixed: Ashby uses the same `execCommand('insertText')` commit as Workday; gpt-fill
+    waits 550ms per field; post-fill settle re-`nativeSet`s visible values instead of
+    a bare focus/blur (which flushed empty state). Not yet confirmed live.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
