@@ -2802,8 +2802,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i,
       get: (p) => {
         const w = String((p.contact && p.contact.website) || "").trim();
-        if (!w || /linkedin\.com/i.test(w)) return null;
-        return w;
+        if (w && !/linkedin\.com/i.test(w)) return w;
+        // No website on the profile: a GitHub profile is the candidate's own public page and
+        // the honest answer here — LinkedIn still stays off website fields (finding 132).
+        // jobs-ashbyhq-com-20260814T075709Z left "Website URL" in "need your input".
+        return (
+          (typeof githubValueFromProfile === "function" && githubValueFromProfile(p, "url")) || null
+        );
       },
     },
     {
@@ -2954,7 +2959,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function matchStructuredField(label, element) {
     const hearAbout =
       (typeof detectCategory === "function" && detectCategory(label) === "hear_about") ||
-      /\b(how|where) did you hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
+      /\b(how|where) did you (?:first |initially |originally |ever )?hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
     for (const { re, get } of STRUCTURED_PATTERNS) {
       if (re.test(label)) {
         // Greenhouse phone widget: bare "Country" is the dial-code picker, not residence.
@@ -3051,7 +3056,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     },
     {
       key: "hear_about",
-      re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
+      // "How did you FIRST hear about SurveyMonkey?" (jobs-ashbyhq-com-20260814T075709Z): the
+      // adverb between "you" and "hear" broke the match, so no hear-about handling ran at all
+      // and the Ashby source combobox landed in "need your input".
+      re: /\b(where|how) did you (?:first|initially|originally|ever)?\s*(hear|find out|learn)\b|\bhow did you (?:find|discover) (?:us|about|this|our)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
     },
     {
       key: "reasonable_accommodation",
@@ -6098,6 +6106,20 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return committed;
   }
 
+  // Ashby custom-question selects render as `_inputContainer_*` > input[role=combobox] plus a
+  // chevron `_toggleButton_*`. Clicking into the text box alone renders nothing — only the
+  // chevron (or typing) opens the list.
+  function comboboxChevronButton(element) {
+    if (!element || !element.closest) return null;
+    const container =
+      element.closest('[class*="_inputContainer"], [class*="inputContainer"]') || element.parentElement;
+    if (!container || !container.querySelector) return null;
+    const btn = container.querySelector(
+      'button[class*="_toggleButton"], button[class*="toggleButton"], button[aria-label*="toggle" i]'
+    );
+    return btn && btn !== element ? btn : null;
+  }
+
   // discoverComboboxOptions opens the widget the same way fillReactSelectByClick does, reads
   // whatever options render, then closes it back down WITHOUT selecting anything (discovery-only;
   // the real pick happens through fillReactSelectByClick afterward). Best-effort throughout.
@@ -6152,6 +6174,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       for (let attempt = 0; attempt < maxAttempts && !options.length; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, sfPick ? 80 : isSR ? 120 : asyncList ? 100 : 70));
         options = findComboboxOptions(prefix, before, element);
+      }
+      // Ashby source/custom-question select: the click above lands in the text box and opens
+      // nothing, so discovery reported 0 options for "How did you first hear about
+      // SurveyMonkey?" (jobs-ashbyhq-com-20260814T075709Z). The chevron opens the real list.
+      if (!options.length) {
+        const chevron = comboboxChevronButton(element);
+        if (chevron) {
+          simulateClick(chevron);
+          for (let attempt = 0; attempt < 8 && !options.length; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 90));
+            options = findComboboxOptions(prefix, before, element);
+          }
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 80));
       const seen = new Set();
@@ -7478,7 +7513,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       /^https?:\/\//i.test(String(structuredValue)) &&
       (detectCategory(label) === "hear_about" ||
         detectCategory(ownLabel) === "hear_about" ||
-        /\b(how|where) did you hear\b|\bfound the job posting\b/i.test(`${ownLabel} ${label}`))
+        /\b(how|where) did you (?:first |initially |originally |ever )?hear\b|\bfound the job posting\b/i.test(`${ownLabel} ${label}`))
     ) {
       structuredValue = null;
     }
@@ -8173,15 +8208,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         optionLabels = smartRecruitersOptionsForLabel(label) || [];
       }
       console.info(`[Auto Fill][combobox-discovery] "${label}" -> ${optionLabels.length} option(s) found`);
-      if (
-        (detectCategory(label) === "hear_about" || detectCategory(ownLabel) === "hear_about") &&
-        optionLabels.length
-      ) {
+      if (detectCategory(label) === "hear_about" || detectCategory(ownLabel) === "hear_about") {
         const linkedIn =
           optionLabels.find((t) => /^linkedin$/i.test(String(t).trim())) ||
           optionLabels.find((t) => /linkedin/i.test(String(t)));
         if (linkedIn && (await fillReactSelectByClick(element, linkedIn))) {
           filled.push({ label, value: linkedIn, source: "default" });
+          continue;
+        }
+        // Type-to-filter source picker that renders nothing until it has a query (Ashby):
+        // discovery came back empty, so ask for LinkedIn directly — the click path types it
+        // and picks the matching option (jobs-ashbyhq-com-20260814T075709Z).
+        if (!optionLabels.length && (await fillReactSelectByClick(element, "LinkedIn")) === true) {
+          filled.push({ label, value: reactSelectDisplayValue(element) || "LinkedIn", source: "default" });
           continue;
         }
       }
@@ -8313,7 +8352,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // Optional free-text with no profile/QA answer (Facebook, Skill Set, etc.) — leave alone.
     // Confirmed live: listing them under "need your input" made Auto Fill feel worse than
     // filling manually, and GPT was asked to invent CAPTCHA/Facebook answers.
-    if (isFreeText && !fieldRequired && !qaAnswerUsable && !structured.isStructuredCategory) {
+    // A structured category with no profile value behind it (optional "Website URL" on a
+    // profile with no website) is just as unanswerable — reporting it made Auto Fill look
+    // stuck on a field the applicant can leave blank (jobs-ashbyhq-com-20260814T075709Z).
+    if (isFreeText && !fieldRequired && !qaAnswerUsable && (!structured.isStructuredCategory || !structuredValue)) {
       continue;
     }
     if (
@@ -11048,7 +11090,7 @@ async function fillGeneratedAnswersInPage(answers) {
     const fieldLabel = label || (el.getAttribute && el.getAttribute("data-af-label")) || "";
     if (
       /^https?:\/\//i.test(String(value || "")) &&
-      /\b(how|where) did you hear\b|\bfound the job posting\b/i.test(fieldLabel)
+      /\b(how|where) did you (?:first |initially |originally |ever )?hear\b|\bfound the job posting\b/i.test(fieldLabel)
     ) {
       console.info(`[Auto Fill][coerce] "${fieldLabel}" refused profile URL; using LinkedIn`);
       value = "LinkedIn";
@@ -11500,8 +11542,13 @@ function captureSampleInPage(profile, qaBank) {
       re: /^(personal\s+)?website(\s*(url|link))?$|\bpersonal\s+website\b|^(online\s+)?portfolio(\s*(url|link|website))?$/i,
       get: (p) => {
         const w = String((p.contact && p.contact.website) || "").trim();
-        if (!w || /linkedin\.com/i.test(w)) return null;
-        return w;
+        if (w && !/linkedin\.com/i.test(w)) return w;
+        // No website on the profile: a GitHub profile is the candidate's own public page and
+        // the honest answer here — LinkedIn still stays off website fields (finding 132).
+        // jobs-ashbyhq-com-20260814T075709Z left "Website URL" in "need your input".
+        return (
+          (typeof githubValueFromProfile === "function" && githubValueFromProfile(p, "url")) || null
+        );
       },
     },
     {
@@ -11605,7 +11652,7 @@ function captureSampleInPage(profile, qaBank) {
   function matchStructuredField(label) {
     const hearAbout =
       (typeof detectCategory === "function" && detectCategory(label) === "hear_about") ||
-      /\b(how|where) did you hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
+      /\b(how|where) did you (?:first |initially |originally |ever )?hear\b|\bwhere you found the job\b|\bfound the job posting\b/i.test(label || "");
     for (const { re, get } of STRUCTURED_PATTERNS) {
       if (re.test(label)) {
         const value = get(profile, null, label);
@@ -11680,7 +11727,10 @@ function captureSampleInPage(profile, qaBank) {
     },
     {
       key: "hear_about",
-      re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
+      // "How did you FIRST hear about SurveyMonkey?" (jobs-ashbyhq-com-20260814T075709Z): the
+      // adverb between "you" and "hear" broke the match, so no hear-about handling ran at all
+      // and the Ashby source combobox landed in "need your input".
+      re: /\b(where|how) did you (?:first|initially|originally|ever)?\s*(hear|find out|learn)\b|\bhow did you (?:find|discover) (?:us|about|this|our)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
     },
     {
       key: "reasonable_accommodation",
@@ -12164,7 +12214,10 @@ const MATCH_CATEGORY_PATTERNS = [
   },
   {
     key: "hear_about",
-    re: /\b(where|how) did you (hear|find out|learn)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
+    // "How did you FIRST hear about SurveyMonkey?" (jobs-ashbyhq-com-20260814T075709Z): the
+    // adverb between "you" and "hear" broke the match, so no hear-about handling ran at all
+    // and the Ashby source combobox landed in "need your input".
+    re: /\b(where|how) did you (?:first|initially|originally|ever)?\s*(hear|find out|learn)\b|\bhow did you (?:find|discover) (?:us|about|this|our)\b|\breferral source\b|\bapplication source\b|\bfirst find out about this (job|role|position)\b/i,
   },
   {
     key: "reasonable_accommodation",

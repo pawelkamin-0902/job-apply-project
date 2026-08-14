@@ -3471,6 +3471,28 @@ unverified outside a live browser).
     waits 550ms per field; post-fill settle re-`nativeSet`s visible values instead of
     a bare focus/blur (which flushed empty state). Not yet confirmed live.
 
+142. **Ashby SurveyMonkey (20260814T075709Z): "How did you first hear about SurveyMonkey?"
+    and "Website URL" left for the applicant.** `Author: Cursor`. Capture
+    `jobs-ashbyhq-com-20260814T075709Z`.
+    - **hear-about**: `CATEGORY_PATTERNS.hear_about` required `did you (hear|find out|learn)`
+      back-to-back, so the adverb in "How did you **first** hear about SurveyMonkey?" broke
+      the match and *no* hear-about handling ran (no LinkedIn option pick, no free-text
+      default) — the field fell straight through to "need your input" with
+      `canGenerate=false` (combobox). Discovery also reported 0 options: Ashby custom-question
+      selects are `_inputContainer_*` > `input[role=combobox]` plus a chevron
+      `_toggleButton_*`, and a click into the text box renders nothing.
+      Fixed: allow first/initially/originally/ever (plus `how did you find/discover us`);
+      `discoverComboboxOptions` retries through the chevron; hear-about with 0 discovered
+      options asks `fillReactSelectByClick` for "LinkedIn" directly (it types, then picks the
+      filtered option — the same widget the Location field already fills this way).
+    - **Website URL**: optional, and finding 132 (rightly) forbids LinkedIn here, so the
+      structured match produced null — but `isStructuredCategory` still forced it into
+      "need your input". Fixed: website/portfolio falls back to the profile's GitHub profile
+      URL when there is no `contact.website`, and an optional free-text field whose structured
+      value is null is now skipped silently instead of reported.
+    Not yet confirmed live. Note `tools/simulate-autofill.js` is a stale verbatim mirror
+    (its website pattern still predates finding 132), so it cannot verify either fix.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
