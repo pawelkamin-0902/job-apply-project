@@ -442,6 +442,37 @@ function findGroupContextLabel(host) {
 // garbled by the section's own "Clear" button text living inside the same <h3> - see cleanedText
 // above). A real per-question heading (the join.com case) never sits inside a landmark region
 // shared with unrelated OTHER questions, so this only excludes genuine whole-section titles.
+var CONTROL_SELECTOR = 'input:not([type="hidden"]), select, textarea, [label]';
+
+function controlsWithin(el) {
+  if (!el || !el.querySelectorAll) return [];
+  const found = [...el.querySelectorAll(CONTROL_SELECTOR)];
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && el.type !== "hidden") found.push(el);
+  return found;
+}
+
+// A heading that covers the whole form ("Apply to this position") is a title, not one field's
+// label. Measured by what follows the heading up to the next heading, NOT by what its parent
+// holds: plenty of forms are flat, one <h3> per field inside a single section div (Breezy
+// renders exactly that), and there the parent legitimately holds every control. Radios and
+// checkboxes sharing a `name` are one question, so they count once, and the bar is deliberately
+// as high as three, since a heading really can cover a small cluster of controls making up one
+// field - Breezy's "Desired Salary" covers a currency select, an amount and a period.
+function isSharedSectionHeading(node) {
+  const seen = new Set();
+  let controls = 0;
+  for (let sib = node && node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+    if (/^H[1-6]$/.test(sib.tagName) || (sib.querySelector && sib.querySelector("h1, h2, h3, h4, h5, h6"))) break;
+    for (const el of controlsWithin(sib)) {
+      const key = (el.type === "radio" || el.type === "checkbox") && el.name ? `${el.type}:${el.name}` : el;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (++controls > 3) return true;
+    }
+  }
+  return false;
+}
+
 function findHeadingInAncestors(host) {
   let node = host;
   for (let depth = 0; depth < 15 && node; depth++, node = node.parentElement) {
@@ -458,9 +489,18 @@ function findHeadingInAncestors(host) {
       if (/^H[1-6]$/.test(prev.tagName)) {
         const container = node.parentElement;
         if (container && container.getAttribute && container.getAttribute("role") === "region") return null;
+        // The guard above only counts controls INSIDE the climbed node, so a form title beside
+        // a single-control wrapper still slipped through: Playrix's whole apply form is
+        // <h2>Apply to this position</h2> followed by one wrapper per field, so the name and
+        // email inputs both resolved to that heading instead of their own placeholder
+        // (playrix-com-20260815T072339Z).
+        if (isSharedSectionHeading(prev)) continue;
         const text = cleanedText(prev);
         if (text) return text;
       }
+      // Walking back past another field means any heading further back belongs to that field
+      // or to the section around both, never to this one.
+      if (controlsWithin(prev).length) return null;
     }
   }
   return null;
@@ -502,6 +542,13 @@ function isGenericTextPlaceholder(text) {
 // element carrying the actual `label` attribute and sitting in the light-DOM tree.
 function resolveOwnLabel(element, host) {
   host = host || element;
+  // Workday's SMS opt-in checkbox has no text of its own beyond a "Terms and Conditions"
+  // link, so every proximity guess lands on a neighbouring field's blob ("PhonePhone Device
+  // Type…", "Email Addressname@example.com") — naming it lets isOptionalOptInConsent leave
+  // this optional marketing tick alone instead of judging it by whichever blob won.
+  if (element.getAttribute && element.getAttribute("data-automation-id") === "phone-sms-opt-in") {
+    return "Receive text messages (SMS opt-in)";
+  }
   const srLabel = findSmartRecruitersQuestionLabel(host);
   if (srLabel) return srLabel;
   if (host.hasAttribute && host.hasAttribute("label")) {
@@ -722,6 +769,16 @@ function resolveOwnLabel(element, host) {
     if (controls.length > 1) break;
     let prev = node.previousElementSibling;
     for (let i = 0; i < 3 && prev; i++, prev = prev.previousElementSibling) {
+      // A sibling holding a dropdown is the field NEXT DOOR, and all the text it renders is
+      // that dropdown's own selected value or placeholder — never a label for this field.
+      // Playrix puts a messenger select ("Telegram") right before the handle input and a
+      // "Russian language level" select right before the free-text box, so both took the
+      // neighbour's text and the textarea was then answered "No knowledge"
+      // (playrix-com-20260815T072339Z). Restricted to dropdowns: a sibling wrapping radios or
+      // text inputs usually also carries that question's real prose, which several ATSes
+      // (Rippling, Workday) rely on for the label.
+      if (prev.querySelector && prev.querySelector('select, [role="combobox"], [role="listbox"]')) continue;
+      if (/^H[1-6]$/.test(prev.tagName) && isSharedSectionHeading(prev)) continue;
       const text = cleanedText(prev);
       if (!text || text.length >= 200) continue;
       // Skip phone dial-code / flag-picker chrome that sits as a previous sibling of the
@@ -837,6 +894,32 @@ function isVisible(element) {
   // labeled value belongs to a DIFFERENT part of the same logical phone field (the component's
   // own `cx-prop-label`), not a separate question the applicant answers.
   if (element.closest && element.closest('[lt-prop-user-value="dial_code"]')) return false;
+  // A checkbox/radio the CSS hides while its own <label> stays visible is a styled control —
+  // the input is the real state, the label (plus a decorative box span) is what the applicant
+  // clicks. This is the general form of the Comeet / Pinpoint / HiBob cases handled by class
+  // name below, and it has to run before the display/size checks because these inputs are
+  // usually `display:none`, not merely clipped. Confirmed live on Playrix, where the required
+  // "I acknowledge … Privacy Notice" gate never reached detection (loneCheckboxes=0) and its
+  // Submit button stays disabled until that box is ticked. A conditional field that is hidden
+  // for real hides its label along with the input, so it still fails here.
+  if (element.tagName === "INPUT" && (element.type === "checkbox" || element.type === "radio")) {
+    let styledLabel = null;
+    if (element.id) {
+      try {
+        styledLabel = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+      } catch {
+        styledLabel = null;
+      }
+    }
+    if (!styledLabel && element.closest) styledLabel = element.closest("label");
+    if (styledLabel && !(element.closest && element.closest('[aria-hidden="true"]'))) {
+      const labStyle = getComputedStyle(styledLabel);
+      const labRect = styledLabel.getBoundingClientRect();
+      if (labStyle.display !== "none" && labStyle.visibility !== "hidden" && labRect.width > 1 && labRect.height > 1) {
+        return true;
+      }
+    }
+  }
   const style = getComputedStyle(element);
   if (style.display === "none" || style.visibility === "hidden") return false;
   // Checks the whole ancestor chain, not just the element itself - confirmed live, a jobvite
@@ -911,6 +994,28 @@ function isVisible(element) {
       if (rr.width > 1 && rr.height > 1) return true;
     }
   }
+  // react-select generally: a NON-searchable select renders a zero-size proxy input
+  // (`inputmode="none" aria-readonly="true"`, class `…dummyInput`) and a searchable one a
+  // ~2px input, with the visible box being the `…__control` a couple of levels up. Keyed on
+  // react-select's own stable input id (`react-select-N-input`) rather than a class prefix,
+  // since the prefix is per-site (Playrix uses `select-field__`, not `react-select__`).
+  // Confirmed live playrix-com-20260815T072339Z: English level, Russian level and "How did
+  // you hear about our job posting?" — all required — were invisible to detection entirely.
+  if (
+    element.tagName === "INPUT" &&
+    (/^react-select-.*-input$/.test(element.id || "") ||
+      /dummyInput/.test(String((element.getAttribute && element.getAttribute("class")) || "")))
+  ) {
+    let box = element.parentElement;
+    for (let i = 0; i < 4 && box; i++, box = box.parentElement) {
+      if (!/control/i.test(String((box.getAttribute && box.getAttribute("class")) || ""))) continue;
+      const cs = getComputedStyle(box);
+      if (cs.display === "none" || cs.visibility === "hidden") break;
+      const rr = box.getBoundingClientRect();
+      if (rr.width > 1 && rr.height > 1) return true;
+      break;
+    }
+  }
   // Pinpoint react-select: the filter <input> can be ~2px wide inside a real visible control
   // (`hide-sm-block` desktop widget). Treat the control box as the visibility source.
   if (element.closest && element.closest(".react-select__control")) {
@@ -982,6 +1087,18 @@ function isCharacterCounterField(element) {
 // marketing opt-in checkboxes, optional middle name when the profile has no value.
 function isAutofillExcludedField(element) {
   if (!element) return false;
+  // Cookie-consent CMP chrome (OneTrust / Cookiebot / similar) — not part of the application.
+  // The broader "styled checkbox with a visible label" visibility rule now surfaces these
+  // Preference Centre toggles as lone checkboxes on captures that leave the banner open
+  // (playrix-com-20260815T072339Z).
+  if (
+    element.closest &&
+    element.closest(
+      "#onetrust-banner-sdk, #onetrust-pc-sdk, #onetrust-consent-sdk, .ot-sdk-container, #CybotCookiebotDialog, .cc-window, [class*='cookie-consent'], [id*='cookie-consent']"
+    )
+  ) {
+    return true;
+  }
   const type = (element.type || "").toLowerCase();
   if (type === "password") return true;
   const label = normalizeLabel(resolveOwnLabel(element) || "");

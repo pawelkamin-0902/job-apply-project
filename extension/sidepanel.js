@@ -2672,7 +2672,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // for 2 years" / newsletter boxes used to match isConsentField and get checked with no
     // required check (careers-sumsub-com-20260729T165702Z).
     if (isConsentField(label) || /\b(hereby\s+)?certify\b|\btrue and accurate\b|\backnowledge that providing false/i.test(label)) {
-      return typeof isRequiredField === "function" && isRequiredField(element, element);
+      if (typeof isRequiredField === "function" && isRequiredField(element, element)) return true;
+      // Some forms never mark the privacy acknowledgement required and instead keep Submit
+      // disabled until it is ticked (Playrix), so requiring a marker leaves an unsubmittable
+      // form. Ticking a plain privacy/terms acknowledgement is safe here; optional retention
+      // and marketing opt-ins already returned false at the top of this function.
+      return /\bprivacy (notice|policy|statement)\b|\bterms (and conditions|of (use|service))\b|\bdata (will be|is|are) process/i.test(
+        String(label || "")
+      );
     }
     if (isRadio) return false;
     // Required lone boxes (Phenom marketing * + privacy + certify) — same Workday-style
@@ -2900,6 +2907,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // generation, which returned "Polish" (the candidate's nationality, from the QA bank) for
     // "Family Name" instead of the actual surname - a small local model has no way to reliably
     // resolve a vaguely-worded label a plain profile lookup answers correctly and for free.
+    // One input asking for both halves wants the whole name: Playrix labels its single name
+    // field "Last and first name*", which matched neither the first- nor the last-name pattern,
+    // so the applicant was asked for it (playrix-com-20260815T072339Z).
+    {
+      re: /^(first|last)\s+and\s+(last|first)\s*names?\b|\bname\s*\(\s*(first and last|last and first)\s*\)/i,
+      get: (p) => p.contact.name,
+    },
     { re: /^first\s*name|^given\s*name|\bname\s*-\s*first\b|^first$/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^preferred(\s+first)?\s*name/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^last\s*name|^family\s*name|^surname\b|\bname\s*-\s*last\b|^last$/i, get: (p) => (p.contact.name || "").split(" ").slice(1).join(" ") },
@@ -6016,7 +6030,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // field, a Google-Places-style widget: nothing renders until you type). Only reached when
     // findFreshFilterInput found nothing, so this never double-types alongside a real
     // separate filter input.
-    if (typedInto) nativeSet(typedInto, desiredText);
+    // react-select's own filter input must keep focus: nativeSet blurs when it's done, and
+    // react-select answers a blur by closing the menu AND clearing the query, so by the time
+    // options are read there is nothing open to read. Confirmed live on Playrix's Country
+    // field, whose menu only ever renders after typing (a click on the control alone renders
+    // no options at all): every attempt saw zero options and the field was left blank even
+    // though "Poland" is on its 15-country list.
+    if (typedInto) {
+      const isReactSelectFilter = Boolean(typedInto.closest && typedInto.closest('[class*="__control"]'));
+      if (isReactSelectFilter) setComboboxFilterText(typedInto, desiredText, { keepFocus: true });
+      else nativeSet(typedInto, desiredText);
+    }
 
     // A rejected match (no options, or nothing close enough) used to leave the typed search
     // text sitting in the box with the menu stuck open on "No options" — confirmed live, this
@@ -6994,6 +7018,27 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     );
   }
 
+  // "Fluent" is a fair default for an English-level question, and for a language the profile or
+  // the QA bank actually evidences, but for any other named language it invents a skill.
+  // Confirmed live on Playrix, which asks for English AND Russian level: an applicant with no
+  // Russian anywhere in their profile was answered "C2 — Proficiency".
+  function labelLanguageIsEvidenced(label) {
+    const named = String(label || "").match(
+      /\b(english|polish|german|french|spanish|russian|ukrainian|italian|portuguese|dutch|swedish|norwegian|danish|finnish|czech|slovak|hungarian|romanian|bulgarian|greek|turkish|arabic|hebrew|hindi|chinese|mandarin|japanese|korean|vietnamese)\b/i
+    );
+    // "Language level" / "Fluency level" with no language named is the form asking about the
+    // language it is written in.
+    if (!named) return true;
+    const lang = named[1].toLowerCase();
+    if (lang === "english") return true;
+    const haystack = [
+      JSON.stringify(profile || {}),
+      ...(qaBank || []).map((e) => `${e && e.question} ${e && e.answer}`),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(lang);
+  }
   function comboboxRetryCandidates(label, optionLabels, qaAnswer) {
     const candidates = [];
     const add = (v) => {
@@ -7044,11 +7089,21 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         const mapped = coerceLanguageLevelForOptions(qaAnswer, optionLabels);
         if (mapped) add(mapped);
       }
-      const fluent =
-        coerceLanguageLevelForOptions("Fluent", optionLabels) ||
-        optionLabels.find((o) => /^fluent$/i.test(String(o).trim())) ||
-        optionLabels.find((o) => /fluent/i.test(String(o)));
-      if (fluent) add(fluent);
+      if (labelLanguageIsEvidenced(label)) {
+        const fluent =
+          coerceLanguageLevelForOptions("Fluent", optionLabels) ||
+          optionLabels.find((o) => /^fluent$/i.test(String(o).trim())) ||
+          optionLabels.find((o) => /fluent/i.test(String(o)));
+        if (fluent) add(fluent);
+      } else {
+        // Named language with no profile/QA evidence: prefer an explicit "no knowledge"
+        // option over leaving the required field blank or inventing fluency (Playrix
+        // Russian level; English is always evidenced above).
+        const none =
+          optionLabels.find((o) => /no knowledge|none|not applicable|^n\/?a$/i.test(String(o))) ||
+          coerceLanguageLevelForOptions("None", optionLabels);
+        if (none) add(none);
+      }
     }
     if (cat === "hear_about" && profile && profile.contact && profile.contact.linkedin) {
       const linkedInOpt = hearAboutLinkedInOption(optionLabels);
@@ -8156,7 +8211,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           (langOpts.length && coerceComboboxAnswerForOptions(label, qaMatch.answer, langOpts)) ||
           null;
         if (mapped) qaPicks.push(mapped);
-        if (langOpts.length) {
+        if (langOpts.length && labelLanguageIsEvidenced(label)) {
           const fluent =
             coerceLanguageLevelForOptions("Fluent", langOpts) ||
             langOpts.find((o) => /^fluent$/i.test(String(o).trim()));
@@ -8718,10 +8773,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       continue;
     }
     // Optional "store my data for 2 years" / talent-pool / newsletter — leave blank, do not
-    // QA-match or report as needing input (careers-sumsub-com-20260729T165702Z).
+    // QA-match or report as needing input (careers-sumsub-com-20260729T165702Z). A plain
+    // privacy/terms acknowledgement is NOT optional: some forms never mark it required and
+    // instead keep Submit disabled until it is ticked (Playrix), so skip only real opt-ins
+    // here and let shouldAutoCheckLoneCheckbox decide.
+    if (isOptionalOptInConsent(label)) continue;
     if (
-      isOptionalOptInConsent(label) ||
-      (isConsentField(label) && typeof isRequiredField === "function" && !isRequiredField(element, element))
+      isConsentField(label) &&
+      typeof isRequiredField === "function" &&
+      !isRequiredField(element, element) &&
+      !/\bprivacy (notice|policy|statement)\b|\bterms (and conditions|of (use|service))\b|\bdata (will be|is|are) process/i.test(
+        String(label || "")
+      )
     ) {
       continue;
     }
@@ -11901,6 +11964,13 @@ function captureSampleInPage(profile, qaBank) {
     // generation, which returned "Polish" (the candidate's nationality, from the QA bank) for
     // "Family Name" instead of the actual surname - a small local model has no way to reliably
     // resolve a vaguely-worded label a plain profile lookup answers correctly and for free.
+    // One input asking for both halves wants the whole name: Playrix labels its single name
+    // field "Last and first name*", which matched neither the first- nor the last-name pattern,
+    // so the applicant was asked for it (playrix-com-20260815T072339Z).
+    {
+      re: /^(first|last)\s+and\s+(last|first)\s*names?\b|\bname\s*\(\s*(first and last|last and first)\s*\)/i,
+      get: (p) => p.contact.name,
+    },
     { re: /^first\s*name|^given\s*name|\bname\s*-\s*first\b|^first$/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^preferred(\s+first)?\s*name/i, get: (p) => (p.contact.name || "").split(" ")[0] || "" },
     { re: /^last\s*name|^family\s*name|^surname\b|\bname\s*-\s*last\b|^last$/i, get: (p) => (p.contact.name || "").split(" ").slice(1).join(" ") },

@@ -3625,6 +3625,34 @@ unverified outside a live browser).
     double-ticked); EEO follows the QA bank when present and declines when not. Not yet
     confirmed live.
 
+148. **Playrix (20260815T072339Z): placeholder-only questions never resolved, and Country
+    never committed.** `Author: Cursor`. Capture `playrix-com-20260815T072339Z`. The whole
+    apply form is label-less — each field's question lives in its `placeholder` or in a
+    react-select placeholder chip ("Country*", "English language level*", …) — and four
+    separate bugs stacked:
+    - Detection climbed to the form's `<h2>Apply to this position</h2>` for the name and
+      email inputs, and the free-text box took the neighbouring "Russian language level"
+      select's text, so it was answered "No knowledge". Fixed by treating a heading that
+      covers more than a small cluster of following controls as a section title, refusing
+      sibling climbs through a neighbouring dropdown, and preferring the field's own
+      placeholder once those false neighbours are skipped.
+    - Non-searchable react-selects render a zero-size `…dummyInput` proxy; English level,
+      Russian level and "How did you hear…" were invisible to detection entirely. Visibility
+      now treats a `react-select-N-input` / `dummyInput` as visible when its parent control
+      box is.
+    - Country *was* discovered (15 options including Poland) but never committed: the
+      generic combobox path typed via `nativeSet`, which blurs when finished, and
+      react-select answers a blur by closing the menu and clearing the query — every attempt
+      then read zero options. Typing through `setComboboxFilterText(..., { keepFocus: true })`
+      for filter inputs inside a `__control` keeps the menu open long enough to click.
+    - Related cleanups on the same form: "Last and first name" is now a full-name profile
+      match; a named language with no profile/QA evidence defaults to an explicit "no
+      knowledge" option instead of inventing C2 fluency; the Privacy Notice acknowledgement
+      (a `display:none` checkbox with a visible `<label>`) is detectable and auto-ticked so
+      Submit isn't left disabled. Verified live against playrix.com: name, email, Country=
+      Poland, English=C2, Russian=0 — No knowledge, hear-about, and the privacy tick all
+      commit; only the Telegram `@username*` is left for the applicant.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
