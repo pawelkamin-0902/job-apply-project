@@ -19,11 +19,20 @@ def normalize_resume(raw: dict, profile: Profile) -> ResumeData:
     return ResumeData(
         name=raw.get("name") or profile.contact.name or "",
         contact_line=_repair_contact_line(raw.get("contact_line"), profile.contact),
-        summary=raw.get("summary", ""),
+        summary=_normalize_summary(raw.get("summary", "")),
         skills=_normalize_skills(raw.get("skills", {})),
         experience=[_normalize_experience(e) for e in raw.get("experience", [])],
         education=_normalize_education(raw.get("education"), profile.education),
     )
+
+
+def _normalize_summary(summary: object) -> str:
+    """Summary is one flowing paragraph — collapse any newlines the model may insert
+    between sentences so PDF/DOCX/HTML don't render each sentence on its own line."""
+    if not isinstance(summary, str):
+        return ""
+    text = _EMBEDDED_NEWLINE_RE.sub(" ", summary).strip()
+    return _WHITESPACE_RUN_RE.sub(" ", text)
 
 
 def _build_contact_line(contact: ContactInfo) -> str:

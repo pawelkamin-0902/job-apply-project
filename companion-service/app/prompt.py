@@ -38,7 +38,8 @@ just to reach a target bullet count.
 - Write a summary that matches the depth of detail the candidate already provided about themselves — if \
 their own summary is long and detailed, reflect that (roughly 4-6 sentences); if it's brief, keep the output \
 brief rather than padding it. Open with the candidate's real title/experience level and highlight the most \
-JD-relevant real skills or technologies they actually have.
+JD-relevant real skills or technologies they actually have. Put the entire summary in one paragraph as a \
+single string with spaces between sentences — do not insert newline characters between sentences.
 
 If the job description emphasizes a skill, technology, or compliance framework the candidate doesn't have, \
 do not add it. Surface the closest genuinely-held skills instead.
@@ -57,7 +58,7 @@ _SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and nothing else \
 email, and any links (LinkedIn, GitHub, portfolio, ...) as markdown links: [visible text](url), using \
 tel:/mailto:/https:// as appropriate. For links, the visible text must be the actual URL or handle itself \
 (e.g. linkedin.com/in/janedoe), never a generic label like 'LinkedIn' or 'Portfolio'.",
-  "summary": "string",
+  "summary": "string: one paragraph, sentences separated by spaces only (no newline characters)",
   "skills": {"category name": ["skill", "..."]},
   "experience": [
     {"title": "string", "company": "string", "location": "string or null", "dates": "string", "bullets": ["string", "..."]}
