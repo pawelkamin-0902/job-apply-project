@@ -57,7 +57,8 @@ _SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and nothing else \
   "contact_line": "string: phone | email | location | linkedin (etc.), each separated by ' | '. Write phone, \
 email, and any links (LinkedIn, GitHub, portfolio, ...) as markdown links: [visible text](url), using \
 tel:/mailto:/https:// as appropriate. For links, the visible text must be the actual URL or handle itself \
-(e.g. linkedin.com/in/janedoe), never a generic label like 'LinkedIn' or 'Portfolio'.",
+(e.g. linkedin.com/in/janedoe), never a generic label like 'LinkedIn' or 'Portfolio'. Do not include \
+Telegram, t.me, or other messaging-app links.",
   "summary": "string: one paragraph, sentences separated by spaces only (no newline characters)",
   "skills": {"category name": ["skill", "..."]},
   "experience": [

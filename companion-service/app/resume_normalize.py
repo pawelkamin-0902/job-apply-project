@@ -37,7 +37,8 @@ def _normalize_summary(summary: object) -> str:
 
 def _build_contact_line(contact: ContactInfo) -> str:
     parts = [contact.phone, contact.email, contact.location, contact.linkedin, contact.website]
-    return " | ".join(p for p in parts if p)
+    parts = [p for p in parts if p and not _is_telegram_segment(p)]
+    return " | ".join(_linkify_contact_segment(p) for p in parts)
 
 
 _EMBEDDED_NEWLINE_RE = re.compile(r"\s*[\r\n]+\s*")
@@ -51,6 +52,19 @@ _PHONE_SEGMENT_RE = re.compile(r"^\+?[\d\s().-]{7,}$")
 # linkified at all. Matches an optional scheme/www prefix, then any domain-shaped
 # "word.tld" followed by an optional "/path", spanning the whole segment (no spaces).
 _URL_SEGMENT_RE = re.compile(r"^(https?://|www\.)?[\w.-]+\.[a-zA-Z]{2,}(/\S*)?$")
+_TELEGRAM_HINT_RE = re.compile(r"(?:^|://|www\.)?(?:t\.me/|telegram\.(?:me|org)/?|telegram)", re.I)
+
+
+def _is_telegram_segment(segment: str) -> bool:
+    """True for Telegram handles/URLs — resumes should not surface messaging-app links."""
+    segment = (segment or "").strip()
+    if not segment:
+        return False
+    already = _ALREADY_LINKED_RE.match(segment)
+    if already:
+        label, url = already.group(1), already.group(2)
+        return bool(_TELEGRAM_HINT_RE.search(label) or _TELEGRAM_HINT_RE.search(url))
+    return bool(_TELEGRAM_HINT_RE.search(segment))
 
 
 def _linkify_contact_segment(segment: str) -> str:
@@ -105,7 +119,7 @@ def _repair_contact_line(raw_contact_line: str | None, contact: ContactInfo) -> 
 
     cleaned = _EMBEDDED_NEWLINE_RE.sub(" ", raw_contact_line).strip()
     segments = [_WHITESPACE_RUN_RE.sub(" ", s.strip()) for s in cleaned.split("|")]
-    segments = [s for s in segments if s]
+    segments = [s for s in segments if s and not _is_telegram_segment(s)]
 
     country = (contact.country or "").strip()
     if country and not any(country.lower() in s.lower() for s in segments):
@@ -116,7 +130,8 @@ def _repair_contact_line(raw_contact_line: str | None, contact: ContactInfo) -> 
         else:
             segments.append(country)
 
-    return " | ".join(_linkify_contact_segment(s) for s in segments)
+    linked = [_linkify_contact_segment(s) for s in segments]
+    return " | ".join(s for s in linked if not _is_telegram_segment(s))
 
 
 def _normalize_skills(skills: object) -> dict[str, list[str]]:
