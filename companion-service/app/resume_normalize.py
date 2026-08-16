@@ -37,8 +37,7 @@ def _normalize_summary(summary: object) -> str:
 
 def _build_contact_line(contact: ContactInfo) -> str:
     parts = [contact.phone, contact.email, contact.location, contact.linkedin, contact.website]
-    parts = [p for p in parts if p and not _is_telegram_segment(p)]
-    return " | ".join(_linkify_contact_segment(p) for p in parts)
+    return " | ".join(p for p in parts if p)
 
 
 _EMBEDDED_NEWLINE_RE = re.compile(r"\s*[\r\n]+\s*")
@@ -52,44 +51,32 @@ _PHONE_SEGMENT_RE = re.compile(r"^\+?[\d\s().-]{7,}$")
 # linkified at all. Matches an optional scheme/www prefix, then any domain-shaped
 # "word.tld" followed by an optional "/path", spanning the whole segment (no spaces).
 _URL_SEGMENT_RE = re.compile(r"^(https?://|www\.)?[\w.-]+\.[a-zA-Z]{2,}(/\S*)?$")
-_TELEGRAM_HINT_RE = re.compile(r"(?:^|://|www\.)?(?:t\.me/|telegram\.(?:me|org)/?|telegram)", re.I)
-
-
-def _is_telegram_segment(segment: str) -> bool:
-    """True for Telegram handles/URLs — resumes should not surface messaging-app links."""
-    segment = (segment or "").strip()
-    if not segment:
-        return False
-    already = _ALREADY_LINKED_RE.match(segment)
-    if already:
-        label, url = already.group(1), already.group(2)
-        return bool(_TELEGRAM_HINT_RE.search(label) or _TELEGRAM_HINT_RE.search(url))
-    return bool(_TELEGRAM_HINT_RE.search(segment))
 
 
 def _linkify_contact_segment(segment: str) -> str:
-    """Converts a plain phone/email/URL segment into the "[visible text](url)" markdown-link
-    format the elegant PDF/DOCX templates' per-item icon logic depends on to tell a phone
-    number apart from an email/LinkedIn/other link (see pdf_render_elegant.py's
-    _icon_for_url) — confirmed live, a real generated contact_line used plain text for every
-    segment despite prompt.py's schema instructing markdown links explicitly, so every single
-    item fell through to the same fallback (location) icon instead of its own. Leaves a
-    segment that's already correctly linked, or one that doesn't look like a phone/email/URL
-    at all (assumed to be the location, which is meant to stay plain text), untouched.
-    LinkedIn URLs always use the visible label "LinkedIn" (href keeps the real profile URL)."""
+    """Converts a plain email/URL segment into the "[visible text](url)" markdown-link
+    format the elegant PDF/DOCX templates' per-item icon logic depends on. Phone numbers
+    stay plain text (no tel: hyperlink). Leaves a segment that's already correctly linked,
+    or one that doesn't look like an email/URL at all (assumed to be the location or phone,
+    which stay plain text), untouched. LinkedIn URLs always use the visible label "LinkedIn"
+    (href keeps the real profile URL)."""
     segment = segment.strip()
     if not segment:
         return segment
     already = _ALREADY_LINKED_RE.match(segment)
     if already:
         label, url = already.group(1), already.group(2)
+        # Phone: show digits only — no clickable tel: link in the resume header.
+        if url.lower().startswith("tel:"):
+            return label
         if "linkedin.com" in url.lower() and label.lower() != "linkedin":
             return f"[LinkedIn]({url})"
         return segment
     if _EMAIL_SEGMENT_RE.match(segment):
         return f"[{segment}](mailto:{segment})"
+    # Phone stays plain text (never wrap in [n](tel:n)).
     if _PHONE_SEGMENT_RE.match(segment) and any(ch.isdigit() for ch in segment):
-        return f"[{segment}](tel:{segment})"
+        return segment
     if _URL_SEGMENT_RE.match(segment):
         href = segment if segment.lower().startswith("http") else f"https://{segment}"
         label = "LinkedIn" if "linkedin.com" in href.lower() else segment
@@ -119,7 +106,7 @@ def _repair_contact_line(raw_contact_line: str | None, contact: ContactInfo) -> 
 
     cleaned = _EMBEDDED_NEWLINE_RE.sub(" ", raw_contact_line).strip()
     segments = [_WHITESPACE_RUN_RE.sub(" ", s.strip()) for s in cleaned.split("|")]
-    segments = [s for s in segments if s and not _is_telegram_segment(s)]
+    segments = [s for s in segments if s]
 
     country = (contact.country or "").strip()
     if country and not any(country.lower() in s.lower() for s in segments):
@@ -130,8 +117,7 @@ def _repair_contact_line(raw_contact_line: str | None, contact: ContactInfo) -> 
         else:
             segments.append(country)
 
-    linked = [_linkify_contact_segment(s) for s in segments]
-    return " | ".join(s for s in linked if not _is_telegram_segment(s))
+    return " | ".join(_linkify_contact_segment(s) for s in segments)
 
 
 def _normalize_skills(skills: object) -> dict[str, list[str]]:
