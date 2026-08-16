@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -840,7 +841,8 @@ async def render(body: RenderRequest, active_person: str = Depends(get_active_pe
         errors.append(f"docx: could not write {exc.filename} — is it open in WPS Office or another program?")
 
     try:
-        template.build_pdf(resume, pdf_path)
+        # Sync Playwright cannot run on the FastAPI event-loop thread; offload.
+        await asyncio.to_thread(template.build_pdf, resume, pdf_path)
     except PermissionError as exc:
         pdf_path = None
         errors.append(f"pdf: could not write {exc.filename} — is it open in another program?")

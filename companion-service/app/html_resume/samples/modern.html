@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Antoni Kowalski — Resume (Modern)</title>
+  <style>
+    /* Mirrors companion-service/app/pdf_render.py (Modern / Helvetica / green).
+       Page: US Letter, 0.5" side margins, 0.4" top/bottom. */
+    @page {
+      size: letter;
+      margin: 0.4in 0.5in;
+    }
+    :root {
+      --accent: #0E6E55;
+      --text: #1A1A1A;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: Helvetica, Arial, "Helvetica Neue", sans-serif;
+      font-size: 10.5pt;
+      line-height: 14pt;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.4in 0.5in;
+      background: #fff;
+    }
+    .name {
+      text-align: center;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 22pt;
+      line-height: 28pt;
+      margin: 0 0 8pt;
+    }
+    .contact {
+      text-align: center;
+      font-size: 9.5pt;
+      line-height: 12pt;
+      margin: 0 0 4pt;
+    }
+    .contact a { color: var(--accent); text-decoration: none; }
+    .rule {
+      border: 0;
+      border-top: 1px solid var(--accent);
+      margin: 2pt 0 6pt;
+    }
+    h2.section {
+      color: var(--accent);
+      font-size: 12pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      margin: 10pt 0 4pt;
+    }
+    .summary { margin: 0 0 2pt; }
+    .skill {
+      margin: 0 0 2pt;
+    }
+    .skill strong { font-weight: 700; }
+    .job, .edu { margin: 0 0 6pt; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8pt;
+      margin: 0 0 2pt;
+    }
+    .row .left { flex: 1 1 70%; font-weight: 700; }
+    .row .right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
+    .loc {
+      font-style: italic;
+      margin: 0 0 2pt;
+    }
+    ul.bullets {
+      margin: 0;
+      padding: 0 0 0 16pt;
+      list-style: none;
+    }
+    ul.bullets li {
+      position: relative;
+      margin: 0 0 2pt;
+      padding-left: 0;
+    }
+    ul.bullets li::before {
+      content: "•";
+      position: absolute;
+      left: -12pt;
+    }
+    strong { font-weight: 700; }
+    a { color: var(--accent); text-decoration: none; }
+
+    @media screen {
+      body { background: #e8e8e8; padding: 24px 0; }
+      .page {
+        box-shadow: 0 1px 4px rgba(0,0,0,.18);
+      }
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <h1 class="name">Antoni Kowalski</h1>
+    <p class="contact"><a href="tel:+48694542078">+48694542078</a> | <a href="mailto:kowalskiantoni120@gmail.com">kowalskiantoni120@gmail.com</a> | Warsaw, Poland | <a href="https://www.linkedin.com/in/antoni-kowalski-50b684422/">LinkedIn</a></p>
+    <hr class="rule" />
+
+    <h2 class="section">Summary</h2>
+    <hr class="rule" />
+    <p class="summary">Senior Software Engineer with 8+ years building production systems across cybersecurity, fintech, healthcare, SaaS, and large-scale consumer platforms.<br>
+Expertise in <strong>cybersecurity AI, large language models, Python, PyTorch, and Kubernetes</strong> for secure reasoning, summarization, interactivity, and threat investigation.<br>
+Proven track record delivering <strong>research-to-production machine learning systems</strong> with responsible AI, adversarial evaluation, model observability, and data protection controls.<br>
+Proficient in deep learning training and deployment at scale, NVIDIA GPU optimization, distributed systems, cloud technologies, and production-grade model evaluation frameworks.<br>
+Collaborative technical leader experienced mentoring engineers, guiding cross-functional initiatives, influencing senior stakeholders, and making high-judgement decisions in ambiguous, fast-paced environments.<br>
+Strong focus on <strong>LLM architecture, cybersecurity applications, engineering excellence, and scalable AI systems</strong> that improve detection, analyst workflows, and customer protection.</p>
+
+    <h2 class="section">Skills</h2>
+    <hr class="rule" />
+    
+    <p class="skill"><strong>Programming &amp; Scientific Computing:</strong> Python, C++, SQL, Bash, NumPy, Pandas, SciPy, Jupyter, Pydantic, FastAPI</p>
+    
+    <p class="skill"><strong>LLM &amp; Generative AI:</strong> Large Language Models, Transformers, Retrieval-Augmented Generation, Prompt Engineering, Supervised Fine-Tuning, Parameter-Efficient Fine-Tuning, Reinforcement Learning From Human Feedback, Agentic AI, Embeddings, Vector Search</p>
+    
+    <p class="skill"><strong>Deep Learning &amp; Machine Learning:</strong> PyTorch, TensorFlow, Scikit-Learn, Deep Learning, Natural Language Processing, Representation Learning, Distributed Training, Model Calibration, Feature Engineering, Hyperparameter Optimization</p>
+    
+    <p class="skill"><strong>Data &amp; Distributed Systems:</strong> Apache Kafka, Apache Spark, PostgreSQL, Redis, Elasticsearch, Milvus, Pgvector, Ray, gRPC, REST APIs</p>
+    
+
+    <h2 class="section">Experience</h2>
+    <hr class="rule" />
+    
+    <section class="job">
+      <div class="row">
+        <div class="left">Senior Software Engineer — Bounteous</div>
+        <div class="right">Mar 2024 – Present</div>
+      </div>
+      <p class="loc">Warsaw, Poland (Remote)</p>
+      
+      <ul class="bullets">
+        <li>Architected a <strong>production-grade retrieval-augmented generation platform</strong> using Python, PyTorch, Transformers, vector search, and Kubernetes, enabling secure reasoning and summarization across sensitive enterprise cybersecurity knowledge bases.</li><li>Led research strategy for LLM evaluation, prompt optimization, and fine-tuning, translating ambiguous product requirements into reproducible experiments, deployment criteria, technical standards, and measurable model-quality benchmarks.</li><li>Engineered <strong>distributed inference services for transformer models</strong> with NVIDIA GPUs, mixed precision, dynamic batching, and autoscaling, supporting 120 million security signals daily with predictable latency.</li><li>Designed agentic workflows for threat investigation using tool calling, semantic retrieval, and structured outputs, improving analyst interactivity while preserving authorization boundaries, auditability, and data governance.</li><li>Implemented <strong>adversarial evaluation and AI red-teaming frameworks</strong> covering prompt injection, data leakage, hallucination, and unsafe tool execution for enterprise cybersecurity products and responsible AI adoption.</li><li>Optimized PyTorch inference through quantization, compilation, caching, and GPU memory profiling, reducing end-to-end response time from 11 seconds to 4 seconds across six production models.</li><li>Mentored engineers and applied scientists on deep learning experimentation, model review, and research-to-production practices while aligning cross-functional technical strategy with senior product and security stakeholders.</li><li>Established <strong>LLM observability and continuous evaluation pipelines</strong> using MLflow, OpenTelemetry, and statistical test suites, enabling safe releases, drift detection, incident analysis, and production rollback decisions.</li>
+      </ul>
+      
+    </section>
+    
+    <section class="job">
+      <div class="row">
+        <div class="left">Senior Software Engineer — Wise</div>
+        <div class="right">Oct 2022 – Feb 2024</div>
+      </div>
+      <p class="loc">Warsaw, Poland (Remote)</p>
+      
+      <ul class="bullets">
+        <li>Developed <strong>machine learning systems for payment risk detection</strong> using Python, PyTorch, Kafka, and PostgreSQL, combining behavioral signals and transaction context for secure, real-time financial decisioning.</li><li>Designed deep learning training pipelines for fraud classification, feature representation, and model calibration, integrating reproducible experiments, offline evaluation, and controlled production deployment across global fintech services.</li><li>Built <strong>streaming feature pipelines and online inference APIs</strong> processing more than 2 million daily payment events while maintaining low-latency decisions, traceability, and resilient fallback behavior.</li><li>Implemented model explainability, bias analysis, and monitoring for regulated financial workflows, supporting audit evidence, GDPR-aligned data handling, and high-judgement decisions by experienced risk operations teams.</li><li>Optimized GPU training with mixed precision, distributed data parallelism, and efficient sampling, shortening a core model training cycle from 19 hours to 7 hours while preserving accuracy.</li><li>Partnered with software engineers and risk specialists to translate emerging fraud patterns into <strong>production-grade model architectures</strong>, evaluation datasets, deployment controls, and documented incident response playbooks.</li><li>Established technical standards for feature quality, experiment tracking, and model validation, improving consistency across applied machine learning projects supporting payment processing, fraud detection, and customer protection.</li><li>Mentored engineers through architecture reviews and model debugging, communicating tradeoffs to senior stakeholders and driving cross-functional decisions under ambiguity within a fast-paced global fintech environment.</li>
+      </ul>
+      
+    </section>
+    
+
+    <h2 class="section">Education</h2>
+    <hr class="rule" />
+    
+    <section class="edu">
+      <div class="row">
+        <div class="left">University of Oulu — Bachelor’s degree</div>
+        <div class="right">Aug 2014 – Jun 2017</div>
+      </div>
+      <p class="loc">Oulu, Finland (Onsite)</p>
+    </section>
+    
+  </article>
+</body>
+</html>

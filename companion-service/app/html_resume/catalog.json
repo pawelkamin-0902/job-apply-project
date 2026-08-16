@@ -1,0 +1,12 @@
+{
+  "modern": {
+    "name": "Modern",
+    "description": "Clean sans-serif with a single green accent color, round bullets, one-line job headings.",
+    "contact": "plain"
+  },
+  "elegant": {
+    "name": "Elegant Serif",
+    "description": "Serif font with green + gold two-tone accents, en-dash bullets, two-line job headings.",
+    "contact": "plain"
+  }
+}

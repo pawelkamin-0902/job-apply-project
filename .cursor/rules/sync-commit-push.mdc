@@ -1,0 +1,44 @@
+---
+description: Delivery workflow for job-apply-project — sync to the Windows share, then commit and push as the repo owner
+alwaysApply: true
+---
+
+# After every code change: sync → commit → push
+
+The Windows host runs the code from a VMware shared folder, not from this checkout.
+Editing files here changes nothing on Windows until `sync.sh` runs, so a "still broken"
+report right after an edit usually means the sync step was skipped.
+
+Run all three steps, in order, once the change is complete:
+
+```bash
+cd job-apply-project
+./sync.sh                       # rsync to the HGFS share the Windows host reads
+git add -A && git commit -m "…" # see identity rules below
+git push
+```
+
+## Commit identity
+
+Commit as the repo owner only. The configured `user.name` / `user.email` are already
+correct — never override them with `--author`, `-c user.*`, or `GIT_AUTHOR_*`.
+
+Never add AI attribution trailers to the commit body:
+
+```
+# ❌ BAD
+Fix Playwright sync API crash under the FastAPI event loop
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+# ✅ GOOD
+Fix Playwright sync API crash under the FastAPI event loop
+```
+
+No `Co-authored-by`, no "Generated with", no tool name in the message.
+
+## Notes
+
+- `sync.sh` excludes `venv`, `__pycache__`, `node_modules`, the browser profile dirs, and
+  `extension/test-forms/captured` (real capture data that `--delete` would otherwise wipe).
+- After syncing Python changes, the Windows service needs a `start.bat` restart to pick them up.

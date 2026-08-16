@@ -1,0 +1,97 @@
+{
+  "name": "Antoni Kowalski",
+  "contact_line": "[+48694542078](tel:+48694542078) | [kowalskiantoni120@gmail.com](mailto:kowalskiantoni120@gmail.com) | Warsaw, Poland | [linkedin.com/in/antoni-kowalski-50b684422/](https://www.linkedin.com/in/antoni-kowalski-50b684422/)",
+  "summary": "Senior Software Engineer with 8+ years building production systems across cybersecurity, fintech, healthcare, SaaS, and large-scale consumer platforms.\nExpertise in **cybersecurity AI, large language models, Python, PyTorch, and Kubernetes** for secure reasoning, summarization, interactivity, and threat investigation.\nProven track record delivering **research-to-production machine learning systems** with responsible AI, adversarial evaluation, model observability, and data protection controls.\nProficient in deep learning training and deployment at scale, NVIDIA GPU optimization, distributed systems, cloud technologies, and production-grade model evaluation frameworks.\nCollaborative technical leader experienced mentoring engineers, guiding cross-functional initiatives, influencing senior stakeholders, and making high-judgement decisions in ambiguous, fast-paced environments.\nStrong focus on **LLM architecture, cybersecurity applications, engineering excellence, and scalable AI systems** that improve detection, analyst workflows, and customer protection.",
+  "skills": {
+    "Programming & Scientific Computing": [
+      "Python",
+      "C++",
+      "SQL",
+      "Bash",
+      "NumPy",
+      "Pandas",
+      "SciPy",
+      "Jupyter",
+      "Pydantic",
+      "FastAPI"
+    ],
+    "LLM & Generative AI": [
+      "Large Language Models",
+      "Transformers",
+      "Retrieval-Augmented Generation",
+      "Prompt Engineering",
+      "Supervised Fine-Tuning",
+      "Parameter-Efficient Fine-Tuning",
+      "Reinforcement Learning From Human Feedback",
+      "Agentic AI",
+      "Embeddings",
+      "Vector Search"
+    ],
+    "Deep Learning & Machine Learning": [
+      "PyTorch",
+      "TensorFlow",
+      "Scikit-Learn",
+      "Deep Learning",
+      "Natural Language Processing",
+      "Representation Learning",
+      "Distributed Training",
+      "Model Calibration",
+      "Feature Engineering",
+      "Hyperparameter Optimization"
+    ],
+    "Data & Distributed Systems": [
+      "Apache Kafka",
+      "Apache Spark",
+      "PostgreSQL",
+      "Redis",
+      "Elasticsearch",
+      "Milvus",
+      "Pgvector",
+      "Ray",
+      "gRPC",
+      "REST APIs"
+    ]
+  },
+  "experience": [
+    {
+      "title": "Senior Software Engineer",
+      "company": "Bounteous",
+      "location": "Warsaw, Poland (Remote)",
+      "dates": "Mar 2024 \u2013 Present",
+      "bullets": [
+        "Architected a **production-grade retrieval-augmented generation platform** using Python, PyTorch, Transformers, vector search, and Kubernetes, enabling secure reasoning and summarization across sensitive enterprise cybersecurity knowledge bases.",
+        "Led research strategy for LLM evaluation, prompt optimization, and fine-tuning, translating ambiguous product requirements into reproducible experiments, deployment criteria, technical standards, and measurable model-quality benchmarks.",
+        "Engineered **distributed inference services for transformer models** with NVIDIA GPUs, mixed precision, dynamic batching, and autoscaling, supporting 120 million security signals daily with predictable latency.",
+        "Designed agentic workflows for threat investigation using tool calling, semantic retrieval, and structured outputs, improving analyst interactivity while preserving authorization boundaries, auditability, and data governance.",
+        "Implemented **adversarial evaluation and AI red-teaming frameworks** covering prompt injection, data leakage, hallucination, and unsafe tool execution for enterprise cybersecurity products and responsible AI adoption.",
+        "Optimized PyTorch inference through quantization, compilation, caching, and GPU memory profiling, reducing end-to-end response time from 11 seconds to 4 seconds across six production models.",
+        "Mentored engineers and applied scientists on deep learning experimentation, model review, and research-to-production practices while aligning cross-functional technical strategy with senior product and security stakeholders.",
+        "Established **LLM observability and continuous evaluation pipelines** using MLflow, OpenTelemetry, and statistical test suites, enabling safe releases, drift detection, incident analysis, and production rollback decisions."
+      ]
+    },
+    {
+      "title": "Senior Software Engineer",
+      "company": "Wise",
+      "location": "Warsaw, Poland (Remote)",
+      "dates": "Oct 2022 \u2013 Feb 2024",
+      "bullets": [
+        "Developed **machine learning systems for payment risk detection** using Python, PyTorch, Kafka, and PostgreSQL, combining behavioral signals and transaction context for secure, real-time financial decisioning.",
+        "Designed deep learning training pipelines for fraud classification, feature representation, and model calibration, integrating reproducible experiments, offline evaluation, and controlled production deployment across global fintech services.",
+        "Built **streaming feature pipelines and online inference APIs** processing more than 2 million daily payment events while maintaining low-latency decisions, traceability, and resilient fallback behavior.",
+        "Implemented model explainability, bias analysis, and monitoring for regulated financial workflows, supporting audit evidence, GDPR-aligned data handling, and high-judgement decisions by experienced risk operations teams.",
+        "Optimized GPU training with mixed precision, distributed data parallelism, and efficient sampling, shortening a core model training cycle from 19 hours to 7 hours while preserving accuracy.",
+        "Partnered with software engineers and risk specialists to translate emerging fraud patterns into **production-grade model architectures**, evaluation datasets, deployment controls, and documented incident response playbooks.",
+        "Established technical standards for feature quality, experiment tracking, and model validation, improving consistency across applied machine learning projects supporting payment processing, fraud detection, and customer protection.",
+        "Mentored engineers through architecture reviews and model debugging, communicating tradeoffs to senior stakeholders and driving cross-functional decisions under ambiguity within a fast-paced global fintech environment."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "school": "University of Oulu",
+      "degree": "Bachelor\u2019s degree",
+      "location": "Oulu, Finland (Onsite)",
+      "dates": "Aug 2014 \u2013 Jun 2017"
+    }
+  ]
+}

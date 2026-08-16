@@ -33,7 +33,7 @@ def _build_contact_line(contact: ContactInfo) -> str:
 
 _EMBEDDED_NEWLINE_RE = re.compile(r"\s*[\r\n]+\s*")
 _WHITESPACE_RUN_RE = re.compile(r" {2,}")
-_ALREADY_LINKED_RE = re.compile(r"^\[[^\]]+\]\([^)]+\)$")
+_ALREADY_LINKED_RE = re.compile(r"^\[([^\]]+)\]\(([^)]+)\)$")
 _EMAIL_SEGMENT_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _PHONE_SEGMENT_RE = re.compile(r"^\+?[\d\s().-]{7,}$")
 # Resumes commonly write links without a scheme or "www." at all ("linkedin.com/in/x",
@@ -52,9 +52,16 @@ def _linkify_contact_segment(segment: str) -> str:
     segment despite prompt.py's schema instructing markdown links explicitly, so every single
     item fell through to the same fallback (location) icon instead of its own. Leaves a
     segment that's already correctly linked, or one that doesn't look like a phone/email/URL
-    at all (assumed to be the location, which is meant to stay plain text), untouched."""
+    at all (assumed to be the location, which is meant to stay plain text), untouched.
+    LinkedIn URLs always use the visible label "LinkedIn" (href keeps the real profile URL)."""
     segment = segment.strip()
-    if not segment or _ALREADY_LINKED_RE.match(segment):
+    if not segment:
+        return segment
+    already = _ALREADY_LINKED_RE.match(segment)
+    if already:
+        label, url = already.group(1), already.group(2)
+        if "linkedin.com" in url.lower() and label.lower() != "linkedin":
+            return f"[LinkedIn]({url})"
         return segment
     if _EMAIL_SEGMENT_RE.match(segment):
         return f"[{segment}](mailto:{segment})"
@@ -62,7 +69,8 @@ def _linkify_contact_segment(segment: str) -> str:
         return f"[{segment}](tel:{segment})"
     if _URL_SEGMENT_RE.match(segment):
         href = segment if segment.lower().startswith("http") else f"https://{segment}"
-        return f"[{segment}]({href})"
+        label = "LinkedIn" if "linkedin.com" in href.lower() else segment
+        return f"[{label}]({href})"
     return segment
 
 

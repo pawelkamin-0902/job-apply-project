@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ name }} — Resume (Modern)</title>
+  <style>
+    /* Mirrors companion-service/app/pdf_render.py (Modern / Helvetica / green).
+       Page: US Letter, 0.5" side margins, 0.4" top/bottom. */
+    @page {
+      size: letter;
+      margin: 0.4in 0.5in;
+    }
+    :root {
+      --accent: #0E6E55;
+      --text: #1A1A1A;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: Helvetica, Arial, "Helvetica Neue", sans-serif;
+      font-size: 10.5pt;
+      line-height: 14pt;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.4in 0.5in;
+      background: #fff;
+    }
+    .name {
+      text-align: center;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 22pt;
+      line-height: 28pt;
+      margin: 0 0 8pt;
+    }
+    .contact {
+      text-align: center;
+      font-size: 9.5pt;
+      line-height: 12pt;
+      margin: 0 0 4pt;
+    }
+    .contact a { color: var(--accent); text-decoration: none; }
+    .rule {
+      border: 0;
+      border-top: 1px solid var(--accent);
+      margin: 2pt 0 6pt;
+    }
+    h2.section {
+      color: var(--accent);
+      font-size: 12pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      margin: 10pt 0 4pt;
+    }
+    .summary { margin: 0 0 2pt; }
+    .skill {
+      margin: 0 0 2pt;
+    }
+    .skill strong { font-weight: 700; }
+    .job, .edu { margin: 0 0 6pt; }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8pt;
+      margin: 0 0 2pt;
+    }
+    .row .left { flex: 1 1 70%; font-weight: 700; }
+    .row .right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
+    .loc {
+      font-style: italic;
+      margin: 0 0 2pt;
+    }
+    ul.bullets {
+      margin: 0;
+      padding: 0 0 0 16pt;
+      list-style: none;
+    }
+    ul.bullets li {
+      position: relative;
+      margin: 0 0 2pt;
+      padding-left: 0;
+    }
+    ul.bullets li::before {
+      content: "•";
+      position: absolute;
+      left: -12pt;
+    }
+    strong { font-weight: 700; }
+    a { color: var(--accent); text-decoration: none; }
+
+    @media screen {
+      body { background: #e8e8e8; padding: 24px 0; }
+      .page {
+        box-shadow: 0 1px 4px rgba(0,0,0,.18);
+      }
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <h1 class="name">{{ name }}</h1>
+    <p class="contact">{{ contact_line_html }}</p>
+    <hr class="rule" />
+
+    <h2 class="section">Summary</h2>
+    <hr class="rule" />
+    <p class="summary">{{ summary_html }}</p>
+
+    <h2 class="section">Skills</h2>
+    <hr class="rule" />
+    {% for category, items in skills.items() %}
+    <p class="skill"><strong>{{ category }}:</strong> {{ items | join(', ') }}</p>
+    {% endfor %}
+
+    <h2 class="section">Experience</h2>
+    <hr class="rule" />
+    {% for job in experience %}
+    <section class="job">
+      <div class="row">
+        <div class="left">{{ job.title }} — {{ job.company }}</div>
+        <div class="right">{{ job.dates }}</div>
+      </div>
+      {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for b in job.bullets %}<li>{{ b | md }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <h2 class="section">Education</h2>
+    <hr class="rule" />
+    {% for edu in education %}
+    <section class="edu">
+      <div class="row">
+        <div class="left">{% if edu.degree %}{{ edu.school }} — {{ edu.degree }}{% else %}{{ edu.school }}{% endif %}</div>
+        <div class="right">{{ edu.dates or '' }}</div>
+      </div>
+      {% if edu.location %}<p class="loc">{{ edu.location }}</p>{% endif %}
+    </section>
+    {% endfor %}
+  </article>
+</body>
+</html>
