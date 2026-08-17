@@ -1880,7 +1880,7 @@ function extractPageInfo() {
   // "Job openings"/"open positions" (PeopleForce: a generic <h1> sitting above the real title,
   // which lives in a separate <h2>) added alongside the apply-flow-chrome phrases above.
   const GENERIC_TITLE_RE =
-    /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|.+\bopenings?)$/i;
+    /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|job details( page)?|.+\bopenings?)$/i;
 
   // JD section headings that sometimes win in embedded description iframes (RecruitCRM's first
   // <h2> is "Summary") — never treat these as the job title.
@@ -1999,6 +1999,24 @@ function extractPageInfo() {
       return ukgTitleText;
     }
 
+    // Darwinbox careers (*.darwinbox.com): no <h1>; the posting title lives in
+    // `.title-section .title`. Confirmed live on transcarent.darwinbox.com jobDetails —
+    // <title>/og:title are both the useless shell string "Job Details Page".
+    if (/(^|\.)darwinbox\.com$/i.test(location.hostname || "")) {
+      const darwinTitleEl = document.querySelector(".title-section .title, .header-section .title");
+      const darwinTitle =
+        darwinTitleEl && (darwinTitleEl.innerText || darwinTitleEl.textContent || "").replace(/\s+/g, " ").trim();
+      if (
+        darwinTitle &&
+        darwinTitle.length > 2 &&
+        darwinTitle.length < 150 &&
+        !GENERIC_TITLE_RE.test(darwinTitle) &&
+        !isUnsupportedBrowserTitle(darwinTitle)
+      ) {
+        return darwinTitle;
+      }
+    }
+
     // Prefer dedicated job-title markers BEFORE any generic <h1> scan — SmartRecruiters job
     // ads use `<h1 class="job-title" itemprop="title">…</h1>` inside a JobPosting microdata
     // block, while an unrelated IE11-warning <h1> sits earlier in the document. Walk every
@@ -2006,7 +2024,14 @@ function extractPageInfo() {
     // good one — confirmed live on QADInc SmartRecruiters (3 `.job-title` nodes, all the real
     // "Sr. Site Reliability Engineer - SRE"). Greenhouse embed uses `.job__title` > `h1`
     // (BEM double-underscore) — the wrapper also contains location, so prefer the inner h1.
-    for (const sel of [".job-title", ".job__title h1", ".job__title", "[itemprop='title']", ".job-ad-title"]) {
+    for (const sel of [
+      ".job-title",
+      ".job__title h1",
+      ".job__title",
+      "[itemprop='title']",
+      ".job-ad-title",
+      ".title-section .title",
+    ]) {
       for (const found of document.querySelectorAll(sel)) {
         let text = (found.innerText || found.textContent || "").replace(/\s+/g, " ").trim();
         // `.job__title` wrapper: "Data Analyst … Location" — keep the heading line only.
