@@ -1,4 +1,4 @@
-import { apiFetch, getActivePerson, setActivePerson } from "./api.js";
+import { apiFetch, apiFetchText, getActivePerson, setActivePerson } from "./api.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -379,8 +379,8 @@ async function loadPromptInstructions() {
   }
 }
 
-// ---- Templates tab: a card per available template (thumbnail + name + description), radio-
-// selected. The catalog itself (/resume-templates) is the same for everyone, so it's only
+// ---- Templates tab: a card per available template (live HTML preview + name + description),
+// radio-selected. The catalog itself (/resume-templates) is the same for everyone, so it's only
 // fetched once; which one is active is per-person, refetched on every person switch. Selecting
 // a card saves immediately - no separate Save button, matching the side panel's quick-switch
 // selects rather than the rest of this page's dirty-tracked forms, since it's a single choice
@@ -398,11 +398,24 @@ async function loadTemplateCatalog() {
       card.className = "template-card";
       card.innerHTML = `
         <input type="radio" name="resumeTemplate" value="${t.key}">
-        <img src="assets/templates/${t.key}.png" alt="${t.name} template preview" title="Click to view full size">
+        <div class="template-preview-wrap">
+          <iframe class="template-preview" title="${t.name} preview" loading="lazy" tabindex="-1"></iframe>
+        </div>
         <div class="template-name">${t.name}</div>
         <div class="template-desc">${t.description}</div>
         <button type="button" class="link template-zoom-btn">View full size</button>
       `;
+      const iframe = card.querySelector("iframe");
+      apiFetchText(`/resume-templates/${encodeURIComponent(t.key)}/preview`)
+        .then((html) => {
+          iframe.srcdoc = html;
+        })
+        .catch((err) => {
+          iframe.replaceWith(Object.assign(document.createElement("div"), {
+            className: "template-preview-error",
+            textContent: `Preview unavailable: ${err.message}`,
+          }));
+        });
       card.querySelector("input").addEventListener("change", async (e) => {
         const statusEl = el("templateStatus");
         statusEl.textContent = "Saving...";
@@ -413,13 +426,20 @@ async function loadTemplateCatalog() {
           statusEl.textContent = `Could not save: ${err.message}`;
         }
       });
-      // Full page at 200 DPI, not the cropped/downscaled grid thumbnail - opens in a new tab
-      // so you can actually zoom in and check exact formatting before picking one.
-      const openFullSize = (e) => {
+      const openFullSize = async (e) => {
         e.preventDefault();
-        window.open(`assets/templates/${t.key}-full.png`, "_blank");
+        e.stopPropagation();
+        try {
+          const html = iframe.srcdoc || await apiFetchText(`/resume-templates/${encodeURIComponent(t.key)}/preview`);
+          const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          window.open(url, "_blank");
+          setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        } catch (err) {
+          el("templateStatus").textContent = `Could not open preview: ${err.message}`;
+        }
       };
-      card.querySelector("img").addEventListener("click", openFullSize);
+      card.querySelector(".template-preview-wrap").addEventListener("click", openFullSize);
       card.querySelector(".template-zoom-btn").addEventListener("click", openFullSize);
       grid.appendChild(card);
     });

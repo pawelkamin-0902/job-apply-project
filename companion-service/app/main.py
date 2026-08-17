@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.claude_cli import ClaudeCodeCliError, check_claude_cli, run_claude_code_print, usage_from_cli_payload
 from app.ollama_cli import OllamaCliError, check_ollama, run_ollama_chat
@@ -169,6 +169,17 @@ async def list_resume_templates() -> list[ResumeTemplateOption]:
         ResumeTemplateOption(key=t.key, name=t.name, description=t.description)
         for t in resume_templates.list_templates()
     ]
+
+
+@app.get("/resume-templates/{key}/preview", dependencies=[Depends(verify_token)])
+async def preview_resume_template(key: str) -> HTMLResponse:
+    """Sample-filled HTML for the Settings Templates tab — no PNG thumbnails required."""
+    from app.html_resume import list_html_templates, preview_html
+
+    known = {t.key for t in list_html_templates()}
+    if key not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown resume template: {key}")
+    return HTMLResponse(content=preview_html(key))
 
 
 @app.get("/resume-template", response_model=ResumeTemplateChoice, dependencies=[Depends(verify_token)])

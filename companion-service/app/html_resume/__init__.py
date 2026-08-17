@@ -236,6 +236,13 @@ def write_html(resume: ResumeData, out_path: Path, template_key: str = DEFAULT_T
     return out_path
 
 
+def preview_html(template_key: str = DEFAULT_TEMPLATE_KEY) -> str:
+    """Filled sample resume HTML for Settings template cards (no PDF)."""
+    sample_path = _DIR / "samples" / "sample_resume.json"
+    resume = ResumeData.model_validate(json.loads(sample_path.read_text(encoding="utf-8")))
+    return build_html(resume, template_key)
+
+
 def build_pdf(resume: ResumeData, out_path: Path, template_key: str = DEFAULT_TEMPLATE_KEY) -> None:
     """One shared path for every template: Jinja HTML → Chromium print-to-PDF.
 

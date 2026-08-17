@@ -55,6 +55,26 @@ export async function apiFetch(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+/** Same auth as apiFetch, but returns response text (e.g. HTML previews). */
+export async function apiFetchText(path, options = {}) {
+  const { baseUrl, token } = await getConnection();
+  const activePerson = await getActivePerson();
+  const headers = {
+    "X-Api-Token": token,
+    "X-Person": activePerson,
+    ...(options.headers || {}),
+  };
+  if (options.body && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetchWithTimeout(`${baseUrl}${path}`, { ...options, headers }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${body}`);
+  }
+  return res.text();
+}
+
 export async function fetchResumeFileBase64(resumeId) {
   const { baseUrl, token } = await getConnection();
   const activePerson = await getActivePerson();
