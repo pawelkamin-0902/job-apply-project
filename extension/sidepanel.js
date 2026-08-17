@@ -1820,6 +1820,9 @@ function extractPageInfo() {
     const ogSite = document.querySelector('meta[property="og:site_name"]');
     if (ogSite && ogSite.content && ogSite.content.trim()) return ogSite.content.trim();
     // 4. Common class/attribute patterns used by various job boards/ATS.
+    // SuccessFactors (confirmed live: jobs.igt.com) puts the employer on
+    // `<meta itemprop="hiringOrganization" content="IGT, a Nevada Corporation">` — no
+    // visible text, so innerText alone misses it. Also accept nested itemprop=name.
     const selectors = [
       "[itemprop='hiringOrganization']",
       ".company-name",
@@ -1828,25 +1831,49 @@ function extractPageInfo() {
       ".company",
     ];
     for (const sel of selectors) {
-      const found = document.querySelector(sel);
-      const text = found && found.innerText && found.innerText.trim();
-      if (text && text.length < 100) return text;
+      for (const found of document.querySelectorAll(sel)) {
+        const nested = found.querySelector && found.querySelector("[itemprop='name']");
+        const text = (
+          (nested && (nested.getAttribute("content") || nested.innerText || nested.textContent)) ||
+          found.getAttribute("content") ||
+          found.innerText ||
+          found.textContent ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+        if (text && text.length >= 2 && text.length < 100) return tidyExtractedCompanyName(text) || text;
+      }
     }
-    // 5. Page title patterns like "Job Title at Company" or "Company - Job Title".
+    // 5. Page title patterns like "Job Title at Company", "Company - Job Title", or
+    // SuccessFactors "Job Title Job Details | Company".
     // Include hyphen / apostrophe — Greenhouse (and others) use "at SingleStore-LinkedIn",
     // "at Third-Party Job Posts", "O'Reilly". The old `[\w& .]` class silently dropped those.
     const title = document.title || "";
     let m = title.match(/\bat\s+([A-Z][\w& .'-]{1,60})$/);
     if (m) return tidyExtractedCompanyName(m[1].trim());
+    m = title.match(/\|\s*([A-Z][\w& .,'-]{1,80})$/);
+    if (m) {
+      const fromPipe = tidyExtractedCompanyName(m[1].trim());
+      if (fromPipe && !/^(job details?|careers?|jobs?)$/i.test(fromPipe)) return fromPipe;
+    }
     m = title.match(/^([A-Z][\w& .'-]{1,60})\s*[-|]/);
     if (m) return tidyExtractedCompanyName(m[1].trim());
     // 6. Last resort: derive from the page's own domain — only meaningful when the
     // company hosts the posting themselves, not on a third-party ATS's own domain
     // (which would otherwise just give back "Greenhouse", "Lever", etc).
+    // careers.X.com / jobs.X.com / job.X.com → use X, not the "jobs"/"careers" label
+    // (confirmed live: jobs.igt.com otherwise became company "Jobs").
     const fullHost = location.hostname.replace(/^www\./, "");
-    if (!/greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io/i.test(fullHost)) {
-      const label = fullHost.split(".")[0];
-      if (label && label.length > 2) return label.charAt(0).toUpperCase() + label.slice(1);
+    if (!/greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com/i.test(fullHost)) {
+      const parts = fullHost.split(".");
+      let label = parts[0] || "";
+      if (/^(jobs?|careers?|career|apply|recruiting|talents?)$/i.test(label) && parts.length >= 3) {
+        label = parts[1];
+      }
+      if (label && label.length > 1 && !/^(jobs?|careers?|career|www)$/i.test(label)) {
+        return label.charAt(0).toUpperCase() + label.slice(1);
+      }
     }
     return "";
   }
