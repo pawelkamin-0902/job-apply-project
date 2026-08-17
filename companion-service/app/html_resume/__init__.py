@@ -32,6 +32,7 @@ class HtmlTemplateInfo:
     name: str
     description: str
     contact: str  # "plain" | "icons"
+    link_labels: str  # "short" (Elegant: "LinkedIn") | "url" (Modern: full profile URL)
     html_path: Path
 
 
@@ -57,6 +58,7 @@ def list_html_templates() -> list[HtmlTemplateInfo]:
                 name=str(meta.get("name") or key.replace("_", " ").title()),
                 description=str(meta.get("description") or ""),
                 contact="icons" if meta.get("contact") == "icons" else "plain",
+                link_labels="short" if meta.get("link_labels") == "short" else "url",
                 html_path=path,
             )
         )
@@ -87,15 +89,32 @@ def _md_to_html(text: str, *, link_color: str = "#0E6E55") -> str:
     return out
 
 
-def _link_label(label: str, url: str) -> str:
-    """Visible text for a contact link. LinkedIn URLs always show as "LinkedIn" so the
-    header doesn't get a long /in/… path; the real profile URL stays on the href."""
+def _display_url(url: str) -> str:
+    """Full link text for Modern: keep the path visible, drop the scheme only."""
+    text = (url or "").strip()
+    if text.lower().startswith("https://"):
+        return text[8:]
+    if text.lower().startswith("http://"):
+        return text[7:]
+    return text
+
+
+def _link_label(label: str, url: str, *, link_labels: str = "url") -> str:
+    """Visible text for a contact link.
+
+    - Elegant (``link_labels="short"``): LinkedIn URLs show as "LinkedIn".
+    - Modern (``link_labels="url"``): show the full profile URL (scheme stripped).
+    """
     if "linkedin.com" in (url or "").lower():
-        return "LinkedIn"
+        if link_labels == "short":
+            return "LinkedIn"
+        return _display_url(url) or label
+    if link_labels == "url" and label.strip().lower() in {"linkedin", "portfolio", "github", "website"}:
+        return _display_url(url) or label
     return label
 
 
-def _contact_plain(contact_line: str) -> str:
+def _contact_plain(contact_line: str, *, link_labels: str = "url") -> str:
     parts: list[str] = []
     for raw in contact_line.split("|"):
         item = raw.strip()
@@ -105,7 +124,8 @@ def _contact_plain(contact_line: str) -> str:
         if m:
             label, url = m.group(1), m.group(2)
             parts.append(
-                f'<a href="{html.escape(url, quote=True)}">{html.escape(_link_label(label, url))}</a>'
+                f'<a href="{html.escape(url, quote=True)}">'
+                f"{html.escape(_link_label(label, url, link_labels=link_labels))}</a>"
             )
         else:
             parts.append(html.escape(item))
@@ -119,7 +139,7 @@ def _svg_icon(path_d: str, view_box: str = "0 0 512 512") -> str:
     )
 
 
-def _contact_icons(contact_line: str) -> str:
+def _contact_icons(contact_line: str, *, link_labels: str = "short") -> str:
     icons = {
         "phone": _svg_icon(
             "M164.9 24.6c-7.7-18.6-28-28.5-47.4-23.2l-88 24C12.1 30.2 0 46 0 64C0 311.4 "
@@ -173,7 +193,8 @@ def _contact_icons(contact_line: str) -> str:
             else:
                 icon = icons["link"]
             parts.append(
-                f'{icon}<a href="{html.escape(url, quote=True)}">{html.escape(_link_label(label, url))}</a>'
+                f'{icon}<a href="{html.escape(url, quote=True)}">'
+                f"{html.escape(_link_label(label, url, link_labels=link_labels))}</a>"
             )
         else:
             parts.append(f'{icons["location"]}{html.escape(item)}')
@@ -192,9 +213,10 @@ def _env() -> Environment:
 def build_html(resume: ResumeData, template_key: str = DEFAULT_TEMPLATE_KEY) -> str:
     info = get_html_template(template_key)
     tpl = _env().get_template(info.html_path.name)
-    contact_html = (
-        _contact_icons(resume.contact_line) if info.contact == "icons" else _contact_plain(resume.contact_line)
-    )
+    if info.contact == "icons":
+        contact_html = _contact_icons(resume.contact_line, link_labels=info.link_labels)
+    else:
+        contact_html = _contact_plain(resume.contact_line, link_labels=info.link_labels)
     return tpl.render(
         name=resume.name,
         contact_line_html=Markup(contact_html),

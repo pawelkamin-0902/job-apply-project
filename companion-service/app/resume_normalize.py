@@ -55,11 +55,9 @@ _URL_SEGMENT_RE = re.compile(r"^(https?://|www\.)?[\w.-]+\.[a-zA-Z]{2,}(/\S*)?$"
 
 def _linkify_contact_segment(segment: str) -> str:
     """Converts a plain email/URL segment into the "[visible text](url)" markdown-link
-    format the elegant PDF/DOCX templates' per-item icon logic depends on. Phone numbers
-    stay plain text (no tel: hyperlink). Leaves a segment that's already correctly linked,
-    or one that doesn't look like an email/URL at all (assumed to be the location or phone,
-    which stay plain text), untouched. LinkedIn URLs always use the visible label "LinkedIn"
-    (href keeps the real profile URL)."""
+    format. Phone numbers stay plain text (no tel: hyperlink). LinkedIn keeps the profile
+    URL as visible text in the stored contact_line; Elegant HTML shortens it to "LinkedIn"
+    at render time, while Modern shows the full link."""
     segment = segment.strip()
     if not segment:
         return segment
@@ -69,8 +67,9 @@ def _linkify_contact_segment(segment: str) -> str:
         # Phone: show digits only — no clickable tel: link in the resume header.
         if url.lower().startswith("tel:"):
             return label
-        if "linkedin.com" in url.lower() and label.lower() != "linkedin":
-            return f"[LinkedIn]({url})"
+        if "linkedin.com" in url.lower():
+            display = re.sub(r"^https?://", "", url, flags=re.IGNORECASE)
+            return f"[{display}]({url})"
         return segment
     if _EMAIL_SEGMENT_RE.match(segment):
         return f"[{segment}](mailto:{segment})"
@@ -79,7 +78,7 @@ def _linkify_contact_segment(segment: str) -> str:
         return segment
     if _URL_SEGMENT_RE.match(segment):
         href = segment if segment.lower().startswith("http") else f"https://{segment}"
-        label = "LinkedIn" if "linkedin.com" in href.lower() else segment
+        label = re.sub(r"^https?://", "", href, flags=re.IGNORECASE)
         return f"[{label}]({href})"
     return segment
 
