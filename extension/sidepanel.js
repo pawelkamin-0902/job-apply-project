@@ -1400,7 +1400,12 @@ function extractPageInfo() {
     if (looksLikeJsonBlob(t)) return "";
     if (looksLikeApplicationFormChrome(t)) return "";
     if (looksLikeCareersListingChrome(t)) return "";
-    return t.slice(0, 8000);
+    // Cap size for the side-panel textarea / tailor prompt. Confirmed live on
+    // transcarent.darwinbox.com: without a purpose-built selector the longest generic
+    // `div` (`.details-container`, ~11k of JD + Apply/Share chrome) won, then the old
+    // 8k hard cut sliced mid-word ("skil…"). Prefer ATS containers below; keep a higher
+    // ceiling so full postings still fit when a broader landmark is the only source.
+    return t.slice(0, 25000);
   }
 
   // True when this document is only a host for a cross-origin job-board iframe (the JD and
@@ -1606,6 +1611,21 @@ function extractPageInfo() {
       if (fromIframe) return fromIframe;
     }
 
+    // Darwinbox careers (*.darwinbox.com): the real posting is in `.jd-container` /
+    // `.mobile-view-jd`. Confirmed live on transcarent.darwinbox.com jobDetails: without
+    // this, generic longest-div picking chose `.details-container` (JD + Apply Now + Share
+    // + "Powered by darwinbox") and the description accept-cap truncated mid-sentence.
+    if (/(^|\.)darwinbox\.com$/i.test(location.hostname || "")) {
+      const darwinJd = pickBest(
+        document.querySelectorAll(".jd-container, .mobile-view-jd, .jd"),
+        200
+      );
+      if (darwinJd) {
+        const text = acceptDescription(cleanedText(darwinJd));
+        if (text) return text;
+      }
+    }
+
     // 2. ATS-specific description containers — checked BEFORE generic `main`/`article`/
     // `#content`, because those broader landmarks often wrap chrome (nav, "Privacy Policy",
     // "Job Openings", department subtitle) around the real posting. Confirmed on BambooHR:
@@ -1614,7 +1634,7 @@ function extractPageInfo() {
     // class names are more trustworthy than "longest landmark wins".
     let best = pickBest(
       document.querySelectorAll(
-        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content']"
+        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd"
       ),
       200
     );
