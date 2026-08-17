@@ -64,10 +64,19 @@
       margin: 0 0 2pt;
     }
     .skill strong { font-weight: 700; }
-    .job, .edu {
+    .job { margin: 0 0 8pt; }
+    .edu {
       margin: 0 0 8pt;
       break-inside: avoid;
       page-break-inside: avoid;
+    }
+    /* A long role may span pages, but its heading must never be stranded at the
+       bottom alone — heading, company line, and first bullet print as one unit. */
+    .job-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
     }
     .row {
       display: flex;
@@ -93,10 +102,13 @@
       break-before: avoid;
       page-break-before: avoid;
     }
+    ul.bullets.rest { margin-top: 0; }
     ul.bullets li {
       position: relative;
       margin: 0 0 2pt;
       padding-left: 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
     ul.bullets li::before {
       content: "•";
@@ -144,14 +156,21 @@
     <hr class="rule" />
     {% for job in experience %}
     <section class="job">
-      <div class="row">
-        <div class="left">{{ job.title }} — {{ job.company }}</div>
-        <div class="right">{{ job.dates }}</div>
+      <div class="job-head">
+        <div class="row">
+          <div class="left">{{ job.title }} — {{ job.company }}</div>
+          <div class="right">{{ job.dates }}</div>
+        </div>
+        {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
+        {% if job.bullets %}
+        <ul class="bullets">
+          <li>{{ job.bullets[0] | md }}</li>
+        </ul>
+        {% endif %}
       </div>
-      {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
-      {% if job.bullets %}
-      <ul class="bullets">
-        {% for b in job.bullets %}<li>{{ b | md }}</li>{% endfor %}
+      {% if job.bullets | length > 1 %}
+      <ul class="bullets rest">
+        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
       </ul>
       {% endif %}
     </section>
