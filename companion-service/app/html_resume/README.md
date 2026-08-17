@@ -12,11 +12,16 @@ Python Platypus renderer per style.
 "compact": {
   "name": "Compact",
   "description": "Tighter spacing, single accent color.",
-  "contact": "plain"
+  "contact": "plain",
+  "link_labels": "url",
+  "accent": "#1B3A4B"
 }
 ```
 
 `contact` is `"plain"` (linked text only) or `"icons"` (SVG icons like Elegant).
+`accent` colors markdown links in summary/bullets to match the template.
+
+Built-in styles: **modern**, **elegant**, **compact**, **classic**, **slate**, **executive**.
 
 3. Restart the companion service. It shows up in `/resume-templates` and `/render`
    uses the shared HTML→Chromium PDF path — no new `pdf_render_*.py`.
@@ -28,7 +33,7 @@ cd companion-service
 ./venv/bin/python -m app.html_resume.render_samples
 ```
 
-Opens under `samples/`: filled `modern.html` / `elegant.html` and matching `*.pdf`.
+Writes filled HTML + PDF for every catalog entry under `samples/`.
 
 ## What still uses Python builders
 

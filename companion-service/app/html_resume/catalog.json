@@ -1,14 +1,44 @@
 {
   "modern": {
     "name": "Modern",
-    "description": "Clean sans-serif with a single green accent color, round bullets, one-line job headings.",
+    "description": "Clean sans-serif with a single green accent, centered name, round bullets, one-line job headings.",
     "contact": "plain",
-    "link_labels": "url"
+    "link_labels": "url",
+    "accent": "#0E6E55"
   },
   "elegant": {
     "name": "Elegant Serif",
-    "description": "Serif font with green + gold two-tone accents, en-dash bullets, two-line job headings.",
+    "description": "Serif font with green + gold accents, en-dash bullets, two-line job headings.",
     "contact": "plain",
-    "link_labels": "short"
+    "link_labels": "short",
+    "accent": "#0E6E55"
+  },
+  "compact": {
+    "name": "Compact Navy",
+    "description": "Dense left-aligned layout, navy accent, side-by-side name/contact header, triangle bullets.",
+    "contact": "plain",
+    "link_labels": "url",
+    "accent": "#1B3A4B"
+  },
+  "classic": {
+    "name": "Classic",
+    "description": "Traditional black serif CV, uppercase centered sections, double top rule, disc bullets.",
+    "contact": "plain",
+    "link_labels": "short",
+    "accent": "#111111"
+  },
+  "slate": {
+    "name": "Slate",
+    "description": "Cool slate-blue Georgia masthead, stacked job title/company, square bullets, soft section underlines.",
+    "contact": "plain",
+    "link_labels": "url",
+    "accent": "#3D5A80"
+  },
+  "executive": {
+    "name": "Executive",
+    "description": "Charcoal banner header with teal accents, date pills, left-border section labels.",
+    "contact": "plain",
+    "link_labels": "url",
+    "accent": "#0D7377"
   }
 }

@@ -33,6 +33,7 @@ class HtmlTemplateInfo:
     description: str
     contact: str  # "plain" | "icons"
     link_labels: str  # "short" (Elegant: "LinkedIn") | "url" (Modern: full profile URL)
+    accent: str  # CSS color for markdown links in summary/bullets
     html_path: Path
 
 
@@ -52,6 +53,7 @@ def list_html_templates() -> list[HtmlTemplateInfo]:
         path = _DIR / f"{key}.html"
         if not path.is_file():
             continue
+        accent = str(meta.get("accent") or "#0E6E55").strip() or "#0E6E55"
         out.append(
             HtmlTemplateInfo(
                 key=key,
@@ -59,6 +61,7 @@ def list_html_templates() -> list[HtmlTemplateInfo]:
                 description=str(meta.get("description") or ""),
                 contact="icons" if meta.get("contact") == "icons" else "plain",
                 link_labels="short" if meta.get("link_labels") == "short" else "url",
+                accent=accent,
                 html_path=path,
             )
         )
@@ -201,18 +204,18 @@ def _contact_icons(contact_line: str, *, link_labels: str = "short") -> str:
     return '<span class="sep">|</span>'.join(parts)
 
 
-def _env() -> Environment:
+def _env(*, link_color: str = "#0E6E55") -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(_DIR)),
         autoescape=select_autoescape(["html", "xml"]),
     )
-    env.filters["md"] = lambda s: Markup(_md_to_html(str(s or "")))
+    env.filters["md"] = lambda s: Markup(_md_to_html(str(s or ""), link_color=link_color))
     return env
 
 
 def build_html(resume: ResumeData, template_key: str = DEFAULT_TEMPLATE_KEY) -> str:
     info = get_html_template(template_key)
-    tpl = _env().get_template(info.html_path.name)
+    tpl = _env(link_color=info.accent).get_template(info.html_path.name)
     if info.contact == "icons":
         contact_html = _contact_icons(resume.contact_line, link_labels=info.link_labels)
     else:
@@ -220,7 +223,7 @@ def build_html(resume: ResumeData, template_key: str = DEFAULT_TEMPLATE_KEY) -> 
     return tpl.render(
         name=resume.name,
         contact_line_html=Markup(contact_html),
-        summary_html=Markup(_md_to_html(resume.summary)),
+        summary_html=Markup(_md_to_html(resume.summary, link_color=info.accent)),
         skills=resume.skills,
         experience=resume.experience,
         education=resume.education,

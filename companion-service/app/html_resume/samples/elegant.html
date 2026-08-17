@@ -70,13 +70,28 @@
     .summary { margin: 0 0 2pt; }
     .skill { margin: 0 0 3pt; }
     .skill strong { font-weight: 700; }
-    .job, .edu { margin: 0 0 6pt; }
+    .job { margin: 0 0 8pt; }
+    .edu {
+      margin: 0 0 8pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    /* A long role may span pages, but its heading must never be stranded at the
+       bottom alone — heading, company line, and first bullet print as one unit. */
+    .job-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
     .row {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
       gap: 8pt;
       margin: 0;
+      break-after: avoid;
+      page-break-after: avoid;
     }
     .row .left { flex: 1 1 70%; font-weight: 700; font-size: 10.5pt; }
     .row .right {
@@ -88,16 +103,23 @@
     }
     .sub {
       font-style: italic;
-      margin: 0 0 4pt;
+      margin: 0 0 1pt;
+      break-after: avoid;
+      page-break-after: avoid;
     }
     ul.bullets {
-      margin: 0;
+      margin: 1pt 0 0;
       padding: 0 0 0 16pt;
       list-style: none;
+      break-before: avoid;
+      page-break-before: avoid;
     }
+    ul.bullets.rest { margin-top: 0; }
     ul.bullets li {
       position: relative;
       margin: 0 0 2pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
     }
     ul.bullets li::before {
       content: "–";
@@ -155,27 +177,41 @@ Strong focus on <strong>LLM architecture, cybersecurity applications, engineerin
     <hr class="rule" />
     
     <section class="job">
-      <div class="row">
-        <div class="left">Senior Software Engineer</div>
-        <div class="right">Mar 2024 – Present</div>
+      <div class="job-head">
+        <div class="row">
+          <div class="left">Senior Software Engineer</div>
+          <div class="right">Mar 2024 – Present</div>
+        </div>
+        <p class="sub">Bounteous, Warsaw, Poland (Remote)</p>
+        
+        <ul class="bullets">
+          <li>Architected a <strong>production-grade retrieval-augmented generation platform</strong> using Python, PyTorch, Transformers, vector search, and Kubernetes, enabling secure reasoning and summarization across sensitive enterprise cybersecurity knowledge bases.</li>
+        </ul>
+        
       </div>
-      <p class="sub">Bounteous, Warsaw, Poland (Remote)</p>
       
-      <ul class="bullets">
-        <li>Architected a <strong>production-grade retrieval-augmented generation platform</strong> using Python, PyTorch, Transformers, vector search, and Kubernetes, enabling secure reasoning and summarization across sensitive enterprise cybersecurity knowledge bases.</li><li>Led research strategy for LLM evaluation, prompt optimization, and fine-tuning, translating ambiguous product requirements into reproducible experiments, deployment criteria, technical standards, and measurable model-quality benchmarks.</li><li>Engineered <strong>distributed inference services for transformer models</strong> with NVIDIA GPUs, mixed precision, dynamic batching, and autoscaling, supporting 120 million security signals daily with predictable latency.</li><li>Designed agentic workflows for threat investigation using tool calling, semantic retrieval, and structured outputs, improving analyst interactivity while preserving authorization boundaries, auditability, and data governance.</li><li>Implemented <strong>adversarial evaluation and AI red-teaming frameworks</strong> covering prompt injection, data leakage, hallucination, and unsafe tool execution for enterprise cybersecurity products and responsible AI adoption.</li><li>Optimized PyTorch inference through quantization, compilation, caching, and GPU memory profiling, reducing end-to-end response time from 11 seconds to 4 seconds across six production models.</li><li>Mentored engineers and applied scientists on deep learning experimentation, model review, and research-to-production practices while aligning cross-functional technical strategy with senior product and security stakeholders.</li><li>Established <strong>LLM observability and continuous evaluation pipelines</strong> using MLflow, OpenTelemetry, and statistical test suites, enabling safe releases, drift detection, incident analysis, and production rollback decisions.</li>
+      <ul class="bullets rest">
+        <li>Led research strategy for LLM evaluation, prompt optimization, and fine-tuning, translating ambiguous product requirements into reproducible experiments, deployment criteria, technical standards, and measurable model-quality benchmarks.</li><li>Engineered <strong>distributed inference services for transformer models</strong> with NVIDIA GPUs, mixed precision, dynamic batching, and autoscaling, supporting 120 million security signals daily with predictable latency.</li><li>Designed agentic workflows for threat investigation using tool calling, semantic retrieval, and structured outputs, improving analyst interactivity while preserving authorization boundaries, auditability, and data governance.</li><li>Implemented <strong>adversarial evaluation and AI red-teaming frameworks</strong> covering prompt injection, data leakage, hallucination, and unsafe tool execution for enterprise cybersecurity products and responsible AI adoption.</li><li>Optimized PyTorch inference through quantization, compilation, caching, and GPU memory profiling, reducing end-to-end response time from 11 seconds to 4 seconds across six production models.</li><li>Mentored engineers and applied scientists on deep learning experimentation, model review, and research-to-production practices while aligning cross-functional technical strategy with senior product and security stakeholders.</li><li>Established <strong>LLM observability and continuous evaluation pipelines</strong> using MLflow, OpenTelemetry, and statistical test suites, enabling safe releases, drift detection, incident analysis, and production rollback decisions.</li>
       </ul>
       
     </section>
     
     <section class="job">
-      <div class="row">
-        <div class="left">Senior Software Engineer</div>
-        <div class="right">Oct 2022 – Feb 2024</div>
+      <div class="job-head">
+        <div class="row">
+          <div class="left">Senior Software Engineer</div>
+          <div class="right">Oct 2022 – Feb 2024</div>
+        </div>
+        <p class="sub">Wise, Warsaw, Poland (Remote)</p>
+        
+        <ul class="bullets">
+          <li>Developed <strong>machine learning systems for payment risk detection</strong> using Python, PyTorch, Kafka, and PostgreSQL, combining behavioral signals and transaction context for secure, real-time financial decisioning.</li>
+        </ul>
+        
       </div>
-      <p class="sub">Wise, Warsaw, Poland (Remote)</p>
       
-      <ul class="bullets">
-        <li>Developed <strong>machine learning systems for payment risk detection</strong> using Python, PyTorch, Kafka, and PostgreSQL, combining behavioral signals and transaction context for secure, real-time financial decisioning.</li><li>Designed deep learning training pipelines for fraud classification, feature representation, and model calibration, integrating reproducible experiments, offline evaluation, and controlled production deployment across global fintech services.</li><li>Built <strong>streaming feature pipelines and online inference APIs</strong> processing more than 2 million daily payment events while maintaining low-latency decisions, traceability, and resilient fallback behavior.</li><li>Implemented model explainability, bias analysis, and monitoring for regulated financial workflows, supporting audit evidence, GDPR-aligned data handling, and high-judgement decisions by experienced risk operations teams.</li><li>Optimized GPU training with mixed precision, distributed data parallelism, and efficient sampling, shortening a core model training cycle from 19 hours to 7 hours while preserving accuracy.</li><li>Partnered with software engineers and risk specialists to translate emerging fraud patterns into <strong>production-grade model architectures</strong>, evaluation datasets, deployment controls, and documented incident response playbooks.</li><li>Established technical standards for feature quality, experiment tracking, and model validation, improving consistency across applied machine learning projects supporting payment processing, fraud detection, and customer protection.</li><li>Mentored engineers through architecture reviews and model debugging, communicating tradeoffs to senior stakeholders and driving cross-functional decisions under ambiguity within a fast-paced global fintech environment.</li>
+      <ul class="bullets rest">
+        <li>Designed deep learning training pipelines for fraud classification, feature representation, and model calibration, integrating reproducible experiments, offline evaluation, and controlled production deployment across global fintech services.</li><li>Built <strong>streaming feature pipelines and online inference APIs</strong> processing more than 2 million daily payment events while maintaining low-latency decisions, traceability, and resilient fallback behavior.</li><li>Implemented model explainability, bias analysis, and monitoring for regulated financial workflows, supporting audit evidence, GDPR-aligned data handling, and high-judgement decisions by experienced risk operations teams.</li><li>Optimized GPU training with mixed precision, distributed data parallelism, and efficient sampling, shortening a core model training cycle from 19 hours to 7 hours while preserving accuracy.</li><li>Partnered with software engineers and risk specialists to translate emerging fraud patterns into <strong>production-grade model architectures</strong>, evaluation datasets, deployment controls, and documented incident response playbooks.</li><li>Established technical standards for feature quality, experiment tracking, and model validation, improving consistency across applied machine learning projects supporting payment processing, fraud detection, and customer protection.</li><li>Mentored engineers through architecture reviews and model debugging, communicating tradeoffs to senior stakeholders and driving cross-functional decisions under ambiguity within a fast-paced global fintech environment.</li>
       </ul>
       
     </section>

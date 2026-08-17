@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ name }} — Resume (Compact)</title>
+  <style>
+    /* Dense navy layout: left-aligned header, tight leading, left-bar sections. */
+    @page {
+      size: letter;
+      margin: 0.35in 0.45in;
+    }
+    :root {
+      --accent: #1B3A4B;
+      --muted: #5A6A72;
+      --text: #1A1A1A;
+      --rule: #C5CED3;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: "Segoe UI", Calibri, Arial, sans-serif;
+      font-size: 9.5pt;
+      line-height: 12.5pt;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.35in 0.45in;
+      background: #fff;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12pt;
+      margin: 0 0 6pt;
+      padding-bottom: 5pt;
+      border-bottom: 2pt solid var(--accent);
+    }
+    .name {
+      margin: 0;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 18pt;
+      line-height: 22pt;
+      letter-spacing: 0.01em;
+      text-align: left;
+    }
+    .contact {
+      margin: 0;
+      max-width: 55%;
+      text-align: right;
+      font-size: 8.5pt;
+      line-height: 11pt;
+      color: var(--muted);
+    }
+    .contact a { color: var(--accent); text-decoration: none; }
+    h2.section {
+      display: flex;
+      align-items: center;
+      gap: 6pt;
+      color: var(--accent);
+      font-size: 10pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 8pt 0 3pt;
+    }
+    h2.section::before {
+      content: "";
+      display: inline-block;
+      width: 3pt;
+      height: 10pt;
+      background: var(--accent);
+      flex: 0 0 auto;
+    }
+    .summary { margin: 0 0 1pt; }
+    .skill { margin: 0 0 1pt; }
+    .skill strong { font-weight: 700; color: var(--accent); }
+    .job { margin: 0 0 5pt; }
+    .edu {
+      margin: 0 0 4pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .job-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8pt;
+      margin: 0;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .row .left { flex: 1 1 70%; font-weight: 700; font-size: 9.5pt; }
+    .row .right {
+      flex: 0 0 auto;
+      text-align: right;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 8.5pt;
+    }
+    .loc {
+      margin: 0 0 1pt;
+      color: var(--muted);
+      font-size: 8.5pt;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    ul.bullets {
+      margin: 1pt 0 0;
+      padding: 0 0 0 12pt;
+      list-style: none;
+      break-before: avoid;
+      page-break-before: avoid;
+    }
+    ul.bullets.rest { margin-top: 0; }
+    ul.bullets li {
+      position: relative;
+      margin: 0 0 1pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    ul.bullets li::before {
+      content: "▸";
+      position: absolute;
+      left: -11pt;
+      color: var(--accent);
+      font-size: 7pt;
+      top: 1pt;
+    }
+    strong { font-weight: 700; }
+    a { color: var(--accent); text-decoration: none; }
+
+    @media screen {
+      body { background: #e8e8e8; padding: 24px 0; }
+      .page { box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <header class="header">
+      <h1 class="name">{{ name }}</h1>
+      <p class="contact">{{ contact_line_html }}</p>
+    </header>
+
+    <h2 class="section">Summary</h2>
+    <p class="summary">{{ summary_html }}</p>
+
+    <h2 class="section">Skills</h2>
+    {% for category, items in skills.items() %}
+    <p class="skill"><strong>{{ category }}:</strong> {{ items | join(', ') }}</p>
+    {% endfor %}
+
+    <h2 class="section">Experience</h2>
+    {% for job in experience %}
+    <section class="job">
+      <div class="job-head">
+        <div class="row">
+          <div class="left">{{ job.title }} · {{ job.company }}</div>
+          <div class="right">{{ job.dates }}</div>
+        </div>
+        {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
+        {% if job.bullets %}
+        <ul class="bullets">
+          <li>{{ job.bullets[0] | md }}</li>
+        </ul>
+        {% endif %}
+      </div>
+      {% if job.bullets | length > 1 %}
+      <ul class="bullets rest">
+        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <h2 class="section">Education</h2>
+    {% for edu in education %}
+    <section class="edu">
+      <div class="row">
+        <div class="left">{% if edu.degree %}{{ edu.school }} · {{ edu.degree }}{% else %}{{ edu.school }}{% endif %}</div>
+        <div class="right">{{ edu.dates or '' }}</div>
+      </div>
+      {% if edu.location %}<p class="loc">{{ edu.location }}</p>{% endif %}
+    </section>
+    {% endfor %}
+  </article>
+</body>
+</html>

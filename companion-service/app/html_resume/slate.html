@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ name }} — Resume (Slate)</title>
+  <style>
+    /* Cool slate-blue: stacked job headers, underlined section labels, square bullets. */
+    @page {
+      size: letter;
+      margin: 0.4in 0.5in;
+    }
+    :root {
+      --accent: #3D5A80;
+      --accent-soft: #98C1D9;
+      --text: #1F2933;
+      --muted: #627D98;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", Times, serif;
+      font-size: 10pt;
+      line-height: 13.5pt;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.4in 0.5in;
+      background: #fff;
+    }
+    .masthead {
+      margin: 0 0 10pt;
+      padding: 0 0 8pt;
+      border-bottom: 3pt solid var(--accent);
+    }
+    .name {
+      margin: 0 0 3pt;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 24pt;
+      line-height: 28pt;
+      letter-spacing: -0.01em;
+    }
+    .contact {
+      margin: 0;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 8.5pt;
+      line-height: 11pt;
+      color: var(--muted);
+    }
+    .contact a { color: var(--accent); text-decoration: none; }
+    h2.section {
+      margin: 10pt 0 5pt;
+      padding: 0 0 2pt;
+      color: var(--accent);
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      border-bottom: 1pt solid var(--accent-soft);
+    }
+    .summary {
+      margin: 0 0 2pt;
+      font-size: 10pt;
+    }
+    .skill {
+      margin: 0 0 2pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 12pt;
+    }
+    .skill strong {
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .job { margin: 0 0 9pt; }
+    .edu {
+      margin: 0 0 6pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .job-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .job-title {
+      margin: 0;
+      font-family: Helvetica, Arial, sans-serif;
+      font-weight: 700;
+      font-size: 10.5pt;
+      color: var(--text);
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .job-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8pt;
+      margin: 1pt 0 2pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      color: var(--muted);
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .job-meta .company { font-style: italic; color: var(--accent); }
+    .job-meta .dates { white-space: nowrap; }
+    ul.bullets {
+      margin: 1pt 0 0;
+      padding: 0 0 0 14pt;
+      list-style: none;
+      break-before: avoid;
+      page-break-before: avoid;
+    }
+    ul.bullets.rest { margin-top: 0; }
+    ul.bullets li {
+      position: relative;
+      margin: 0 0 2pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    ul.bullets li::before {
+      content: "";
+      position: absolute;
+      left: -11pt;
+      top: 4pt;
+      width: 4pt;
+      height: 4pt;
+      background: var(--accent);
+    }
+    .edu .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8pt;
+      font-family: Helvetica, Arial, sans-serif;
+    }
+    .edu .left { font-weight: 700; }
+    .edu .right { color: var(--muted); white-space: nowrap; }
+    .edu .sub {
+      margin: 1pt 0 0;
+      font-style: italic;
+      color: var(--muted);
+      font-size: 9pt;
+    }
+    strong { font-weight: 700; }
+    a { color: var(--accent); text-decoration: none; }
+
+    @media screen {
+      body { background: #e8e8e8; padding: 24px 0; }
+      .page { box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <header class="masthead">
+      <h1 class="name">{{ name }}</h1>
+      <p class="contact">{{ contact_line_html }}</p>
+    </header>
+
+    <h2 class="section">Summary</h2>
+    <p class="summary">{{ summary_html }}</p>
+
+    <h2 class="section">Skills</h2>
+    {% for category, items in skills.items() %}
+    <p class="skill"><strong>{{ category }} — </strong>{{ items | join(', ') }}</p>
+    {% endfor %}
+
+    <h2 class="section">Experience</h2>
+    {% for job in experience %}
+    <section class="job">
+      <div class="job-head">
+        <p class="job-title">{{ job.title }}</p>
+        <div class="job-meta">
+          <span class="company">{% if job.location %}{{ job.company }} · {{ job.location }}{% else %}{{ job.company }}{% endif %}</span>
+          <span class="dates">{{ job.dates }}</span>
+        </div>
+        {% if job.bullets %}
+        <ul class="bullets">
+          <li>{{ job.bullets[0] | md }}</li>
+        </ul>
+        {% endif %}
+      </div>
+      {% if job.bullets | length > 1 %}
+      <ul class="bullets rest">
+        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <h2 class="section">Education</h2>
+    {% for edu in education %}
+    <section class="edu">
+      <div class="row">
+        <div class="left">{{ edu.school }}</div>
+        <div class="right">{{ edu.dates or '' }}</div>
+      </div>
+      {% if edu.degree or edu.location %}
+      <p class="sub">{% if edu.location %}{{ edu.degree }} · {{ edu.location }}{% else %}{{ edu.degree }}{% endif %}</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </article>
+</body>
+</html>

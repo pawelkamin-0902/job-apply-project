@@ -2,26 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Antoni Kowalski — Resume (Modern)</title>
+  <title>Antoni Kowalski — Resume (Slate)</title>
   <style>
-    /* Mirrors companion-service/app/pdf_render.py (Modern / Helvetica / green).
-       Page: US Letter, 0.5" side margins, 0.4" top/bottom. */
+    /* Cool slate-blue: stacked job headers, underlined section labels, square bullets. */
     @page {
       size: letter;
       margin: 0.4in 0.5in;
     }
     :root {
-      --accent: #0E6E55;
-      --text: #1A1A1A;
+      --accent: #3D5A80;
+      --accent-soft: #98C1D9;
+      --text: #1F2933;
+      --muted: #627D98;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
       padding: 0;
       color: var(--text);
-      font-family: Helvetica, Arial, "Helvetica Neue", sans-serif;
-      font-size: 10.5pt;
-      line-height: 14pt;
+      font-family: Georgia, "Times New Roman", Times, serif;
+      font-size: 10pt;
+      line-height: 13.5pt;
       background: #fff;
     }
     .page {
@@ -31,73 +32,89 @@
       padding: 0.4in 0.5in;
       background: #fff;
     }
+    .masthead {
+      margin: 0 0 10pt;
+      padding: 0 0 8pt;
+      border-bottom: 3pt solid var(--accent);
+    }
     .name {
-      text-align: center;
+      margin: 0 0 3pt;
       color: var(--accent);
       font-weight: 700;
-      font-size: 22pt;
+      font-size: 24pt;
       line-height: 28pt;
-      margin: 0 0 8pt;
+      letter-spacing: -0.01em;
     }
     .contact {
-      text-align: center;
-      font-size: 9.5pt;
-      line-height: 12pt;
-      margin: 0 0 4pt;
+      margin: 0;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 8.5pt;
+      line-height: 11pt;
+      color: var(--muted);
     }
     .contact a { color: var(--accent); text-decoration: none; }
-    .rule {
-      border: 0;
-      border-top: 1px solid var(--accent);
-      margin: 2pt 0 6pt;
-    }
     h2.section {
+      margin: 10pt 0 5pt;
+      padding: 0 0 2pt;
       color: var(--accent);
-      font-size: 12pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 10pt;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.02em;
-      margin: 10pt 0 4pt;
+      letter-spacing: 0.12em;
+      border-bottom: 1pt solid var(--accent-soft);
     }
-    .summary { margin: 0 0 2pt; }
+    .summary {
+      margin: 0 0 2pt;
+      font-size: 10pt;
+    }
     .skill {
       margin: 0 0 2pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 12pt;
     }
-    .skill strong { font-weight: 700; }
-    .job { margin: 0 0 8pt; }
+    .skill strong {
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .job { margin: 0 0 9pt; }
     .edu {
-      margin: 0 0 8pt;
+      margin: 0 0 6pt;
       break-inside: avoid;
       page-break-inside: avoid;
     }
-    /* A long role may span pages, but its heading must never be stranded at the
-       bottom alone — heading, company line, and first bullet print as one unit. */
     .job-head {
       break-inside: avoid;
       page-break-inside: avoid;
       break-after: avoid;
       page-break-after: avoid;
     }
-    .row {
+    .job-title {
+      margin: 0;
+      font-family: Helvetica, Arial, sans-serif;
+      font-weight: 700;
+      font-size: 10.5pt;
+      color: var(--text);
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .job-meta {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
       gap: 8pt;
-      margin: 0 0 1pt;
+      margin: 1pt 0 2pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      color: var(--muted);
       break-after: avoid;
       page-break-after: avoid;
     }
-    .row .left { flex: 1 1 70%; font-weight: 700; }
-    .row .right { flex: 0 0 auto; text-align: right; white-space: nowrap; }
-    .loc {
-      font-style: italic;
-      margin: 0 0 1pt;
-      break-after: avoid;
-      page-break-after: avoid;
-    }
+    .job-meta .company { font-style: italic; color: var(--accent); }
+    .job-meta .dates { white-space: nowrap; }
     ul.bullets {
       margin: 1pt 0 0;
-      padding: 0 0 0 16pt;
+      padding: 0 0 0 14pt;
       list-style: none;
       break-before: avoid;
       page-break-before: avoid;
@@ -106,23 +123,38 @@
     ul.bullets li {
       position: relative;
       margin: 0 0 2pt;
-      padding-left: 0;
       break-inside: avoid;
       page-break-inside: avoid;
     }
     ul.bullets li::before {
-      content: "•";
+      content: "";
       position: absolute;
-      left: -12pt;
+      left: -11pt;
+      top: 4pt;
+      width: 4pt;
+      height: 4pt;
+      background: var(--accent);
+    }
+    .edu .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8pt;
+      font-family: Helvetica, Arial, sans-serif;
+    }
+    .edu .left { font-weight: 700; }
+    .edu .right { color: var(--muted); white-space: nowrap; }
+    .edu .sub {
+      margin: 1pt 0 0;
+      font-style: italic;
+      color: var(--muted);
+      font-size: 9pt;
     }
     strong { font-weight: 700; }
     a { color: var(--accent); text-decoration: none; }
 
     @media screen {
       body { background: #e8e8e8; padding: 24px 0; }
-      .page {
-        box-shadow: 0 1px 4px rgba(0,0,0,.18);
-      }
+      .page { box-shadow: 0 1px 4px rgba(0,0,0,.18); }
     }
     @media print {
       body { background: #fff; padding: 0; }
@@ -138,12 +170,12 @@
 </head>
 <body>
   <article class="page">
-    <h1 class="name">Antoni Kowalski</h1>
-    <p class="contact"><a href="tel:+48694542078">+48694542078</a> | <a href="mailto:kowalskiantoni120@gmail.com">kowalskiantoni120@gmail.com</a> | Warsaw, Poland | <a href="https://www.linkedin.com/in/antoni-kowalski-50b684422/">www.linkedin.com/in/antoni-kowalski-50b684422/</a></p>
-    <hr class="rule" />
+    <header class="masthead">
+      <h1 class="name">Antoni Kowalski</h1>
+      <p class="contact"><a href="tel:+48694542078">+48694542078</a> | <a href="mailto:kowalskiantoni120@gmail.com">kowalskiantoni120@gmail.com</a> | Warsaw, Poland | <a href="https://www.linkedin.com/in/antoni-kowalski-50b684422/">www.linkedin.com/in/antoni-kowalski-50b684422/</a></p>
+    </header>
 
     <h2 class="section">Summary</h2>
-    <hr class="rule" />
     <p class="summary">Senior Software Engineer with 8+ years building production systems across cybersecurity, fintech, healthcare, SaaS, and large-scale consumer platforms.<br>
 Expertise in <strong>cybersecurity AI, large language models, Python, PyTorch, and Kubernetes</strong> for secure reasoning, summarization, interactivity, and threat investigation.<br>
 Proven track record delivering <strong>research-to-production machine learning systems</strong> with responsible AI, adversarial evaluation, model observability, and data protection controls.<br>
@@ -152,27 +184,25 @@ Collaborative technical leader experienced mentoring engineers, guiding cross-fu
 Strong focus on <strong>LLM architecture, cybersecurity applications, engineering excellence, and scalable AI systems</strong> that improve detection, analyst workflows, and customer protection.</p>
 
     <h2 class="section">Skills</h2>
-    <hr class="rule" />
     
-    <p class="skill"><strong>Programming &amp; Scientific Computing:</strong> Python, C++, SQL, Bash, NumPy, Pandas, SciPy, Jupyter, Pydantic, FastAPI</p>
+    <p class="skill"><strong>Programming &amp; Scientific Computing — </strong>Python, C++, SQL, Bash, NumPy, Pandas, SciPy, Jupyter, Pydantic, FastAPI</p>
     
-    <p class="skill"><strong>LLM &amp; Generative AI:</strong> Large Language Models, Transformers, Retrieval-Augmented Generation, Prompt Engineering, Supervised Fine-Tuning, Parameter-Efficient Fine-Tuning, Reinforcement Learning From Human Feedback, Agentic AI, Embeddings, Vector Search</p>
+    <p class="skill"><strong>LLM &amp; Generative AI — </strong>Large Language Models, Transformers, Retrieval-Augmented Generation, Prompt Engineering, Supervised Fine-Tuning, Parameter-Efficient Fine-Tuning, Reinforcement Learning From Human Feedback, Agentic AI, Embeddings, Vector Search</p>
     
-    <p class="skill"><strong>Deep Learning &amp; Machine Learning:</strong> PyTorch, TensorFlow, Scikit-Learn, Deep Learning, Natural Language Processing, Representation Learning, Distributed Training, Model Calibration, Feature Engineering, Hyperparameter Optimization</p>
+    <p class="skill"><strong>Deep Learning &amp; Machine Learning — </strong>PyTorch, TensorFlow, Scikit-Learn, Deep Learning, Natural Language Processing, Representation Learning, Distributed Training, Model Calibration, Feature Engineering, Hyperparameter Optimization</p>
     
-    <p class="skill"><strong>Data &amp; Distributed Systems:</strong> Apache Kafka, Apache Spark, PostgreSQL, Redis, Elasticsearch, Milvus, Pgvector, Ray, gRPC, REST APIs</p>
+    <p class="skill"><strong>Data &amp; Distributed Systems — </strong>Apache Kafka, Apache Spark, PostgreSQL, Redis, Elasticsearch, Milvus, Pgvector, Ray, gRPC, REST APIs</p>
     
 
     <h2 class="section">Experience</h2>
-    <hr class="rule" />
     
     <section class="job">
       <div class="job-head">
-        <div class="row">
-          <div class="left">Senior Software Engineer — Bounteous</div>
-          <div class="right">Mar 2024 – Present</div>
+        <p class="job-title">Senior Software Engineer</p>
+        <div class="job-meta">
+          <span class="company">Bounteous · Warsaw, Poland (Remote)</span>
+          <span class="dates">Mar 2024 – Present</span>
         </div>
-        <p class="loc">Warsaw, Poland (Remote)</p>
         
         <ul class="bullets">
           <li>Architected a <strong>production-grade retrieval-augmented generation platform</strong> using Python, PyTorch, Transformers, vector search, and Kubernetes, enabling secure reasoning and summarization across sensitive enterprise cybersecurity knowledge bases.</li>
@@ -188,11 +218,11 @@ Strong focus on <strong>LLM architecture, cybersecurity applications, engineerin
     
     <section class="job">
       <div class="job-head">
-        <div class="row">
-          <div class="left">Senior Software Engineer — Wise</div>
-          <div class="right">Oct 2022 – Feb 2024</div>
+        <p class="job-title">Senior Software Engineer</p>
+        <div class="job-meta">
+          <span class="company">Wise · Warsaw, Poland (Remote)</span>
+          <span class="dates">Oct 2022 – Feb 2024</span>
         </div>
-        <p class="loc">Warsaw, Poland (Remote)</p>
         
         <ul class="bullets">
           <li>Developed <strong>machine learning systems for payment risk detection</strong> using Python, PyTorch, Kafka, and PostgreSQL, combining behavioral signals and transaction context for secure, real-time financial decisioning.</li>
@@ -208,14 +238,15 @@ Strong focus on <strong>LLM architecture, cybersecurity applications, engineerin
     
 
     <h2 class="section">Education</h2>
-    <hr class="rule" />
     
     <section class="edu">
       <div class="row">
-        <div class="left">University of Oulu — Bachelor’s degree</div>
+        <div class="left">University of Oulu</div>
         <div class="right">Aug 2014 – Jun 2017</div>
       </div>
-      <p class="loc">Oulu, Finland (Onsite)</p>
+      
+      <p class="sub">Bachelor’s degree · Oulu, Finland (Onsite)</p>
+      
     </section>
     
   </article>

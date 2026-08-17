@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ name }} — Resume (Classic)</title>
+  <style>
+    /* Traditional black/serif CV: centered name, caps sections, double rules. */
+    @page {
+      size: letter;
+      margin: 0.5in 0.6in;
+    }
+    :root {
+      --accent: #111111;
+      --text: #222222;
+      --muted: #444444;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: "Times New Roman", Times, "Liberation Serif", Georgia, serif;
+      font-size: 11pt;
+      line-height: 14pt;
+      background: #fff;
+    }
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 0 auto;
+      padding: 0.5in 0.6in;
+      background: #fff;
+    }
+    .name {
+      text-align: center;
+      margin: 0 0 4pt;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 20pt;
+      line-height: 24pt;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .contact {
+      text-align: center;
+      margin: 0 0 8pt;
+      font-size: 9.5pt;
+      line-height: 12pt;
+      color: var(--muted);
+    }
+    .contact a { color: var(--accent); text-decoration: underline; }
+    .rule-double {
+      border: 0;
+      border-top: 1.5pt solid var(--accent);
+      border-bottom: 0.5pt solid var(--accent);
+      height: 3pt;
+      margin: 0 0 8pt;
+    }
+    h2.section {
+      text-align: center;
+      color: var(--accent);
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      margin: 10pt 0 3pt;
+    }
+    .section-rule {
+      border: 0;
+      border-top: 0.6pt solid var(--accent);
+      margin: 0 0 6pt;
+    }
+    .summary {
+      margin: 0 0 2pt;
+      text-align: justify;
+    }
+    .skill { margin: 0 0 2pt; }
+    .skill strong {
+      font-weight: 700;
+      font-variant: small-caps;
+      letter-spacing: 0.03em;
+    }
+    .job { margin: 0 0 8pt; }
+    .edu {
+      margin: 0 0 6pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .job-head {
+      break-inside: avoid;
+      page-break-inside: avoid;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8pt;
+      margin: 0;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .row .left { flex: 1 1 70%; font-weight: 700; }
+    .row .right {
+      flex: 0 0 auto;
+      text-align: right;
+      white-space: nowrap;
+      font-style: italic;
+    }
+    .sub {
+      margin: 0 0 2pt;
+      font-style: italic;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    ul.bullets {
+      margin: 1pt 0 0;
+      padding: 0 0 0 18pt;
+      list-style: disc;
+      break-before: avoid;
+      page-break-before: avoid;
+    }
+    ul.bullets.rest { margin-top: 0; }
+    ul.bullets li {
+      margin: 0 0 2pt;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    strong { font-weight: 700; }
+    a { color: var(--accent); }
+
+    @media screen {
+      body { background: #e8e8e8; padding: 24px 0; }
+      .page { box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="page">
+    <h1 class="name">{{ name }}</h1>
+    <p class="contact">{{ contact_line_html }}</p>
+    <hr class="rule-double" />
+
+    <h2 class="section">Summary</h2>
+    <hr class="section-rule" />
+    <p class="summary">{{ summary_html }}</p>
+
+    <h2 class="section">Skills</h2>
+    <hr class="section-rule" />
+    {% for category, items in skills.items() %}
+    <p class="skill"><strong>{{ category }}:</strong> {{ items | join(', ') }}</p>
+    {% endfor %}
+
+    <h2 class="section">Professional Experience</h2>
+    <hr class="section-rule" />
+    {% for job in experience %}
+    <section class="job">
+      <div class="job-head">
+        <div class="row">
+          <div class="left">{{ job.title }}, {{ job.company }}</div>
+          <div class="right">{{ job.dates }}</div>
+        </div>
+        {% if job.location %}<p class="sub">{{ job.location }}</p>{% endif %}
+        {% if job.bullets %}
+        <ul class="bullets">
+          <li>{{ job.bullets[0] | md }}</li>
+        </ul>
+        {% endif %}
+      </div>
+      {% if job.bullets | length > 1 %}
+      <ul class="bullets rest">
+        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+    {% endfor %}
+
+    <h2 class="section">Education</h2>
+    <hr class="section-rule" />
+    {% for edu in education %}
+    <section class="edu">
+      <div class="row">
+        <div class="left">{% if edu.degree %}{{ edu.degree }}, {{ edu.school }}{% else %}{{ edu.school }}{% endif %}</div>
+        <div class="right">{{ edu.dates or '' }}</div>
+      </div>
+      {% if edu.location %}<p class="sub">{{ edu.location }}</p>{% endif %}
+    </section>
+    {% endfor %}
+  </article>
+</body>
+</html>
