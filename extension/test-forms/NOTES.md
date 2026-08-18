@@ -3675,6 +3675,22 @@ unverified outside a live browser).
     the extension (new `webNavigation` permission) and retest Auto Fill → Save Sample on
     a BambooHR apply form.
 
+150. **BambooHR filled name/email/phone then stopped; fields below Country looked blocked.**
+    `Author: Cursor`. Live report after #149: Auto Fill wrote contact info, Country changed
+    from United States, State became Province (correct Fabric swap, finding #51), and
+    everything *below* that (Date Available, Desired Pay *, LinkedIn URL *, website) stayed
+    empty. Capture `globalalliant-bamboohr-com-20260818T142654Z.html`: those lower inputs had
+    no `data-af-label` (the singles loop never reached the live nodes). Root cause: Country is
+    a full-viewport Fabric `fab-Select` menu. Opening it covers the rest of the form; picking
+    Poland remounts State→Province **and** the fields under it. The loop still held the
+    pre-swap nodes (`!isConnected` or leftover hidden State control), relocation missed them
+    while the menu/`aria-hidden` hid the replacements, and LinkedIn (a profile field that
+    happens to sit *after* Country in the DOM) never got a chance. Fixed: on `*.bamboohr.com`
+    fill Country first, Escape-close the Fabric menu, wait until Province + lower inputs are
+    live and not aria-hidden, re-collect singles, then fill; relocate by name *or* label;
+    second pass for anything still blank. Desired Pay stays empty unless a QA-bank salary
+    answer exists (consequential — not GPT). **Not yet confirmed live.**
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

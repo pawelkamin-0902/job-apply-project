@@ -3287,7 +3287,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -7003,6 +7003,101 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return named ? named.name : null;
   }
 
+  const onBambooHr = /(^|\.)bamboohr\.com$/i.test(location.hostname || "");
+
+  function isBambooCountryField(element, host) {
+    if (!onBambooHr || !element) return false;
+    if (element.classList && element.classList.contains("fab-SelectToggle")) {
+      const lab = `${element.getAttribute("aria-label") || ""} ${element.name || ""}`;
+      if (/country/i.test(lab)) return true;
+    }
+    const named = nearestNamedControlKey(element);
+    if (named && /^country(id)?\.value$/i.test(named)) return true;
+    const own = normalizeLabel(resolveOwnLabel(element, host || element));
+    return /^country\b(?!.*\b(phone|code|dial)\b)/i.test(own) && looksLikeComboboxPick(element);
+  }
+
+  function bambooFabricMenuOpen() {
+    const openToggle = document.querySelector(".fab-SelectToggle[aria-expanded='true']");
+    if (openToggle) return true;
+    for (const m of document.querySelectorAll(".fab-MenuVessel, .fab-Menu, [class*='fab-Menu']")) {
+      const r = m.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return true;
+    }
+    return false;
+  }
+
+  function bambooLowerFieldsBlocked() {
+    const nodes = document.querySelectorAll(
+      '#desiredPay, #linkedinUrl, #websiteUrl, input[placeholder="mm/dd/yyyy"], [name="state.value"]'
+    );
+    for (const el of nodes) {
+      if (!el.isConnected) continue;
+      if (el.disabled) return true;
+      if (el.closest && el.closest("[aria-hidden='true']")) return true;
+    }
+    return false;
+  }
+
+  async function closeBambooFabricMenu() {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    for (let i = 0; i < 10 && bambooFabricMenuOpen(); i++) {
+      const esc = { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true };
+      document.dispatchEvent(new KeyboardEvent("keydown", esc));
+      document.dispatchEvent(new KeyboardEvent("keyup", esc));
+      const openToggle = document.querySelector(".fab-SelectToggle[aria-expanded='true']");
+      if (openToggle) simulateClick(openToggle);
+      await sleep(120);
+    }
+  }
+
+  // After Country changes, Fabric leaves its menu covering the rest of the form and remounts
+  // State→Province plus every field below. Confirmed live: name/email filled, then Country
+  // (United States → Poland) swapped State to Province and the Date Available / Desired Pay /
+  // LinkedIn block looked frozen/empty. Wait until the menu is gone and those inputs are live.
+  async function waitBambooHrAfterCountryChange() {
+    if (!onBambooHr) return;
+    await closeBambooFabricMenu();
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (bambooFabricMenuOpen()) await closeBambooFabricMenu();
+      const state = document.querySelector("[name='state.value']");
+      if (state && state.isConnected && !state.disabled && !bambooFabricMenuOpen() && !bambooLowerFieldsBlocked()) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (!bambooFabricMenuOpen() && !bambooLowerFieldsBlocked()) return;
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    await closeBambooFabricMenu();
+    console.info(
+      `[Auto Fill][bamboo] settle timeout menuOpen=${bambooFabricMenuOpen()} blocked=${bambooLowerFieldsBlocked()}`
+    );
+  }
+
+  function relocateLiveSingle(element, host) {
+    const fresh = () => collectFormFields().singles;
+    const key = singleKeys.get(element) || nearestNamedControlKey(element);
+    const hidden = element.closest && element.closest("[aria-hidden='true']");
+    const stale = !element.isConnected || element.disabled || hidden;
+    if (!stale && !(onBambooHr && key)) return { element, host };
+    const list = fresh();
+    if (key) {
+      const byKey = list.find((s) => nearestNamedControlKey(s.element) === key);
+      if (byKey) return byKey;
+    }
+    try {
+      const oldLabel = normalizeLabel(resolveOwnLabel(element, host));
+      if (oldLabel) {
+        const byLabel = list.find((s) => normalizeLabel(resolveOwnLabel(s.element, s.host)) === oldLabel);
+        if (byLabel) return byLabel;
+      }
+    } catch {
+      /* detached node may not resolve a label */
+    }
+    if (!element.isConnected) return null;
+    return { element, host };
+  }
+
   function isYesNoOptionSet(optionLabels) {
     const opts = (optionLabels || []).map((o) => String(o).trim().toLowerCase()).filter(Boolean);
     if (!opts.length || opts.length > 4) return false;
@@ -7516,7 +7611,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // null, same as BambooHR's real Country->State/Province swap does). Computing this later, once
   // an element has already gone stale, would silently return null and defeat the relocation this
   // is for in the first place.
-  const singleKeys = new Map(singles.map(({ element }) => [element, nearestNamedControlKey(element)]));
+  let singleKeys = new Map(singles.map(({ element }) => [element, nearestNamedControlKey(element)]));
 
   // Workday Work Experience: company + dates from profile BEFORE the generic QA path can
   // overwrite every slot with one learned Roblox/bullet answer. Touched nodes are skipped
@@ -7782,14 +7877,37 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // Let the last group's save land before the text fields start saving over the same form.
   await ashbySettle();
 
+  // BambooHR: Country MUST commit before anything below it. The Fabric Select menu covers the
+  // rest of the form, then Country (United States → Poland) remounts State as Province and
+  // replaces Date Available / Desired Pay / LinkedIn. Filling those from the pre-swap node
+  // list silently no-ops. Fill Country first, close the menu, re-collect, then continue.
+  if (onBambooHr && !onlyPhoneCountry && profile && profile.contact && profile.contact.country) {
+    const countrySingle = singles.find(({ element, host }) => isBambooCountryField(element, host));
+    if (countrySingle) {
+      const label = labelForElement(countrySingle.element, countrySingle.host);
+      console.info(`[Auto Fill][bamboo] fill Country first → ${JSON.stringify(profile.contact.country)}`);
+      const ok = await fillSingle(countrySingle.element, profile.contact.country);
+      await waitBambooHrAfterCountryChange();
+      if (ok) {
+        filled.push({ label, value: profile.contact.country, source: "profile" });
+        console.info(`[Auto Fill][filled] profile ${label}=${profile.contact.country}`);
+      }
+      const again = collectFormFields();
+      singles = again.singles;
+      groups = again.groups;
+      loneCheckboxes = again.loneCheckboxes;
+      singleKeys = new Map(singles.map(({ element }) => [element, nearestNamedControlKey(element)]));
+      console.info(
+        `[Auto Fill][bamboo] after Country settle singles=${singles.length} menuOpen=${bambooFabricMenuOpen()} blocked=${bambooLowerFieldsBlocked()}`
+      );
+    }
+  }
+
   for (let { element, host } of singles) {
     if (onlyPhoneCountry && !isPhoneDialCodePicker(element)) continue;
-    if (!element.isConnected) {
-      const key = singleKeys.get(element);
-      const relocated = key && collectFormFields().singles.find((s) => nearestNamedControlKey(s.element) === key);
-      if (relocated) ({ element, host } = relocated);
-      else continue; // gone with nothing live to replace it - nothing left to fill
-    }
+    const live = relocateLiveSingle(element, host);
+    if (!live) continue;
+    ({ element, host } = live);
     if (workExpTouched.has(element)) continue;
     const label = labelForElement(element, host);
     if (element.setAttribute) element.setAttribute("data-af-label", label);
@@ -7801,6 +7919,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // of pattern order, filling City/Neighborhood/Municipality/... with the street address
     // instead of their own real values.
     const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+    if (
+      onBambooHr &&
+      isBambooCountryField(element, host) &&
+      filled.some((f) => /^country\b/i.test(f.label))
+    ) {
+      continue;
+    }
     // SmartRecruiters screening: when definition says required:false (GitHub, reside in
     // Germany, …), leave the field blank — do not profile/QA/GPT fill. Radios already skip
     // via srGroupReq === false; singles still filled optional GitHub from profile.
@@ -8873,6 +8998,37 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
   }
 
+  // BambooHR: Country remounts every field below it. A first-pass skip (stale node, menu still
+  // covering, aria-hidden) leaves LinkedIn / Date Available / Province empty even though they
+  // are ordinary profile/QA fields. Re-collect after settle and fill anything still blank.
+  if (onBambooHr && !onlyPhoneCountry) {
+    await waitBambooHrAfterCountryChange();
+    const filledLabels = new Set(filled.map((f) => normalizeLabel(f.label)));
+    for (const { element, host } of collectFormFields().singles) {
+      if (!element.isConnected || element.disabled) continue;
+      const label = labelForElement(element, host);
+      const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
+      if (filledLabels.has(normalizeLabel(label)) || filledLabels.has(ownLabel)) continue;
+      const shown = String(
+        element.value || (typeof reactSelectDisplayValue === "function" ? reactSelectDisplayValue(element) : "") || ""
+      ).trim();
+      if (shown && !/^(–|-|—)?\s*select\s*(–|-|—)?$/i.test(shown)) continue;
+      const structured = matchStructuredField(ownLabel, element);
+      if (structured.value && (await fillSingle(element, structured.value))) {
+        filled.push({ label, value: String(structured.value), source: "profile" });
+        filledLabels.add(normalizeLabel(label));
+        console.info(`[Auto Fill][bamboo] second-pass profile ${label}=${structured.value}`);
+        continue;
+      }
+      const qaMatch = matchQaBank(label, element);
+      if (qaMatch && qaMatch.answer && (await fillSingle(element, qaMatch.answer))) {
+        filled.push({ label, value: qaMatch.answer, source: "learned" });
+        filledLabels.add(normalizeLabel(label));
+        console.info(`[Auto Fill][bamboo] second-pass learned ${label}=${qaMatch.answer}`);
+      }
+    }
+  }
+
   // Residence Country final pass: Chrome autofill / Pinpoint often write Poland while name/
   // phone/address fields are filled earlier in the same run — then a mid-loop Romania attempt
   // loses. Force profile.contact.country again after the main singles pass.
@@ -9423,11 +9579,17 @@ async function fillGeneratedAnswersInPage(answers) {
           'spl-autocomplete, oc-location-autocomplete, oc-location-autocomplete-wrapper, [data-test="location-autocomplete"]'
         )
       ) ||
-      // Workday's plain "Select One" single-pick dropdown - a `<button aria-haspopup="listbox">`
-      // with no role="combobox" of its own. Needs the same click-and-select-from-the-rendered-
-      // listbox handling as any other custom combobox, not a native-set (which wouldn't even
-      // apply to a <button> in the first place).
-      (element.tagName === "BUTTON" && element.getAttribute("aria-haspopup") === "listbox") ||
+    // Workday's plain "Select One" single-pick dropdown - a `<button aria-haspopup="listbox">`
+    // with no role="combobox" of its own. Needs the same click-and-select-from-the-rendered-
+    // listbox handling as any other custom combobox, not a native-set (which wouldn't even
+    // apply to a <button> in the first place).
+    (element.tagName === "BUTTON" && element.getAttribute("aria-haspopup") === "listbox") ||
+    // BambooHR Fabric Select (Country): `<button class="fab-SelectToggle" aria-haspopup="true">`.
+    // Confirmed live globalalliant-bamboohr-com-20260818T142654Z — also has aria-expanded, but
+    // keep the class/haspopup check so a toggle without that attribute still opens as a pick.
+    (element.tagName === "BUTTON" &&
+      (element.getAttribute("aria-haspopup") === "true" ||
+        element.classList.contains("fab-SelectToggle"))) ||
       // Comeet Bootstrap dropdown toggle — kept in sync with field-detector.js.
       (element.tagName === "A" &&
         (element.getAttribute("aria-haspopup") === "true" ||
@@ -12295,7 +12457,7 @@ function captureSampleInPage(profile, qaBank) {
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
+      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -12798,7 +12960,7 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
   {
     key: "notice_period",
-    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b/i,
+    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
   },
   { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
   { key: "nationality", re: /\bnationality\b/i },

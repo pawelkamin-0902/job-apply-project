@@ -1178,6 +1178,9 @@ function looksLikeComboboxPick(element) {
     // listbox handling as any other custom combobox, not a native-set (which wouldn't even
     // apply to a <button> in the first place).
     (element.tagName === "BUTTON" && element.getAttribute("aria-haspopup") === "listbox") ||
+    (element.tagName === "BUTTON" &&
+      (element.getAttribute("aria-haspopup") === "true" ||
+        element.classList.contains("fab-SelectToggle"))) ||
     // Comeet Bootstrap dropdown: `<a class="dropdown-toggle" aria-haspopup="true" name="How
     // did you hear…">` — not a button/role=combobox. Confirmed live on comeet.co apply iframe.
     (element.tagName === "A" &&
