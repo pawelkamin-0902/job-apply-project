@@ -726,6 +726,11 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
     if (/^upload file$/i.test(t)) return true;
     if (/^click to browse\b/i.test(t)) return true;
     if (/^the file size limit\b/i.test(t)) return true;
+    // Workable's dropzone button flips from "Choose file" to "Replace file" after a
+    // (mis)attach. That is still widget chrome — treating it as the field name made the
+    // real Resume input look unlabeled, so the Photo slot (first in the DOM, image-only
+    // accept) could win. Confirmed on jobs.workable.com (sap-fioneer capture).
+    if (/^replace file\b/i.test(t)) return true;
     return /^(drop or select\b|drop files?( here)?|choose files?|browse|select files?|no file (chosen|selected)|total \d+ files? selected|or drag and drop( here)?)/i.test(
       t
     );
@@ -815,7 +820,7 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
       const text = labelledby
         .split(/\s+/)
         .map((id) => cleanedText(document.getElementById(id)))
-        .filter(Boolean)
+        .filter((t) => t && !isGenericFileDropChrome(t) && !isGenericFileAriaLabel(t))
         .join(" ");
       if (text && !isGenericFileDropChrome(text)) return text;
     }
@@ -907,7 +912,43 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
 
   const RESUME_RE = /\b(resume|r[ée]sum[ée]|\bcv\b|curriculum vitae)\b/i;
   const EXCLUDE_RE =
-    /cover letter|cover ltr|photo|picture|headshot|portfolio|writing sample|transcript|additional (file|document|attachment)|other (file|document|attachment)|references?\b/i;
+    /cover letter|cover ltr|photo|picture|headshot|avatar|portfolio|writing sample|transcript|additional (file|document|attachment)|other (file|document|attachment)|references?\b/i;
+
+  // A PDF/DOCX resume must not be assigned to an image-only <input> (Workable Photo /
+  // `data-ui="avatar"` accepts .jpg/.png and then shows the red "Replace file" error).
+  function fileInputAcceptsResume(input, attachFilename, attachMime) {
+    const accept = (input.getAttribute("accept") || "").trim().toLowerCase();
+    if (!accept) return true;
+    const tokens = accept.split(",").map((s) => s.trim()).filter(Boolean);
+    const ext = `.${String(attachFilename || "").split(".").pop() || ""}`.toLowerCase();
+    const mime = String(attachMime || "").toLowerCase();
+    const imageTok = (t) => t.startsWith("image/") || /^\.(jpg|jpeg|gif|png|webp|bmp|heic|tiff?)$/i.test(t);
+    if (tokens.length && tokens.every(imageTok)) return false;
+    if (tokens.some((t) => t === mime || t === ext || (mime && t.endsWith("/*") && mime.startsWith(t.slice(0, -1))))) {
+      return true;
+    }
+    return tokens.some(
+      (t) =>
+        t === ".pdf" ||
+        t === ".doc" ||
+        t === ".docx" ||
+        t === ".odt" ||
+        t === ".rtf" ||
+        t.includes("pdf") ||
+        t.includes("msword") ||
+        t.includes("officedocument") ||
+        t.includes("opendocument") ||
+        t.includes("rtf")
+    );
+  }
+
+  // Workable stamps purpose on the input (`data-ui="resume"` vs `data-ui="avatar"`). Photo
+  // is first in the DOM on jobs.workable.com apply forms, so a generic first-input / single-
+  // unlabeled fallback attaches the CV to Photo. Prefer the stamped Resume input.
+  function findWorkableResumeFileInput() {
+    const inputs = collectFileInputs(document);
+    return inputs.find((input) => /^resume$/i.test((input.getAttribute("data-ui") || "").trim())) || null;
+  }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1140,6 +1181,7 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
 
     const candidates = collectFileInputs(document);
     let target =
+      findWorkableResumeFileInput() ||
       findBambooResumeFileInput() ||
       findSmartRecruitersResumeFileInput() ||
       findJoinResumeFileInput() ||
@@ -1147,14 +1189,28 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
     if (!target) {
       target = candidates.find((input) => {
       const label = resolveFileInputLabel(input);
-      return !EXCLUDE_RE.test(label) && !isAutoParseWidget(input) && RESUME_RE.test(label);
+      return (
+        !EXCLUDE_RE.test(label) &&
+        !isAutoParseWidget(input) &&
+        RESUME_RE.test(label) &&
+        fileInputAcceptsResume(input, filename, mimeType)
+      );
     });
+    }
+    if (target && !fileInputAcceptsResume(target, filename, mimeType)) {
+      target = null;
     }
     if (!target) {
       // No explicitly resume-labeled field — fall back to whatever's left once cover-letter/
       // photo/etc.-labeled fields and (off-Workday) auto-parse widgets are ruled out, but only if
       // that leaves exactly one candidate; more than one is too ambiguous to guess between.
-      const eligible = candidates.filter((input) => !EXCLUDE_RE.test(resolveFileInputLabel(input)) && !isAutoParseWidget(input));
+      // Never fall back onto an image-only Photo/avatar slot when attaching a PDF/DOCX.
+      const eligible = candidates.filter(
+        (input) =>
+          !EXCLUDE_RE.test(resolveFileInputLabel(input)) &&
+          !isAutoParseWidget(input) &&
+          fileInputAcceptsResume(input, filename, mimeType)
+      );
       if (eligible.length === 1) target = eligible[0];
     }
     if (!target) {

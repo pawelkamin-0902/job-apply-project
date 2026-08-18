@@ -3691,6 +3691,18 @@ unverified outside a live browser).
     second pass for anything still blank. Salary/notice still go to GPT per form (currency
     and period) — that path was not changed. **Not yet confirmed live.**
 
+151. **Workable Attach Resume put the PDF on Photo (Optional).** `Author: Cursor`.
+    Capture `jobs-workable-com-20260818T163355Z` (SAP Fioneer on jobs.workable.com). Photo
+    (`data-ui="avatar"`, accept images only) is the first `<input type="file">` in the DOM;
+    Resume (`data-ui="resume"`, accept pdf/doc) is later; a third "Transcripts" upload sits
+    after that. The Photo widget showed the red error + "Replace file" because a PDF was
+    assigned to an image-only input. The Resume button text is also "Replace file" after a
+    mis-attach, which is generic chrome — if that won as the field name, RESUME_RE missed
+    the real CV slot. Fixed: pick `input[data-ui="resume"]` first; never attach a PDF/DOCX
+    to an image-only accept list; treat "Replace file" as dropzone chrome; ignore generic
+    tokens in `aria-labelledby` so "Resume" / "Photo" stay distinct. Reload the extension
+    and use Attach Resume again (clear the Photo widget first).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
