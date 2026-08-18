@@ -3,7 +3,7 @@
   "name": "Auto Job Apply",
   "version": "0.1.0",
   "description": "Generate tailored resumes and (later) autofill job applications using your local Claude Code CLI.",
-  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs", "debugger"],
+  "permissions": ["sidePanel", "storage", "activeTab", "scripting", "tabs", "debugger", "webNavigation"],
   "host_permissions": ["http://127.0.0.1/*", "<all_urls>"],
   "action": {},
   "side_panel": { "default_path": "sidepanel.html" },

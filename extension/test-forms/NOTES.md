@@ -3653,6 +3653,28 @@ unverified outside a live browser).
       Poland, English=C2, Russian=0 — No knowledge, hear-about, and the privacy tick all
       commit; only the Telegram `@username*` is left for the applicant.
 
+149. **BambooHR Auto Fill reported "Filled 0 field(s)" while the form was already filled.**
+    `Author: Cursor`. Live captures `construo-bamboohr-com-20260818T080731Z` and
+    `globalalliant-bamboohr-com-20260818T142654Z`. Save Sample JSON on Global Alliant listed
+    14 real fields (First Name … LinkedIn); the HTML had `data-af-label` + values like
+    `firstName=Zenon`. The `.console.log` for every frame (including frame 0 whose header URL
+    is `…/careers/692`) was `[Auto Fill][run] start about:blank` / `groups=0 singles=0`.
+    Two compounding causes:
+    - Auto Fill / Learn / Attach / Save Sample still used `chrome.tabs.query({ active: true })`
+      even though the panel's own tab id is baked into `?tabId=` (`myTabId`, finding #80). A
+      PDF preview or other `about:blank` tab becoming active sent Auto Fill there.
+    - `executeScript({ allFrames: true })` also ran in recaptcha + `about:blank` iframes.
+      Those blank iframes inherit BambooHR's origin, so `clearAutoFillConsoleLog()` at the
+      start of `runAutofillInPage` wiped the parent document's sessionStorage log, then
+      wrote the 0-field `about:blank` run over it. BambooHR Fabric (`#micro-container2`)
+      can also still be empty if Auto Fill races hydrate.
+    Fixed: `getPanelTab()` uses `myTabId`; skip `about:blank`/recaptcha frames (and don't
+    clear logs except on the top window); wait for the tab document; inject only `http(s)`
+    application frames via `webNavigation.getAllFrames`; retry `collectFormFields` up to 4s
+    on `*.bamboohr.com` when the first pass is empty. **Not yet confirmed live** — reload
+    the extension (new `webNavigation` permission) and retest Auto Fill → Save Sample on
+    a BambooHR apply form.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

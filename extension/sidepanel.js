@@ -29,12 +29,117 @@ function isWorkdayHostname(hostname) {
 // that race). Reading it straight from the URL has no such timing dependency at all.
 const myTabId = Number(new URLSearchParams(location.search).get("tabId")) || null;
 
+// Recaptcha / about:blank / chrome-internal documents are never the application form.
+// Confirmed live globalalliant-bamboohr-com-20260818T142654Z: Auto Fill ran in those frames
+// (and in a still-blank main document), reported 0 fields, and about:blank iframes that inherit
+// the parent origin wiped the real run's sessionStorage console buffer via clearAutoFillConsoleLog.
+function isSkippableAutofillUrl(url) {
+  const u = String(url || "");
+  if (!u || /^about:/i.test(u) || /^chrome(-extension)?:/i.test(u) || /^blob:/i.test(u) || /^data:/i.test(u)) {
+    return true;
+  }
+  return /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com/i.test(u);
+}
+
+async function getPanelTab() {
+  if (myTabId) {
+    try {
+      const tab = await chrome.tabs.get(myTabId);
+      if (tab && tab.id !== undefined) return tab;
+    } catch {
+      /* tab closed */
+    }
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+async function waitForTabDocument(tabId, timeoutMs = 10000) {
+  const ready = (t) => t && t.status === "complete" && t.url && !isSkippableAutofillUrl(t.url);
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (ready(tab)) return tab;
+  } catch {
+    return null;
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      try {
+        resolve(await chrome.tabs.get(tabId));
+      } catch {
+        resolve(null);
+      }
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    function onUpdated(id, info, updated) {
+      if (id !== tabId) return;
+      if (ready(updated)) finish();
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs
+      .get(tabId)
+      .then((t) => {
+        if (ready(t)) finish();
+      })
+      .catch(() => finish());
+  });
+}
+
+async function applicationFrameIds(tabId) {
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    return (frames || [])
+      .filter((f) => /^https?:/i.test(f.url || "") && !isSkippableAutofillUrl(f.url))
+      .map((f) => f.frameId);
+  } catch {
+    return null;
+  }
+}
+
+async function scriptTarget(tabId, { applicationOnly = false } = {}) {
+  if (!applicationOnly) return { tabId, allFrames: true };
+  let frameIds = await applicationFrameIds(tabId);
+  if (frameIds && !frameIds.length) {
+    await waitForTabDocument(tabId);
+    frameIds = await applicationFrameIds(tabId);
+  }
+  if (frameIds && frameIds.length) return { tabId, frameIds };
+  return { tabId, allFrames: true };
+}
+
+async function executeInTab(tabId, details, { applicationOnly = false } = {}) {
+  const target = await scriptTarget(tabId, { applicationOnly });
+  try {
+    return await chrome.scripting.executeScript({ target, ...details });
+  } catch (err) {
+    if (applicationOnly && target.frameIds) {
+      return chrome.scripting.executeScript({ target: { tabId, allFrames: true }, ...details });
+    }
+    throw err;
+  }
+}
+
 // console-capture.js must load before field-detector.js so [Auto Fill] logs are buffered for
 // Save Sample and post-mortem debugging on real ATS pages.
-async function injectPageScripts(tabId) {
-  const target = { tabId, allFrames: true };
-  await chrome.scripting.executeScript({ target, files: ["console-capture.js"] });
-  await chrome.scripting.executeScript({ target, files: ["field-detector.js"] });
+async function injectPageScripts(tabId, { applicationOnly = false } = {}) {
+  const target = await scriptTarget(tabId, { applicationOnly });
+  try {
+    await chrome.scripting.executeScript({ target, files: ["console-capture.js"] });
+    await chrome.scripting.executeScript({ target, files: ["field-detector.js"] });
+  } catch (err) {
+    if (applicationOnly && target.frameIds) {
+      const fallback = { tabId, allFrames: true };
+      await chrome.scripting.executeScript({ target: fallback, files: ["console-capture.js"] });
+      await chrome.scripting.executeScript({ target: fallback, files: ["field-detector.js"] });
+      return;
+    }
+    throw err;
+  }
 }
 
 // Snapshot [Auto Fill] console output right after a run so Save Sample still gets logs even
@@ -43,11 +148,12 @@ let lastAutoFillConsoleSnapshot = null; // { tabId, frames: Map<frameId, string>
 
 async function snapshotConsoleLogsFromTab(tabId) {
   try {
-    await injectPageScripts(tabId);
-    const injections = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: () => (typeof window.getAutoFillConsoleLog === "function" ? window.getAutoFillConsoleLog() : ""),
-    });
+    await injectPageScripts(tabId, { applicationOnly: true });
+    const injections = await executeInTab(
+      tabId,
+      { func: () => (typeof window.getAutoFillConsoleLog === "function" ? window.getAutoFillConsoleLog() : "") },
+      { applicationOnly: true }
+    );
     const frames = new Map();
     for (const injection of injections) {
       const log = String(injection.result || "").trim();
@@ -2463,7 +2569,24 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
 async function runAutofillInPage(profile, qaBank, options = {}) {
   const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
-  if (typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
+  const href = location.href || "";
+  const unusableFrame =
+    !href ||
+    /^about:/i.test(href) ||
+    /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com/i.test(href);
+  if (unusableFrame) {
+    return { filled: [], unmatched: [] };
+  }
+  // about:blank iframes inherit the parent origin and share sessionStorage — clearing from a
+  // child frame wipes the real application document's Auto Fill log (BambooHR recaptcha/blank
+  // frames on globalalliant-bamboohr-com-20260818T142654Z).
+  let isTop = true;
+  try {
+    isTop = window.top === window;
+  } catch {
+    isTop = true;
+  }
+  if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(`[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""}`);
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
@@ -7363,7 +7486,27 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return idx;
   };
 
-  const { groups, singles, loneCheckboxes } = collectFormFields();
+  let { groups, singles, loneCheckboxes } = collectFormFields();
+  // BambooHR careers is a Fabric SPA (#micro-container2). Auto Fill during hydrate sees 0
+  // fields even though Save Sample a few seconds later finds First Name / Country / etc.
+  // Confirmed live construo + globalalliant 20260818.
+  if (
+    /(^|\.)bamboohr\.com$/i.test(location.hostname || "") &&
+    groups.length + singles.length + loneCheckboxes.length === 0
+  ) {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
+      const again = collectFormFields();
+      if (again.groups.length + again.singles.length + again.loneCheckboxes.length > 0) {
+        groups = again.groups;
+        singles = again.singles;
+        loneCheckboxes = again.loneCheckboxes;
+        console.info("[Auto Fill][detect] bamboo-wait recovered fields after Fabric hydrate");
+        break;
+      }
+    }
+  }
   console.info(
     `[Auto Fill][detect] groups=${groups.length} singles=${singles.length} loneCheckboxes=${loneCheckboxes.length}`
   );
@@ -12420,12 +12563,20 @@ function captureSampleInPage(profile, qaBank) {
     return `<${tag}${attrs}>${inner}</${tag}>`;
   }
 
+  const href = location.href || "";
+  const junkFrame =
+    /^about:/i.test(href) ||
+    /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com/i.test(href);
   return {
     url: location.href,
     html: serializeWithOpenShadow(document.documentElement),
     fields,
     console_log:
-      typeof window.getAutoFillConsoleLog === "function" ? window.getAutoFillConsoleLog() : "",
+      junkFrame
+        ? ""
+        : typeof window.getAutoFillConsoleLog === "function"
+          ? window.getAutoFillConsoleLog()
+          : "",
   };
 }
 
@@ -12433,6 +12584,14 @@ function captureSampleInPage(profile, qaBank) {
 // logic (normalizeLabel/resolveOwnLabel/group detection/isVisible) in sync with
 // runAutofillInPage's if you change either.
 function runLearnInPage() {
+  const href = location.href || "";
+  if (
+    !href ||
+    /^about:/i.test(href) ||
+    /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com/i.test(href)
+  ) {
+    return [];
+  }
   // Label resolution, visibility checks, honeypot/combobox detection, and group/native/shadow
   // field collection all come from field-detector.js, injected into this page before this
   // function runs (see the learnBtn handler) - the exact same collectFormFields() Auto Fill
@@ -12863,16 +13022,13 @@ function mergeQaEntries(existing, newPairs) {
 }
 
 async function scrapeCurrentTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getPanelTab();
   if (!tab?.id) return;
   el("jobUrl").value = tab.url || "";
   try {
     // allFrames because many career pages embed the actual posting via a cross-origin
     // <iframe> (Greenhouse, Lever, etc.) — the top frame is often just an empty wrapper.
-    const injections = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: extractPageInfo,
-    });
+    const injections = await executeInTab(tab.id, { func: extractPageInfo }, { applicationOnly: true });
     const valid = injections.filter((i) => i.result);
     if (!valid.length) {
       el("generateResult").textContent = "Extract failed: no result came back from the page.";
@@ -13391,18 +13547,27 @@ el("autofillBtn").addEventListener("click", async () => {
   try {
     const [profile, qaBankRaw, settings] = await Promise.all([apiFetch("/profile"), apiFetch("/qa"), apiFetch("/settings")]);
     const qaBank = filterQaBankForAutofill(qaBankRaw);
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getPanelTab();
+    if (!tab?.id) {
+      resultEl.textContent = "No job tab is attached to this panel.";
+      return;
+    }
+    if (isSkippableAutofillUrl(tab.url || tab.pendingUrl || "")) {
+      resultEl.textContent = `This tab is not a job page (${tab.url || "blank"}). Switch to the application tab, then Auto Fill.`;
+      return;
+    }
+    await waitForTabDocument(tab.id);
     // field-detector.js defines the shared DETECT logic (label resolution, visibility,
     // group/combobox collection) as page globals - runAutofillInPage and runLearnInPage both
     // call the same collectFormFields() from it rather than each carrying an independently-
     // drifting copy, so injected first here on every frame.
-    await injectPageScripts(tab.id);
-    const injections = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: runAutofillInPage,
-      args: [profile, qaBank],
-    });
-    const valid = injections.filter((i) => i.result);
+    await injectPageScripts(tab.id, { applicationOnly: true });
+    const injections = await executeInTab(
+      tab.id,
+      { func: runAutofillInPage, args: [profile, qaBank] },
+      { applicationOnly: true }
+    );
+    const valid = (injections || []).filter((i) => i.result);
     let filledCount = valid.reduce((sum, i) => sum + i.result.filled.length, 0);
     const allUnmatched = valid.flatMap((i) => (i.result.unmatched || []).map((u) => ({ ...u, frameId: i.frameId })));
 
@@ -13712,7 +13877,7 @@ el("autofillBtn").addEventListener("click", async () => {
       resultEl.textContent = "Filling in answers...";
       // Re-inject field-detector so label rematch works if the apply drawer remounted
       // (Workable) and wiped data-af-idx stamps while ChatGPT was generating.
-      await injectPageScripts(tab.id);
+      await injectPageScripts(tab.id, { applicationOnly: true });
       for (const f of finalFills) {
         if (!byFrame.has(f.frameId)) byFrame.set(f.frameId, []);
         byFrame.get(f.frameId).push({ idx: f.idx, value: f.value, label: f.label || "" });
@@ -13756,11 +13921,11 @@ el("autofillBtn").addEventListener("click", async () => {
     // control. Best-effort: must never block or fail the rest of Auto Fill's own reporting.
     let phoneCountryRefixed = false;
     try {
-      const checkResults = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        func: checkPhoneCountryPickerInPage,
-        args: [profile],
-      });
+      const checkResults = await executeInTab(
+        tab.id,
+        { func: checkPhoneCountryPickerInPage, args: [profile] },
+        { applicationOnly: true }
+      );
       if (checkResults.some((r) => r.result && r.result.wasWrong)) {
         // Re-runs runAutofillInPage itself rather than a separate, weaker re-implementation -
         // it's the same code that already commits this field correctly via real clicks earlier
@@ -13771,17 +13936,17 @@ el("autofillBtn").addEventListener("click", async () => {
         // Re-injected defensively first, same as before fillGeneratedAnswersInPage above -
         // runAutofillInPage depends on field-detector.js's own globals (collectFormFields etc.),
         // which could be gone if anything remounted the page's own DOM since the first run.
-        await injectPageScripts(tab.id);
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id, allFrames: true },
-          func: runAutofillInPage,
-          args: [profile, qaBank, { onlyPhoneCountry: true }],
-        });
-        const recheckResults = await chrome.scripting.executeScript({
-          target: { tabId: tab.id, allFrames: true },
-          func: checkPhoneCountryPickerInPage,
-          args: [profile],
-        });
+        await injectPageScripts(tab.id, { applicationOnly: true });
+        await executeInTab(
+          tab.id,
+          { func: runAutofillInPage, args: [profile, qaBank, { onlyPhoneCountry: true }] },
+          { applicationOnly: true }
+        );
+        const recheckResults = await executeInTab(
+          tab.id,
+          { func: checkPhoneCountryPickerInPage, args: [profile] },
+          { applicationOnly: true }
+        );
         phoneCountryRefixed = recheckResults.some((r) => r.result && r.result.checked && !r.result.wasWrong);
       }
     } catch {
@@ -13834,7 +13999,11 @@ el("attachResumeBtn").addEventListener("click", async () => {
   const resultEl = el("attachResumeResult");
   el("attachResumeBtn").disabled = true;
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getPanelTab();
+    if (!tab?.id) {
+      resultEl.textContent = "No job tab is attached to this panel.";
+      return;
+    }
     const nonTailorVisible = el("nonTailorSection").style.display !== "none";
     let resumeSource = null;
     if (nonTailorVisible) {
@@ -13858,11 +14027,14 @@ el("attachResumeBtn").addEventListener("click", async () => {
       return;
     }
     resultEl.textContent = "Attaching...";
-    const attachResults = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: attachResumeFileInPage,
-      args: [resumeSource.base64, resumeSource.filename, resumeSource.mimeType, isWorkdayHostname(new URL(tab.url).hostname)],
-    });
+    const attachResults = await executeInTab(
+      tab.id,
+      {
+        func: attachResumeFileInPage,
+        args: [resumeSource.base64, resumeSource.filename, resumeSource.mimeType, isWorkdayHostname(new URL(tab.url).hostname)],
+      },
+      { applicationOnly: true }
+    );
     const attached = attachResults.some((i) => i.result && i.result.attached);
     if (attached) {
       const hit = attachResults.find((i) => i.result && i.result.attached);
@@ -13886,15 +14058,16 @@ el("learnBtn").addEventListener("click", async () => {
   resultEl.textContent = "Learning...";
   el("learnBtn").disabled = true;
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getPanelTab();
+    if (!tab?.id) {
+      resultEl.textContent = "No job tab is attached to this panel.";
+      return;
+    }
     // Same shared field-detector.js Auto Fill uses (see its handler above) - Learn calls the
     // identical collectFormFields(), so it can't find a different set of fields than Auto Fill
     // did, or resolve a label differently, on the same page.
-    await injectPageScripts(tab.id);
-    const injections = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: runLearnInPage,
-    });
+    await injectPageScripts(tab.id, { applicationOnly: true });
+    const injections = await executeInTab(tab.id, { func: runLearnInPage }, { applicationOnly: true });
     const learnedPairs = injections.filter((i) => i.result).flatMap((i) => i.result);
     if (!learnedPairs.length) {
       resultEl.textContent = "Nothing to learn — no filled-in fields found on this page.";
@@ -13918,7 +14091,11 @@ el("saveSampleBtn").addEventListener("click", async () => {
   try {
     const [profile, qaBankRaw] = await Promise.all([apiFetch("/profile"), apiFetch("/qa")]);
     const qaBank = filterQaBankForAutofill(qaBankRaw);
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getPanelTab();
+    if (!tab?.id) {
+      resultEl.textContent = "No job tab is attached to this panel.";
+      return;
+    }
     // Same shared field-detector.js Auto Fill/Learn use (see their handlers) - a captured
     // sample previously ran its own separately-drifting copy of detection, so it could report
     // fields/labels that no longer matched what a real Auto Fill run would actually see.
