@@ -90,15 +90,18 @@
       page-break-after: avoid;
     }
     .row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 10pt;
+      display: table;
+      width: 100%;
+      table-layout: auto;
       margin: 0 0 1pt;
       break-after: avoid;
       page-break-after: avoid;
     }
-    .row .left { flex: 1 1 auto; }
+    .row .left {
+      display: table-cell;
+      width: 99%;
+      vertical-align: top;
+    }
     .row .title {
       font-weight: 700;
       font-size: 10.5pt;
@@ -111,9 +114,11 @@
       font-weight: 700;
     }
     .row .right {
-      flex: 0 0 auto;
+      display: table-cell;
+      width: 1%;
       text-align: right;
       white-space: nowrap;
+      vertical-align: top;
       font-size: 9pt;
       font-weight: 700;
       color: var(--muted);
@@ -122,8 +127,10 @@
       background: var(--soft);
     }
     .loc {
+      display: block;
       margin: 0 0 2pt;
       font-size: 9pt;
+      line-height: 12pt;
       color: var(--muted);
       font-style: italic;
       break-after: avoid;
@@ -133,10 +140,7 @@
       margin: 1pt 0 0;
       padding: 0 0 0 14pt;
       list-style: none;
-      break-before: avoid;
-      page-break-before: avoid;
     }
-    ul.bullets.rest { margin-top: 0; }
     ul.bullets li {
       position: relative;
       margin: 0 0 2pt;
@@ -202,15 +206,10 @@
           <div class="right">{{ job.dates }}</div>
         </div>
         {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
-        {% if job.bullets %}
-        <ul class="bullets">
-          <li>{{ job.bullets[0] | md }}</li>
-        </ul>
-        {% endif %}
       </div>
-      {% if job.bullets | length > 1 %}
-      <ul class="bullets rest">
-        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for b in job.bullets %}<li>{{ b | md }}</li>{% endfor %}
       </ul>
       {% endif %}
     </section>

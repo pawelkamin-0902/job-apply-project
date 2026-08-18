@@ -100,26 +100,47 @@
       page-break-after: avoid;
     }
     .job-meta {
-      display: flex;
-      justify-content: space-between;
-      gap: 8pt;
-      margin: 1pt 0 2pt;
+      display: table;
+      width: 100%;
+      table-layout: auto;
+      margin: 1pt 0 1pt;
       font-family: Helvetica, Arial, sans-serif;
       font-size: 9pt;
       color: var(--muted);
       break-after: avoid;
       page-break-after: avoid;
     }
-    .job-meta .company { font-style: italic; color: var(--accent); }
-    .job-meta .dates { white-space: nowrap; }
+    .job-meta .company {
+      display: table-cell;
+      width: 99%;
+      vertical-align: top;
+      font-style: italic;
+      color: var(--accent);
+    }
+    .job-meta .dates {
+      display: table-cell;
+      width: 1%;
+      text-align: right;
+      white-space: nowrap;
+      vertical-align: top;
+      padding-left: 8pt;
+    }
+    .loc {
+      display: block;
+      margin: 0 0 2pt;
+      font-family: Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 12pt;
+      color: var(--muted);
+      font-style: italic;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
     ul.bullets {
       margin: 1pt 0 0;
       padding: 0 0 0 14pt;
       list-style: none;
-      break-before: avoid;
-      page-break-before: avoid;
     }
-    ul.bullets.rest { margin-top: 0; }
     ul.bullets li {
       position: relative;
       margin: 0 0 2pt;
@@ -136,13 +157,19 @@
       background: var(--accent);
     }
     .edu .row {
-      display: flex;
-      justify-content: space-between;
-      gap: 8pt;
+      display: table;
+      width: 100%;
       font-family: Helvetica, Arial, sans-serif;
     }
-    .edu .left { font-weight: 700; }
-    .edu .right { color: var(--muted); white-space: nowrap; }
+    .edu .left { display: table-cell; width: 99%; font-weight: 700; }
+    .edu .right {
+      display: table-cell;
+      width: 1%;
+      text-align: right;
+      color: var(--muted);
+      white-space: nowrap;
+      padding-left: 8pt;
+    }
     .edu .sub {
       margin: 1pt 0 0;
       font-style: italic;
@@ -189,18 +216,14 @@
       <div class="job-head">
         <p class="job-title">{{ job.title }}</p>
         <div class="job-meta">
-          <span class="company">{% if job.location %}{{ job.company }} · {{ job.location }}{% else %}{{ job.company }}{% endif %}</span>
+          <span class="company">{{ job.company }}</span>
           <span class="dates">{{ job.dates }}</span>
         </div>
-        {% if job.bullets %}
-        <ul class="bullets">
-          <li>{{ job.bullets[0] | md }}</li>
-        </ul>
-        {% endif %}
+        {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
       </div>
-      {% if job.bullets | length > 1 %}
-      <ul class="bullets rest">
-        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for b in job.bullets %}<li>{{ b | md }}</li>{% endfor %}
       </ul>
       {% endif %}
     </section>

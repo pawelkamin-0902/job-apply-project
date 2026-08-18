@@ -33,15 +33,15 @@
       background: #fff;
     }
     .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      gap: 12pt;
+      display: table;
+      width: 100%;
       margin: 0 0 6pt;
       padding-bottom: 5pt;
       border-bottom: 2pt solid var(--accent);
     }
     .name {
+      display: table-cell;
+      vertical-align: bottom;
       margin: 0;
       color: var(--accent);
       font-weight: 700;
@@ -51,8 +51,9 @@
       text-align: left;
     }
     .contact {
+      display: table-cell;
+      vertical-align: bottom;
       margin: 0;
-      max-width: 55%;
       text-align: right;
       font-size: 8.5pt;
       line-height: 11pt;
@@ -94,26 +95,36 @@
       page-break-after: avoid;
     }
     .row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 8pt;
+      display: table;
+      width: 100%;
+      table-layout: auto;
       margin: 0;
       break-after: avoid;
       page-break-after: avoid;
     }
-    .row .left { flex: 1 1 70%; font-weight: 700; font-size: 9.5pt; }
+    .row .left {
+      display: table-cell;
+      width: 99%;
+      vertical-align: baseline;
+      font-weight: 700;
+      font-size: 9.5pt;
+    }
     .row .right {
-      flex: 0 0 auto;
+      display: table-cell;
+      width: 1%;
       text-align: right;
       white-space: nowrap;
+      vertical-align: baseline;
       color: var(--muted);
       font-size: 8.5pt;
+      padding-left: 8pt;
     }
     .loc {
+      display: block;
       margin: 0 0 1pt;
       color: var(--muted);
       font-size: 8.5pt;
+      line-height: 11pt;
       break-after: avoid;
       page-break-after: avoid;
     }
@@ -121,10 +132,7 @@
       margin: 1pt 0 0;
       padding: 0 0 0 12pt;
       list-style: none;
-      break-before: avoid;
-      page-break-before: avoid;
     }
-    ul.bullets.rest { margin-top: 0; }
     ul.bullets li {
       position: relative;
       margin: 0 0 1pt;
@@ -182,15 +190,10 @@
           <div class="right">{{ job.dates }}</div>
         </div>
         {% if job.location %}<p class="loc">{{ job.location }}</p>{% endif %}
-        {% if job.bullets %}
-        <ul class="bullets">
-          <li>{{ job.bullets[0] | md }}</li>
-        </ul>
-        {% endif %}
       </div>
-      {% if job.bullets | length > 1 %}
-      <ul class="bullets rest">
-        {% for b in job.bullets[1:] %}<li>{{ b | md }}</li>{% endfor %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for b in job.bullets %}<li>{{ b | md }}</li>{% endfor %}
       </ul>
       {% endif %}
     </section>

@@ -11,6 +11,8 @@ Non-negotiable ground rules:
 - Never invent employers, job titles, employment dates, degrees, schools, or metrics (numbers, percentages, \
 dollar amounts, user counts, latency, throughput, etc.). Only include a metric if it already appears in \
 the candidate's source data for that role.
+- Copy each job's `location` from the profile (e.g. Warsaw (Remote), Luxembourg (Onsite)). Do not leave it \
+empty or fold it into the company name.
 - Do not invent technologies the candidate clearly never used. Prefer the candidate's real stack; when the \
 profile is thin, you may align wording to the JD's tech/domain only under the company-type rules below \
 (consulting vs product), not by inventing unrelated stacks.
@@ -82,7 +84,7 @@ text must be the actual URL or handle itself (e.g. linkedin.com/in/janedoe), nev
   "summary": "string: one paragraph, sentences separated by spaces only (no newline characters)",
   "skills": {"category name": ["skill", "..."]},
   "experience": [
-    {"title": "string", "company": "string", "location": "string or null", "dates": "string", "bullets": ["string", "..."]}
+    {"title": "string", "company": "string", "location": "string: copy the profile job workplace line (e.g. Warsaw (Remote)); never empty if the profile has it", "dates": "string", "bullets": ["string", "..."]}
   ],
   "education": [
     {"school": "string", "degree": "string", "location": "string or null", "dates": "string or null"}

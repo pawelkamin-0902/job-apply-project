@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import re
 
-from app.schemas import ContactInfo, EducationEntry, Profile, ResumeData, ResumeEducationEntry, ResumeExperienceEntry
+from app.schemas import (
+    ContactInfo,
+    EducationEntry,
+    ExperienceEntry,
+    Profile,
+    ResumeData,
+    ResumeEducationEntry,
+    ResumeExperienceEntry,
+)
 
 _TITLE_SPLIT_RE = re.compile(r"\s*\|\s*")
 _COMPANY_LOCATION_SPLIT_RE = re.compile(r"\s[–—-]\s")
@@ -21,7 +29,7 @@ def normalize_resume(raw: dict, profile: Profile) -> ResumeData:
         contact_line=_repair_contact_line(raw.get("contact_line"), profile.contact),
         summary=_normalize_summary(raw.get("summary", "")),
         skills=_normalize_skills(raw.get("skills", {})),
-        experience=[_normalize_experience(e) for e in raw.get("experience", [])],
+        experience=[_normalize_experience(e, profile.experience) for e in raw.get("experience", [])],
         education=_normalize_education(raw.get("education"), profile.education),
     )
 
@@ -127,7 +135,27 @@ def _normalize_skills(skills: object) -> dict[str, list[str]]:
     return {}
 
 
-def _normalize_experience(entry: object) -> ResumeExperienceEntry:
+def _location_from_profile(company: str, profile_experience: list[ExperienceEntry]) -> str | None:
+    """GPT often omits per-job location even when the profile has 'Warsaw, Poland (Remote)'.
+    Match by company name and copy the stored place line onto the resume entry."""
+    key = (company or "").strip().lower()
+    if not key:
+        return None
+    for entry in profile_experience:
+        if (entry.company or "").strip().lower() == key:
+            loc = (entry.location or "").strip()
+            if loc:
+                return loc
+    for entry in profile_experience:
+        stored = (entry.company or "").strip().lower()
+        if stored and (stored in key or key in stored):
+            loc = (entry.location or "").strip()
+            if loc:
+                return loc
+    return None
+
+
+def _normalize_experience(entry: object, profile_experience: list[ExperienceEntry] | None = None) -> ResumeExperienceEntry:
     if not isinstance(entry, dict):
         raise ValueError(f"experience entry must be an object, got {entry!r}")
 
@@ -135,11 +163,17 @@ def _normalize_experience(entry: object) -> ResumeExperienceEntry:
     if bullets is None:
         bullets = entry.get("details", [])
 
+    profile_experience = profile_experience or []
+
     if "company" in entry and "dates" in entry:
+        company = str(entry.get("company") or "")
+        location = (entry.get("location") or "").strip() or None
+        if not location:
+            location = _location_from_profile(company, profile_experience)
         return ResumeExperienceEntry(
             title=entry.get("title", ""),
-            company=entry["company"],
-            location=entry.get("location"),
+            company=company,
+            location=location,
             dates=entry["dates"],
             bullets=list(bullets),
         )
@@ -155,6 +189,8 @@ def _normalize_experience(entry: object) -> ResumeExperienceEntry:
             location = company_location[1].strip()
     if len(parts) > 2:
         dates = parts[2].strip()
+    if not location:
+        location = _location_from_profile(company, profile_experience)
 
     return ResumeExperienceEntry(title=title, company=company, location=location, dates=dates, bullets=list(bullets))
 
