@@ -3688,8 +3688,8 @@ unverified outside a live browser).
     happens to sit *after* Country in the DOM) never got a chance. Fixed: on `*.bamboohr.com`
     fill Country first, Escape-close the Fabric menu, wait until Province + lower inputs are
     live and not aria-hidden, re-collect singles, then fill; relocate by name *or* label;
-    second pass for anything still blank. Desired Pay stays empty unless a QA-bank salary
-    answer exists (consequential — not GPT). **Not yet confirmed live.**
+    second pass for anything still blank. Salary/notice still go to GPT per form (currency
+    and period) — that path was not changed. **Not yet confirmed live.**
 
 ## Known gaps (not yet acted on)
 
