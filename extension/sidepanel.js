@@ -1346,7 +1346,11 @@ function extractPageInfo() {
   // known widget-provider hosts is a precise, low-risk fix — unlike a "does this look like
   // code" content heuristic, it can't misfire on a real job posting that happens to include a
   // code snippet in its description.
-  const WIDGET_HOST_RE = /(^|\.)hcaptcha\.com$|recaptcha|(^|\.)gstatic\.com$|captcha-assets\.|captcha-base\.|(^|\.)platform\.twitter\.com$/i;
+  // challenges.cloudflare.com (Turnstile) is the same class of "longest junk wins" iframe as
+  // hCaptcha — confirmed on outgle.com careers: a 266k challenge frame sat next to the real
+  // posting. Keep it here even though applicationOnly scrape already skips it via URL filter.
+  const WIDGET_HOST_RE =
+    /(^|\.)hcaptcha\.com$|recaptcha|(^|\.)gstatic\.com$|captcha-assets\.|captcha-base\.|(^|\.)challenges\.cloudflare\.com$|(^|\.)platform\.twitter\.com$/i;
   // Google's own reCAPTCHA v2 checkbox iframe is served from
   // `www.google.com/recaptcha/api2/anchor` - confirmed live on a join.com posting, its raw
   // `recaptcha.anchor.Main.init(...)` payload sailed straight through the check above (a
@@ -1427,7 +1431,7 @@ function extractPageInfo() {
     // Many sites without JobPosting schema still clearly label the section
     // (e.g. "Job description", "About the role") right before the real content.
     const headingRe =
-      /job description|about (the|this) role|responsibilities|what you.?ll do|^summary\b|what we.?re looking for/i;
+      /job description|job summary|about (the|this) role|responsibilities|qualifications|what you.?ll do|^summary\b|what we.?re looking for/i;
     for (const h of document.querySelectorAll("h1, h2, h3, h4, strong, b")) {
       const text = (h.textContent || "").trim();
       if (!headingRe.test(text) || text.length > 60) continue;
@@ -1568,6 +1572,24 @@ function extractPageInfo() {
     // 8k hard cut sliced mid-word ("skil…"). Prefer ATS containers below; keep a higher
     // ceiling so full postings still fit when a broader landmark is the only source.
     return t.slice(0, 25000);
+  }
+
+  // schema.org JobPosting.description is sometimes only a one-line teaser while the full
+  // Job Summary / Responsibilities / Qualifications live in the page body — confirmed on
+  // outgle.com/careers/devops-engineer (JSON-LD ~166 chars; `.tp-career-details-wrap` has
+  // the real posting). Returning that teaser early made Extract look "successful" but empty
+  // of usable JD. Keep structured location from JSON-LD; keep looking for richer DOM text.
+  function looksLikeThinJobPostingDescription(text) {
+    const t = (text || "").trim();
+    if (!t) return true;
+    if (t.length < 500) return true;
+    if (
+      t.length < 1200 &&
+      !/\b(responsibilit|qualification|requirement|what you.?ll do|about the role|job summary|key responsibilit)\b/i.test(t)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   // True when this document is only a host for a cross-origin job-board iframe (the JD and
@@ -1747,7 +1769,7 @@ function extractPageInfo() {
       // (e.g. Ashby's real HTML) - plain text with no leftover "<"/"&" characters left after the
       // first pass just passes through the second pass completely unchanged.
       const fromLd = acceptDescription(htmlToText(htmlToText(posting.description)));
-      if (fromLd) return fromLd;
+      if (fromLd && !looksLikeThinJobPostingDescription(fromLd)) return fromLd;
     }
 
     // SmartRecruiters oneclick apply form: no JobPosting / no JD body, but __OC_CONTEXT__.job
@@ -1794,9 +1816,13 @@ function extractPageInfo() {
     // `main` scored longer than `.BambooRichText` and would otherwise win with a
     // "Privacy PolicyJob Openings..." prefix glued onto the real description. Purpose-built
     // class names are more trustworthy than "longest landmark wins".
+    // Outgle (and similar ThemePure career templates): full posting is in
+    // `.tp-career-details-wrap` (Job Summary + Responsibilities + Qualifications). Prefer that
+    // over the outer `.tp-career-details-ptb` shell, which also includes the salary sidebar and
+    // apply-modal chrome.
     let best = pickBest(
       document.querySelectorAll(
-        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd"
+        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap']"
       ),
       200
     );

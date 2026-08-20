@@ -3703,6 +3703,16 @@ unverified outside a live browser).
     tokens in `aria-labelledby` so "Resume" / "Photo" stay distinct. Reload the extension
     and use Attach Resume again (clear the Photo widget first).
 
+152. **Outgle career pages extracted only a one-line JobPosting teaser.** `Author: Cursor`.
+    Capture `outgle-com-20260820T140009Z` (`https://outgle.com/careers/devops-engineer`).
+    schema.org JobPosting.description is a ~166-char marketing sentence; the real Job Summary /
+    Key Responsibilities / Qualifications live in `.tp-career-details-wrap`. Extract returned
+    the teaser and stopped. Fixed: treat short/section-less JobPosting descriptions as thin and
+    keep scanning; prefer `.tp-career-details-wrap` (and related ThemePure career selectors);
+    recognize "Job Summary" / "Qualifications" headings; skip Cloudflare Turnstile frames in
+    `extractPageInfo`'s widget-host list. Reload the extension and re-Extract on the Outgle
+    posting.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
