@@ -3713,6 +3713,16 @@ unverified outside a live browser).
     `extractPageInfo`'s widget-host list. Reload the extension and re-Extract on the Outgle
     posting.
 
+153. **Gurtam career pages left Company empty / wrong.** `Author: Cursor`. Capture
+    `gurtam-com-20260820T150300Z` (`https://gurtam.com/jobs/senior-devops-engineer-remote`).
+    No JobPosting hiringOrganization / og:site_name. `<title>` is
+    `Senior DevOps Engineer | Kubernetes, CI/CD & Infrastructure Automation`, and the
+    leading `Role | …` title parser treated **Senior DevOps Engineer** as the company, so
+    the `gurtam.com` domain fallback never ran. Logo alt is `Gurtam Logo`. Fixed: reject
+    title-derived names that look like job titles or skill lists; prefer header logo alt
+    (`… Logo`) and own-domain (`gurtam.com` → Gurtam) before trusting title patterns.
+    Reload the extension and re-Extract.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

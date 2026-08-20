@@ -1877,6 +1877,62 @@ function extractPageInfo() {
     return s;
   }
 
+  // Title patterns like "Senior DevOps Engineer | Kubernetes, CI/CD & …" wrongly take the
+  // role (or the skill list after |) as the employer — confirmed on gurtam.com/jobs/... where
+  // leading-pipe parsing returned "Senior DevOps Engineer" and never reached the gurtam.com
+  // domain fallback. Reject those so logo alt / own-domain can win.
+  function looksLikeJobTitleNotCompany(name) {
+    const t = String(name || "").replace(/\s+/g, " ").trim();
+    if (!t || t.length < 2) return true;
+    if (
+      /\b(engineer|developer|designer|manager|analyst|scientist|architect|consultant|specialist|intern|director|recruiter|coordinator|administrator|technician)\b/i.test(
+        t
+      )
+    ) {
+      return true;
+    }
+    if (/^(senior|junior|staff|principal|lead|mid[- ]?level|associate|entry[- ]?level)\b/i.test(t)) return true;
+    // "Kubernetes, CI/CD & Infrastructure Automation" — skill list, not a company.
+    if ((t.match(/,/g) || []).length >= 1 && /\b(ci\/?cd|kubernetes|infrastructure|automation|aws|azure|gcp|react|python|java|devops)\b/i.test(t)) {
+      return true;
+    }
+    return false;
+  }
+
+  function companyFromLogoAlt() {
+    for (const img of document.querySelectorAll("img[alt]")) {
+      const alt = String(img.getAttribute("alt") || "").replace(/\s+/g, " ").trim();
+      if (!alt || alt.length > 80) continue;
+      if (!/\blogo\b/i.test(alt)) continue;
+      if (/secure privacy|cookie|consent|recaptcha|cloudflare|captcha|facebook|twitter|linkedin|instagram/i.test(alt)) {
+        continue;
+      }
+      const name = tidyExtractedCompanyName(alt);
+      if (name && name.length >= 2 && name.length <= 60 && !looksLikeJobTitleNotCompany(name)) return name;
+    }
+    return "";
+  }
+
+  function companyFromOwnDomain() {
+    const fullHost = location.hostname.replace(/^www\./, "");
+    if (
+      /greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com|ashbyhq\.com|rippling\.com/i.test(
+        fullHost
+      )
+    ) {
+      return "";
+    }
+    const parts = fullHost.split(".");
+    let label = parts[0] || "";
+    if (/^(jobs?|careers?|career|apply|recruiting|talents?)$/i.test(label) && parts.length >= 3) {
+      label = parts[1];
+    }
+    if (label && label.length > 1 && !/^(jobs?|careers?|career|www)$/i.test(label)) {
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    }
+    return "";
+  }
+
   function companyFromGreenhouseTitle(title) {
     const raw = String(title || "").replace(/\s+/g, " ").trim();
     const m = raw.match(/^job application for .+ at (.+)$/i) || raw.match(/\bat\s+([A-Z][\w& .'-]{1,60})$/);
@@ -2030,40 +2086,48 @@ function extractPageInfo() {
         )
           .replace(/\s+/g, " ")
           .trim();
-        if (text && text.length >= 2 && text.length < 100) return tidyExtractedCompanyName(text) || text;
+        if (text && text.length >= 2 && text.length < 100) {
+          const cleaned = tidyExtractedCompanyName(text) || text;
+          if (!looksLikeJobTitleNotCompany(cleaned)) return cleaned;
+        }
       }
     }
+    // 4b. Header logo alt ("Gurtam Logo") on first-party career sites — before title parsing,
+    // which often mistakes "Role | Skills" for a company (gurtam.com capture).
+    const fromLogo = companyFromLogoAlt();
+    if (fromLogo) return fromLogo;
+    // 4c. Own-domain fallback early when the host is the employer's site (gurtam.com → Gurtam).
+    // Still runs again at step 6 if title patterns somehow yield nothing usable.
+    const fromDomainEarly = companyFromOwnDomain();
     // 5. Page title patterns like "Job Title at Company", "Company - Job Title", or
     // SuccessFactors "Job Title Job Details | Company".
     // Include hyphen / apostrophe — Greenhouse (and others) use "at SingleStore-LinkedIn",
     // "at Third-Party Job Posts", "O'Reilly". The old `[\w& .]` class silently dropped those.
     const title = document.title || "";
     let m = title.match(/\bat\s+([A-Z][\w& .'-]{1,60})$/);
-    if (m) return tidyExtractedCompanyName(m[1].trim());
-    m = title.match(/\|\s*([A-Z][\w& .,'-]{1,80})$/);
+    if (m) {
+      const fromAt = tidyExtractedCompanyName(m[1].trim());
+      if (fromAt && !looksLikeJobTitleNotCompany(fromAt)) return fromAt;
+    }
+    m = title.match(/\|\s*([A-Z][\w& .,'/-]{1,80})$/);
     if (m) {
       const fromPipe = tidyExtractedCompanyName(m[1].trim());
-      if (fromPipe && !/^(job details?|careers?|jobs?)$/i.test(fromPipe)) return fromPipe;
+      if (fromPipe && !/^(job details?|careers?|jobs?)$/i.test(fromPipe) && !looksLikeJobTitleNotCompany(fromPipe)) {
+        return fromPipe;
+      }
     }
     m = title.match(/^([A-Z][\w& .'-]{1,60})\s*[-|]/);
-    if (m) return tidyExtractedCompanyName(m[1].trim());
+    if (m) {
+      const fromLead = tidyExtractedCompanyName(m[1].trim());
+      if (fromLead && !looksLikeJobTitleNotCompany(fromLead)) return fromLead;
+    }
+    if (fromDomainEarly) return fromDomainEarly;
     // 6. Last resort: derive from the page's own domain — only meaningful when the
     // company hosts the posting themselves, not on a third-party ATS's own domain
     // (which would otherwise just give back "Greenhouse", "Lever", etc).
     // careers.X.com / jobs.X.com / job.X.com → use X, not the "jobs"/"careers" label
     // (confirmed live: jobs.igt.com otherwise became company "Jobs").
-    const fullHost = location.hostname.replace(/^www\./, "");
-    if (!/greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com/i.test(fullHost)) {
-      const parts = fullHost.split(".");
-      let label = parts[0] || "";
-      if (/^(jobs?|careers?|career|apply|recruiting|talents?)$/i.test(label) && parts.length >= 3) {
-        label = parts[1];
-      }
-      if (label && label.length > 1 && !/^(jobs?|careers?|career|www)$/i.test(label)) {
-        return label.charAt(0).toUpperCase() + label.slice(1);
-      }
-    }
-    return "";
+    return companyFromOwnDomain();
   }
 
   function extractUrl() {
