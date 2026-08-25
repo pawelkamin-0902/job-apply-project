@@ -3723,6 +3723,29 @@ unverified outside a live browser).
     (`… Logo`) and own-domain (`gurtam.com` → Gurtam) before trusting title patterns.
     Reload the extension and re-Extract.
 
+154. **Batch audit of 257 top-frame Save Sample captures (title + JD).** `Author: Cursor`.
+    Ran `tools/sweep-extract-jd.mjs` against HGFS `extension/test-forms/captured/` using the
+    real `extractPageInfo`. Before fixes: 173 ok / 84 flagged (42 empty JD, 7 empty title).
+    Real extractor bugs (not apply-form shells without a posting body):
+    - **Lever apply + hCaptcha:** `pageHostsAtsJobEmbed()` substring-matched `jobs.lever.co`
+      inside the captcha iframe's `_origin=` / `host=` query, blanked the title, and skipped
+      JD. Fixed: match ATS hosts on the iframe URL's **hostname** only. Also teach
+      `stripTrailingBoilerplate` "Company - Role" (Terra / Lyra Health) so og/title keep the
+      role. Captures `jobs-lever-co-20260730T205044Z`, `…20260813T202607Z`.
+    - **SuccessFactors cookie CMP:** generic `.title-section .title` (meant for Darwinbox)
+      returned "Required Cookies" before the real `<h1>`. Removed that selector from the
+      shared list (Darwinbox still has its dedicated block); reject cookie/consent titles.
+      Captures `career2-successfactors-eu-*`, `career4-successfactors-com-*`.
+    - **BambooHR thin JobPosting:** ~1000-char bullet JD without the word "responsibilities"
+      was treated as thin → chrome "Privacy PolicyJob Openings…". Accept bullet-heavy
+      JobPosting text ≥800 chars. Capture `globalalliant-bamboohr-com-20260818T142654Z`.
+    - **Greenhouse `<title>`:** "Job Application for X at Y" left a leading "for " after
+      strip. Consume `job application for`. Capture form3 Greenhouse embed frame.
+    Remaining empty JD on Rippling/Workable apply / SmartRecruiters oneclick / Pinpoint Apply
+    shells is expected (no posting body in that document); Greenhouse wrappers (atolls,
+    form3, precisely) correctly leave shell title/JD empty — live scrape takes the embed
+    frame. Reload the extension and re-Extract on Lever / SuccessFactors / BambooHR.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

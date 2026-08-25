@@ -1583,6 +1583,11 @@ function extractPageInfo() {
     const t = (text || "").trim();
     if (!t) return true;
     if (t.length < 500) return true;
+    // Bullet-heavy JobPosting HTML (BambooHR etc.) often has no "Responsibilities" heading —
+    // confirmed on globalalliant.bamboohr.com/careers/692: ~1000 chars of "● Develop…" duties
+    // was treated as thin, then landmark scraping returned "Privacy PolicyJob Openings…".
+    const bulletHits = (t.match(/[●•▪◦]|\n\s*[-*]\s+/g) || []).length;
+    if (t.length >= 800 && bulletHits >= 3) return false;
     if (
       t.length < 1200 &&
       !/\b(responsibilit|qualification|requirement|what you.?ll do|about the role|job summary|key responsibilit)\b/i.test(t)
@@ -1607,7 +1612,24 @@ function extractPageInfo() {
     if (document.getElementById("grnhse_iframe") || document.getElementById("grnhse_app")) return true;
     for (const iframe of document.querySelectorAll("iframe[src]")) {
       const src = iframe.getAttribute("src") || "";
-      if (/greenhouse\.io\/(embed|jobs)|jobs\.lever\.co|\/embed\/job/i.test(src)) return true;
+      // Match on the iframe's own hostname — never the full src string. Confirmed on
+      // jobs.lever.co/.../apply: hCaptcha enclave URLs embed `host=jobs.lever.co` /
+      // `_origin=https%3A%2F%2Fjobs.lever.co` in the query/hash, so a substring test for
+      // `jobs.lever.co` falsely treated the Lever apply page itself as a "wrapper with an
+      // embed" and blanked the job title.
+      let host = "";
+      let path = "";
+      try {
+        const u = new URL(src, location.href);
+        host = u.hostname || "";
+        path = u.pathname || "";
+      } catch {
+        continue;
+      }
+      if (/(^|\.)greenhouse\.io$/i.test(host) && /\/(embed|jobs)/i.test(path)) return true;
+      if (/(^|\.)jobs\.lever\.co$/i.test(host)) return true;
+      if (/(^|\.)lever\.co$/i.test(host) && /\/embed/i.test(path)) return true;
+      if (/\/embed\/job/i.test(path) && /(greenhouse|lever|ashby)/i.test(host)) return true;
     }
     return false;
   }
@@ -1907,6 +1929,11 @@ function extractPageInfo() {
       if (/secure privacy|cookie|consent|recaptcha|cloudflare|captcha|facebook|twitter|linkedin|instagram/i.test(alt)) {
         continue;
       }
+      // Asset/filename alts ("logo-dark", "logo_white.svg") are not company names —
+      // confirmed on form3.tech Greenhouse wrapper.
+      if (/^logo[-_\s]?(dark|light|white|black|main|header|footer)?(\.(svg|png|webp|jpg))?$/i.test(alt)) {
+        continue;
+      }
       const name = tidyExtractedCompanyName(alt);
       if (name && name.length >= 2 && name.length <= 60 && !looksLikeJobTitleNotCompany(name)) return name;
     }
@@ -2178,14 +2205,26 @@ function extractPageInfo() {
     return /internet explorer|no longer supported|browser.+(not|no longer)\s+supported/i.test(text || "");
   }
 
+  // Cookie-consent / CMP chrome reused Darwinbox's `.title-section .title` selector —
+  // confirmed on career2.successfactors.eu: that selector returned "Required Cookies"
+  // ahead of the real <h1> "Career Opportunities: Senior Backend Engineer (345)".
+  function isCookieOrConsentTitle(text) {
+    return /^(required|functional|performance|targeting|marketing|analytical)?\s*cookies?\b|cookie (consent|preferences|settings|manager|policy)|manage consent|privacy preference/i.test(
+      (text || "").trim()
+    );
+  }
+
   // Strips a leading "Apply -"/"Apply |"/"Applying for "/"New Application |"/"Application -"/
   // "Candidate Profile -" boilerplate segment - safe to apply uniformly to headings AND
   // <title>/og:title, since it only ever matches one of these specific known apply-flow
   // phrases, never arbitrary title text. "Candidate Profile" confirmed live on an iCIMS
   // <title> ("Candidate Profile - Software Engineer (Jenkins & .NET)").
   function stripLeadingApplyBoilerplate(text) {
+    // "Job Application for {title} at {company}" (Greenhouse <title>) must consume the
+    // trailing "for" — otherwise stripTrailingBoilerplate leaves "for Senior …". Confirmed
+    // on job-boards.greenhouse.io/embed/job_app?for=form3.
     return (text || "").replace(
-      /^(easy\s*apply|apply\s+to|apply(ing for)?|apply\s*now|new\s*application|job\s*application|application|candidate\s*profile)\s*[-|:]?\s*/i,
+      /^(easy\s*apply|apply\s+to|apply(ing for)?|apply\s*now|new\s*application|job\s*application(\s+for)?|application|candidate\s*profile)\s*[-|:]?\s*/i,
       ""
     );
   }
@@ -2202,8 +2241,23 @@ function extractPageInfo() {
   // tech list sits before the real "|" separator - the whole regex came back null and silently
   // fell through to the untouched original text, dangling trailing pipe included.
   function stripTrailingBoilerplate(text) {
-    const m = (text || "").match(/^([\w][\w& .,()/+#-]{1,100}?)\s*(?:[-|]|\bat\b)/i);
-    return m ? m[1].trim() : (text || "").trim();
+    const raw = (text || "").trim();
+    // Lever (and similar) og:title / <title> is often "Company - Job Title" — the existing
+    // "keep text before first dash" rule then returns only the company ("Terra" / "Lyra Health").
+    // Confirmed on jobs.lever.co/terrahq/.../apply and .../lyrahealth/.../thanks. When the
+    // right side looks like a role and the left does not, keep the role.
+    const ROLE_WORD_RE =
+      /\b(engineer|developer|manager|analyst|designer|scientist|architect|specialist|consultant|director|lead|intern|officer|coordinator)\b/i;
+    const companyFirst = raw.match(/^([\w][\w& .'-]{0,40}?)\s*[-|]\s+(.+)$/);
+    if (companyFirst) {
+      const left = companyFirst[1].trim();
+      const right = companyFirst[2].replace(/\s*[-|].*$/, "").trim();
+      if (left && right && left.length <= 40 && right.length >= 8 && ROLE_WORD_RE.test(right) && !ROLE_WORD_RE.test(left)) {
+        return right;
+      }
+    }
+    const m = raw.match(/^([\w][\w& .,()/+#-]{1,100}?)\s*(?:[-|]|\bat\b)/i);
+    return m ? m[1].trim() : raw;
   }
 
   // Checks genericity on the RAW heading text first - confirmed live, a BreezyHR post-submit
@@ -2214,7 +2268,15 @@ function extractPageInfo() {
   function pickHeadingTitle(selector) {
     for (const heading of document.querySelectorAll(selector)) {
       const raw = (heading.innerText || heading.textContent || "").replace(/\s+/g, " ").trim();
-      if (!raw || GENERIC_TITLE_RE.test(raw) || isSectionHeadingTitle(raw) || isUnsupportedBrowserTitle(raw)) continue;
+      if (
+        !raw ||
+        GENERIC_TITLE_RE.test(raw) ||
+        isSectionHeadingTitle(raw) ||
+        isUnsupportedBrowserTitle(raw) ||
+        isCookieOrConsentTitle(raw)
+      ) {
+        continue;
+      }
       // A form QUESTION, not a job title - confirmed live, a join.com posting with no <h1> at
       // all has exactly one <h2> on the whole page ("What is your expected yearly compensation
       // in EUR?" - an application-form question, not any kind of title), which then won by
@@ -2303,14 +2365,10 @@ function extractPageInfo() {
     // good one — confirmed live on QADInc SmartRecruiters (3 `.job-title` nodes, all the real
     // "Sr. Site Reliability Engineer - SRE"). Greenhouse embed uses `.job__title` > `h1`
     // (BEM double-underscore) — the wrapper also contains location, so prefer the inner h1.
-    for (const sel of [
-      ".job-title",
-      ".job__title h1",
-      ".job__title",
-      "[itemprop='title']",
-      ".job-ad-title",
-      ".title-section .title",
-    ]) {
+    // Do NOT include Darwinbox's `.title-section .title` here — SuccessFactors cookie CMP
+    // reuses that class for "Required Cookies" / "Functional Cookies" and would win before
+    // the real <h1>. Darwinbox is handled in the dedicated block above.
+    for (const sel of [".job-title", ".job__title h1", ".job__title", "[itemprop='title']", ".job-ad-title"]) {
       for (const found of document.querySelectorAll(sel)) {
         let text = (found.innerText || found.textContent || "").replace(/\s+/g, " ").trim();
         // `.job__title` wrapper: "Data Analyst … Location" — keep the heading line only.
@@ -2323,7 +2381,8 @@ function extractPageInfo() {
           text.length > 2 &&
           text.length < 150 &&
           !GENERIC_TITLE_RE.test(text) &&
-          !isUnsupportedBrowserTitle(text)
+          !isUnsupportedBrowserTitle(text) &&
+          !isCookieOrConsentTitle(text)
         ) {
           return text;
         }
