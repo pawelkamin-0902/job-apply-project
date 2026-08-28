@@ -38,7 +38,9 @@ function isSkippableAutofillUrl(url) {
   if (!u || /^about:/i.test(u) || /^chrome(-extension)?:/i.test(u) || /^blob:/i.test(u) || /^data:/i.test(u)) {
     return true;
   }
-  return /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com/i.test(u);
+  return /google\.com\/recaptcha|recaptcha\/(?:api2|enterprise)|hcaptcha\.com|challenges\.cloudflare\.com|comeet\.co\/jobs\/[^?#]*\/social/i.test(
+    u
+  );
 }
 
 async function getPanelTab() {
@@ -1364,7 +1366,12 @@ function extractPageInfo() {
   // for every hostname-based alternative (confirmed by testing it - hcaptcha.com stopped
   // matching entirely once a path was appended after it).
   const isGoogleRecaptchaFrame = /(^|\.)google\.com$/i.test(location.hostname) && /\/recaptcha\//i.test(location.pathname);
-  if (WIDGET_HOST_RE.test(location.hostname) || isGoogleRecaptchaFrame) {
+  // Comeet embeds a Spark Hire "social" share iframe (comeet.co/jobs/.../social) with vendor
+  // chrome and inline widget JS — confirmed www-comeet-com-20260828T180635Z-frame2358: it
+  // returned "Spark Hire Recruit Jobs" and script blobs as the JD.
+  const isComeetSocialWidgetFrame =
+    /(^|\.)comeet\.co$/i.test(location.hostname || "") && /\/social\b/i.test(location.pathname || "");
+  if (WIDGET_HOST_RE.test(location.hostname) || isGoogleRecaptchaFrame || isComeetSocialWidgetFrame) {
     return { jobDescription: "", company: "", jobUrl: location.href };
   }
 
@@ -1676,6 +1683,77 @@ function extractPageInfo() {
     return null;
   }
 
+  // Comeet / Spark Hire Recruit (www.comeet.com + embedded comeet.co widgets) bakes employer +
+  // role into COMPANY_DATA / POSITION_DATA script assignments — confirmed live on
+  // www.comeet.com/jobs/seekingalpha/.../senior-data-engineer: og:title is
+  // "Job opportunity: Senior Data Engineer at Seeking Alpha", logo alt is the useless
+  // "Company logo" → "Company", and the real JD lives in [data-qa=requirementFieldContent].
+  function isComeetPage() {
+    return /(^|\.)comeet\.(com|co)$/i.test(location.hostname || "");
+  }
+
+  function comeetDataFromPage() {
+    let company = null;
+    let position = null;
+    function parseJsObjectAssign(source, varName) {
+      const re = new RegExp(`(?:var\\s+)?${varName}\\s*=\\s*`);
+      const idx = source.search(re);
+      if (idx < 0) return null;
+      const start = source.indexOf("{", idx);
+      if (start < 0) return null;
+      let depth = 0;
+      for (let i = start; i < source.length; i++) {
+        const ch = source[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            try {
+              return JSON.parse(source.slice(start, i + 1));
+            } catch {
+              return null;
+            }
+          }
+        }
+      }
+      return null;
+    }
+    const text = [...document.querySelectorAll("script:not([src])")]
+      .map((s) => s.textContent || "")
+      .join("\n");
+    if (text) {
+      if (!company) company = parseJsObjectAssign(text, "COMPANY_DATA");
+      if (!position) position = parseJsObjectAssign(text, "POSITION_DATA");
+    }
+    return { company, position };
+  }
+
+  function comeetDescriptionFromPage() {
+    const parts = [];
+    const { position } = comeetDataFromPage();
+    if (position) {
+      if (position.description) {
+        const fromDesc = acceptDescription(htmlToText(htmlToText(position.description)));
+        if (fromDesc) parts.push(fromDesc);
+      }
+      const details = position.custom_fields && position.custom_fields.details;
+      if (Array.isArray(details)) {
+        for (const field of details) {
+          if (!field || !field.value) continue;
+          const fromField = acceptDescription(htmlToText(htmlToText(field.value)));
+          if (fromField) parts.push(fromField);
+        }
+      }
+    }
+    if (!parts.length) {
+      for (const el of document.querySelectorAll('[data-qa="requirementFieldContent"]')) {
+        const fromDom = acceptDescription(cleanedText(el));
+        if (fromDom) parts.push(fromDom);
+      }
+    }
+    return acceptDescription(parts.join("\n\n"));
+  }
+
   // UKG Pro Recruiting (rec.pro.ukg.net, *.ukg.net) embeds the full opportunity as JSON inside
   // `new US.Opportunity.CandidateOpportunityDetail({...})` — confirmed live on Archer postings:
   // the visible `.opportunity-description` holds the real HTML JD, but generic `main` scraping
@@ -1792,6 +1870,13 @@ function extractPageInfo() {
       // first pass just passes through the second pass completely unchanged.
       const fromLd = acceptDescription(htmlToText(htmlToText(posting.description)));
       if (fromLd && !looksLikeThinJobPostingDescription(fromLd)) return fromLd;
+    }
+
+    // Comeet: POSITION_DATA + requirement sections — before generic `main` scraping, which
+    // glues nav chrome ("All Jobs", department, location) onto the real posting text.
+    if (isComeetPage()) {
+      const fromComeet = comeetDescriptionFromPage();
+      if (fromComeet) return fromComeet;
     }
 
     // SmartRecruiters oneclick apply form: no JobPosting / no JD body, but __OC_CONTEXT__.job
@@ -1929,6 +2014,8 @@ function extractPageInfo() {
       if (/secure privacy|cookie|consent|recaptcha|cloudflare|captcha|facebook|twitter|linkedin|instagram/i.test(alt)) {
         continue;
       }
+      // Generic placeholder alts on Comeet and similar boards — not the employer name.
+      if (/^company\s+logo$/i.test(alt) || /^powered by\b/i.test(alt)) continue;
       // Asset/filename alts ("logo-dark", "logo_white.svg") are not company names —
       // confirmed on form3.tech Greenhouse wrapper.
       if (/^logo[-_\s]?(dark|light|white|black|main|header|footer)?(\.(svg|png|webp|jpg))?$/i.test(alt)) {
@@ -1943,7 +2030,7 @@ function extractPageInfo() {
   function companyFromOwnDomain() {
     const fullHost = location.hostname.replace(/^www\./, "");
     if (
-      /greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com|ashbyhq\.com|rippling\.com/i.test(
+      /greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com|ashbyhq\.com|rippling\.com|comeet\.com|comeet\.co/i.test(
         fullHost
       )
     ) {
@@ -2005,6 +2092,11 @@ function extractPageInfo() {
     if (isRecruitCrmApplyPage()) {
       const meta = recruitCrmOgMeta();
       if (meta && meta.company) return meta.company;
+    }
+    // Comeet: COMPANY_DATA.name is authoritative — logo alt is "Company logo" → "Company".
+    if (isComeetPage()) {
+      const { company } = comeetDataFromPage();
+      if (company && company.name && String(company.name).trim()) return String(company.name).trim();
     }
     // UKG Pro Recruiting: company is the job-board brand ("Archer Job Board"), not the tenant
     // subdomain (gusea1p01.rec.pro.ukg.net → "Gusea1p01"). Confirmed live on Archer postings.
@@ -2304,6 +2396,28 @@ function extractPageInfo() {
       // Same-origin JD iframe has section <h2>s only — leave title empty so scrapeCurrentTab
       // keeps the shell frame's <h1> / og:title instead of "Summary" / "What You'll Do".
       if (!document.querySelector("h1")) return "";
+    }
+
+    // Comeet: POSITION_DATA.name — og:title is "Job opportunity: {title} at {company}".
+    if (isComeetPage()) {
+      const { position } = comeetDataFromPage();
+      if (position && position.name) {
+        const t = String(position.name).trim();
+        if (t && !GENERIC_TITLE_RE.test(t) && !isUnsupportedBrowserTitle(t)) return t;
+      }
+      const ogTitleEl = document.querySelector('meta[property="og:title"]');
+      const ogRaw = ogTitleEl && ogTitleEl.content && ogTitleEl.content.trim();
+      const ogComeet = ogRaw && ogRaw.match(/^job opportunity:\s+(.+?)\s+at\s+.+$/i);
+      if (ogComeet) {
+        const t = ogComeet[1].trim();
+        if (t && !GENERIC_TITLE_RE.test(t) && !isUnsupportedBrowserTitle(t)) return t;
+      }
+      const docTitle = (document.title || "").trim();
+      const docAt = docTitle.match(/^(.+?)\s+at\s+.+$/i);
+      if (docAt) {
+        const t = docAt[1].trim();
+        if (t && !GENERIC_TITLE_RE.test(t) && !isUnsupportedBrowserTitle(t)) return t;
+      }
     }
 
     // SmartRecruiters oneclick: visible topbar title + __OC_CONTEXT__.job.title. The page also

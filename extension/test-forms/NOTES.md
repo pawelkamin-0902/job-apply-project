@@ -3744,7 +3744,16 @@ unverified outside a live browser).
     Remaining empty JD on Rippling/Workable apply / SmartRecruiters oneclick / Pinpoint Apply
     shells is expected (no posting body in that document); Greenhouse wrappers (atolls,
     form3, precisely) correctly leave shell title/JD empty — live scrape takes the embed
-    frame. Reload the extension and re-Extract on Lever / SuccessFactors / BambooHR.
+    frame.     Reload the extension and re-Extract on Lever / SuccessFactors / BambooHR.
+
+155. **Comeet (Spark Hire Recruit) wrong title, company, and JD.** `Author: Cursor`.
+    Captures `www-comeet-com-20260828T180635Z` + `…-frame2358` (`www.comeet.com/jobs/seekingalpha/…`).
+    Top frame: og:title was used verbatim ("Job opportunity: Senior Data Engineer at Seeking
+    Alpha"), logo alt "Company logo" became company "Company", and generic `main` scraping
+    glued nav chrome onto the JD. Embedded `comeet.co/jobs/…/social` iframe returned Spark
+    Hire vendor title/company and inline widget JS as the description. Fixed: read
+    `COMPANY_DATA` / `POSITION_DATA` and `[data-qa=requirementFieldContent]` on comeet.com/co;
+    skip `/social` widget frames; reject generic "Company logo" alts. Reload and re-Extract.
 
 ## Known gaps (not yet acted on)
 
