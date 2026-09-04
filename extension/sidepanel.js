@@ -3125,6 +3125,31 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   function isConsentField(label) {
     return CONSENT_RE.test(label);
   }
+
+  // Greenhouse consent dropdowns often land on the real affirmative option ("YES, I consent",
+  // long "I have read … and I consent …") while the fill path was aiming at a short synonym
+  // like "Confirm". Treat that display as success so we don't clear it and retry N times —
+  // confirmed suvoda.com Greenhouse embed 20260904T175600Z.
+  function looksLikeAffirmativeConsentDisplay(text) {
+    const t = String(text || "").replace(/\s+/g, " ").trim();
+    if (!t || isGenericSelectPlaceholder(t)) return false;
+    if (/\b(do not|don't|decline|disagree|not consent|no,? i do not)\b/i.test(t)) return false;
+    return /\b(i\s+)?(consent|agree|confirm|accept)\b|^yes\b/i.test(t);
+  }
+
+  function pickAffirmativeConsentOption(optionLabels) {
+    const labels = (optionLabels || []).map((t) => String(t || "").trim()).filter(Boolean);
+    return (
+      labels.find((t) => /^(i\s+)?(confirm|agree|accept)$/i.test(t)) ||
+      labels.find(
+        (t) =>
+          /confirm|agree|accept|consent/i.test(t) &&
+          !/do not|don't|decline|not confirm|not agree|not consent/i.test(t)
+      ) ||
+      (labels.length === 1 ? labels[0] : null)
+    );
+  }
+
   // Optional marketing / talent-pool / "keep my data for 2 years" opt-ins. These match
   // CONSENT_RE ("I agree…") but are deliberately not required — auto-ticking them opts the
   // applicant into retention/marketing they never asked for (Sumsub Teamtailor
@@ -5862,6 +5887,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       !comboboxValueCommitted(element, desiredText) &&
       !isPhoneDialCodePicker(element)
     ) {
+      // Consent synonym retries ("Confirm" → "I Confirm" → "I agree") must not wipe a real
+      // affirmative option that already committed (Suvoda: cleared "YES, I consent" thrice).
+      if (
+        looksLikeAffirmativeConsentDisplay(displayAtStart) &&
+        /^(i\s+)?(confirm|agree|accept|yes)$/i.test(String(desiredText || "").trim())
+      ) {
+        comboboxTrace(element, `skip clear affirmative consent before synonym "${desiredText}"`, {
+          displayAtStart,
+        });
+        return true;
+      }
       if (clearReactSelectSelection(element)) {
         comboboxTrace(element, `cleared existing "${displayAtStart}" before "${desiredText}"`, {});
         await new Promise((resolve) => setTimeout(resolve, 150));
@@ -6282,6 +6318,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       // the matchOption-null skip). Returning false used to fall through to generic
       // type/wait: ~45 clicks + trustedClick ≈ 90s of the same flyout reopening
       // (lokainc 20260813T130714Z hear-about "LinkedIn" vs multi-select "LinkedIn Ad").
+      // Consent synonym path: keyboard-nav often lands the real affirmative option even when
+      // desiredText was "Confirm" — treat that as success (suvoda 20260904T175600Z).
+      if (typeof looksLikeAffirmativeConsentDisplay === "function" && looksLikeAffirmativeConsentDisplay(displayAfterFail)) {
+        console.info(`${tag} tier 4 FAILED but affirmative consent display kept -> "${displayAfterFail}"`);
+        return true;
+      }
       return "no-match";
     }
     // "Fresh" means "was not VISIBLE before this click", not "was not PRESENT in the DOM before
@@ -8656,6 +8698,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       if (isOptionalOptInConsent(label) || (typeof isRequiredField === "function" && !isRequiredField(element, host))) {
         continue;
       }
+      // Already showing the real affirmative option — do not open/clear/retry synonyms.
+      if (comboboxHasDisplayValue(element) && looksLikeAffirmativeConsentDisplay(reactSelectDisplayValue(element))) {
+        filled.push({ label, value: reactSelectDisplayValue(element), source: "already-set" });
+        continue;
+      }
       let optionLabels = [];
       try {
         optionLabels = findRadixHiddenSelectOptions(element) || [];
@@ -8669,27 +8716,37 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           optionLabels = [];
         }
       }
-      const wanted =
-        optionLabels.find((t) => /^(i\s+)?(confirm|agree|accept)$/i.test(String(t).trim())) ||
-        optionLabels.find(
-          (t) =>
-            /confirm|agree|accept|consent/i.test(String(t)) &&
-            !/do not|don't|decline|not confirm|not agree/i.test(String(t))
-        ) ||
-        (optionLabels.length === 1 ? optionLabels[0] : null);
-      // One real option (Confirm) — never open/close I agree / Yes / Agree / Accept
-      // (lokainc 20260813T112331Z Privacy Policy, 11–18s gaps between failed phrases).
+      // Fiber/radix often miss Greenhouse remix options until the menu opens once — without
+      // this, picks fall back to Confirm/I Confirm/I agree and thrash (Suvoda Candidate Consent
+      // options were "YES, I consent" / "NO, I do not consent").
+      if (!optionLabels.length) {
+        try {
+          optionLabels = (await discoverComboboxOptions(element)) || [];
+        } catch {
+          optionLabels = [];
+        }
+      }
+      const wanted = pickAffirmativeConsentOption(optionLabels);
+      // One real option (Confirm / YES, I consent) — never open/close I agree / Yes / Agree
+      // (lokainc 20260813T112331Z Privacy Policy; suvoda 20260904T175600Z Candidate Consent).
       const picks = wanted ? [wanted] : ["Confirm", "I Confirm", "I agree"];
       let consentDone = false;
       for (const pick of picks) {
         if (fillGreenhouseViaReactFiber(element, pick)) {
-          filled.push({ label, value: pick, source: "consent" });
+          filled.push({
+            label,
+            value: reactSelectDisplayValue(element) || pick,
+            source: "consent",
+          });
           consentDone = true;
           break;
         }
         const ok = await fillReactSelectByClick(element, pick);
-        if (ok && ok !== "no-match") {
-          filled.push({ label, value: pick, source: "consent" });
+        const cur = reactSelectDisplayValue(element);
+        // Even when the synonym verify fails, Greenhouse may have committed the only
+        // affirmative option — stop instead of clearing and retrying.
+        if ((ok && ok !== "no-match") || looksLikeAffirmativeConsentDisplay(cur)) {
+          filled.push({ label, value: cur || pick, source: "consent" });
           consentDone = true;
           break;
         }

@@ -3753,7 +3753,17 @@ unverified outside a live browser).
     glued nav chrome onto the JD. Embedded `comeet.co/jobs/…/social` iframe returned Spark
     Hire vendor title/company and inline widget JS as the description. Fixed: read
     `COMPANY_DATA` / `POSITION_DATA` and `[data-qa=requirementFieldContent]` on comeet.com/co;
-    skip `/social` widget frames; reject generic "Company logo" alts. Reload and re-Extract.
+    skip `/social` widget frames; reject generic "Company logo" alts.     Reload and re-Extract.
+
+156. **Suvoda Greenhouse consent dropdowns cleared and re-picked "I consent" N times.**
+    `Author: Cursor`. Capture `www-suvoda-com-20260904T175600Z` + console.log. Privacy Notice
+    (one long option with "I consent") and Candidate Consent (`YES, I consent` /
+    `NO, I do not consent`) were filled by trying synonym list Confirm → I Confirm → I agree.
+    Each attempt accidentally selected the real affirmative option, failed exact-text verify,
+    **cleared** that value, then retried — visible thrash for ~10+ minutes on Candidate
+    Consent alone. Fixed: discover real options before synonym fallback; treat affirmative
+    consent display as success; never clear affirmative consent before a short synonym retry.
+    Reload the extension and re-Auto Fill on the Suvoda Greenhouse embed.
 
 ## Known gaps (not yet acted on)
 
