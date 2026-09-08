@@ -3775,6 +3775,22 @@ unverified outside a live browser).
     chrome as JD; prefer domain/title when a page logo doesn't match the host brand; skip
     award/customer logos. Reload and re-Extract on the Mews posting.
 
+158. **Dover apply: UUID question labels + no Resume attach + GPT never useful.**
+    `Author: Cursor`. Capture `app-dover-com-20260908T183457Z` (`app.dover.com/apply/…`).
+    Three required screening textareas showed as UUID `name`s
+    (`b282e8b3-…` / `052209de-…` / `f962c978-…`) instead of the sibling MUI FormLabel
+    questions; Attach Resume reported both file inputs unlabeled. Root causes: (1) MUI
+    multiline TextField's `aria-hidden` auto-height mirror textarea made
+    `resolveOwnLabel`'s shared-wrapper climb see 2 controls and bail before the FormLabel;
+    (2) Dover's "Autofill from resume" title is a Heading `<div>` (not `h1`–`h4`/`p`), so
+    `isAutoParseWidget` never flagged it, and FormLabel "Resume *" wasn't linked to the
+    hidden file input. Fixed: ignore inert textarea mirrors in label-climb control counts
+    (`isDecoyFormControl` / `queryLabelClimbControls` in `field-detector.js`); resolve Dover
+    FormLabel siblings for file inputs and treat Heading-div autofill chrome as auto-parse
+    in `attachResumeFileInPage`. GPT tab still only opens with answer provider `gpt-auto` /
+    `gpt-auto-headless` — with UUID labels it would have prompted uselessly anyway. Reload
+    the extension, re-Auto Fill, and Attach Resume on the Dover apply page.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

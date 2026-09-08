@@ -855,6 +855,41 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
       }
     }
 
+    // Dover (app.dover.com/apply) and similar MUI layouts: no <label for>, no aria-*. The real
+    // title is a previous-sibling FormLabel div ("Resume *") of the upload wrapper that holds
+    // the hidden <input type="file">. Without this, both Dover file inputs resolve unlabeled —
+    // Autofill-from-resume + Resume* — and the two-candidate fallback refuses to guess
+    // (app-dover-com-20260908T183457Z).
+    {
+      let climb = input.parentElement;
+      for (let depth = 0; depth < 8 && climb; depth++, climb = climb.parentElement) {
+        if (
+          climb.querySelectorAll &&
+          [...climb.querySelectorAll("input")].filter((el) => el.type === "file").length > 1
+        ) {
+          break;
+        }
+        const prev = climb.previousElementSibling;
+        if (!prev) continue;
+        const prevText = cleanedText(prev);
+        if (
+          !prevText ||
+          prevText.length >= 120 ||
+          isGenericFileAriaLabel(prevText) ||
+          isGenericFileDropChrome(prevText)
+        ) {
+          continue;
+        }
+        const cls = (prev.className && String(prev.className)) || "";
+        if (
+          /FormLabel|form[-_]?label|typography__BodySmall/i.test(cls) ||
+          /^(resume|r[ée]sum[ée]|cv|curriculum vitae|cover letter)\b/i.test(prevText)
+        ) {
+          return prevText;
+        }
+      }
+    }
+
     // Ancestor proximity search, same idea as the main field's label resolver: walk up a few
     // levels looking for the nearest <label>, bailing out early if that ancestor holds more
     // than one file input at all — too ambiguous to trust which one it's actually labeling.
@@ -906,8 +941,20 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
       // querySelector searches the whole subtree, not just what's actually near this field).
       // Normalized `.type` — see collectFileInputs / Rippling `type="File"`.
       if (node.querySelectorAll && [...node.querySelectorAll("input")].filter((el) => el.type === "file").length > 1) break;
-      const heading = node.querySelector && node.querySelector("h1, h2, h3, h4, p");
-      if (heading && AUTOPARSE_RE.test(cleanedText(heading))) return true;
+      // Dover puts "Autofill from resume" in a typography Heading <div>, not h1–h4/p — the old
+      // tag list never matched, so both file inputs looked unlabeled and Attach Resume refused
+      // to choose (app-dover-com-20260908T183457Z).
+      const headingCandidates = node.querySelectorAll
+        ? node.querySelectorAll("h1, h2, h3, h4, p, [class*='Heading'], [class*='heading']")
+        : [];
+      for (const heading of headingCandidates) {
+        const t = cleanedText(heading);
+        if (t && t.length < 120 && AUTOPARSE_RE.test(t)) return true;
+      }
+      // Also match a short previous-sibling title next to the upload card itself.
+      const prev = node.previousElementSibling;
+      const prevText = cleanedText(prev);
+      if (prevText && prevText.length < 120 && AUTOPARSE_RE.test(prevText)) return true;
     }
     return false;
   }

@@ -391,8 +391,7 @@ function findPinpointOwnLabel(element) {
 function findLabelInAncestors(host) {
   let node = host.parentElement;
   for (let depth = 0; depth < 6 && node; depth++, node = node.parentElement) {
-    const controls = node.querySelectorAll('input:not([type="hidden"]), select, textarea, [label]');
-    if (controls.length > 1) break;
+    if (queryLabelClimbControls(node).length > 1) break;
     const label = node.querySelector("label");
     if (label && cleanedText(label)) return cleanedText(label);
   }
@@ -444,10 +443,39 @@ function findGroupContextLabel(host) {
 // shared with unrelated OTHER questions, so this only excludes genuine whole-section titles.
 var CONTROL_SELECTOR = 'input:not([type="hidden"]), select, textarea, [label]';
 
+// MUI Outlined multiline TextField (Dover app.dover.com apply, and others) renders a second
+// <textarea aria-hidden="true" readonly tabindex="-1"> purely for auto-height measurement
+// beside the real control. isVisible() already drops those mirrors from collectFormFields, but
+// the label-climb "how many controls are in this ancestor?" guards used raw querySelectorAll —
+// the mirror made every multiline field look like a shared 2-control wrapper, so the climb
+// bailed before the sibling FormLabel ("Have you managed a workload…") and fell through to the
+// UUID `name` (app-dover-com-20260908T183457Z). Only count inert textarea mirrors here — do NOT
+// treat every aria-hidden control as a decoy (select2 keeps the real <select> aria-hidden).
+function isDecoyFormControl(el) {
+  if (!el) return true;
+  if (el.hidden || (el.hasAttribute && el.hasAttribute("hidden"))) return true;
+  if (el.tagName !== "TEXTAREA") return false;
+  if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+  if (el.readOnly && el.getAttribute && el.getAttribute("tabindex") === "-1") return true;
+  return false;
+}
+
+function queryLabelClimbControls(node) {
+  if (!node || !node.querySelectorAll) return [];
+  return [...node.querySelectorAll(CONTROL_SELECTOR)].filter((el) => !isDecoyFormControl(el));
+}
+
 function controlsWithin(el) {
   if (!el || !el.querySelectorAll) return [];
-  const found = [...el.querySelectorAll(CONTROL_SELECTOR)];
-  if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && el.type !== "hidden") found.push(el);
+  const found = queryLabelClimbControls(el);
+  if (
+    /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) &&
+    el.type !== "hidden" &&
+    !isDecoyFormControl(el) &&
+    !found.includes(el)
+  ) {
+    found.push(el);
+  }
   return found;
 }
 
@@ -482,8 +510,7 @@ function findHeadingInAncestors(host) {
     // card of 4-5 distinct custom questions under one shared "Additional questions for remote
     // positions in Poland" <h4>, and without this check every question in that card resolved
     // to that same shared heading instead of its own real text.
-    const controls = node.querySelectorAll('input:not([type="hidden"]), select, textarea, [label]');
-    if (controls.length > 1) break;
+    if (queryLabelClimbControls(node).length > 1) break;
     let prev = node.previousElementSibling;
     for (let i = 0; i < 3 && prev; i++, prev = prev.previousElementSibling) {
       if (/^H[1-6]$/.test(prev.tagName)) {
@@ -765,8 +792,8 @@ function resolveOwnLabel(element, host) {
   // string "Type your response" instead.
   let node = host;
   for (let depth = 0; depth < 10 && node; depth++, node = node.parentElement) {
-    const controls = node.querySelectorAll('input:not([type="hidden"]), select, textarea, [label]');
-    if (controls.length > 1) break;
+    // See isDecoyFormControl — MUI multiline mirrors must not trip this shared-wrapper bail.
+    if (queryLabelClimbControls(node).length > 1) break;
     let prev = node.previousElementSibling;
     for (let i = 0; i < 3 && prev; i++, prev = prev.previousElementSibling) {
       // A sibling holding a dropdown is the field NEXT DOOR, and all the text it renders is
@@ -780,7 +807,9 @@ function resolveOwnLabel(element, host) {
       if (prev.querySelector && prev.querySelector('select, [role="combobox"], [role="listbox"]')) continue;
       if (/^H[1-6]$/.test(prev.tagName) && isSharedSectionHeading(prev)) continue;
       const text = cleanedText(prev);
-      if (!text || text.length >= 200) continue;
+      // Dover / MUI screening questions are often long single-line FormLabels; 200 cut off
+      // mid-sentence on some boards and left the UUID name. Cap stays well below a full JD.
+      if (!text || text.length >= 500) continue;
       // Skip phone dial-code / flag-picker chrome that sits as a previous sibling of the
       // real number input inside Zoho's <crux-phone-component> (and similar split phone
       // widgets). Confirmed live: cleanedText of that sibling is "(+40) Loading" — a
