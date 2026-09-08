@@ -3765,6 +3765,16 @@ unverified outside a live browser).
     consent display as success; never clear affirmative consent before a short synonym retry.
     Reload the extension and re-Auto Fill on the Suvoda Greenhouse embed.
 
+157. **Mews careers page: empty JD + company "Leven".** `Author: Cursor`. Capture
+    `www-mews-com-20260908T182053Z` (`mews.com/en/careers/jobs/…?gh_jid=`). The real posting
+    lives in `<main>` on the wrapper; Greenhouse `#grnhse_app` is apply-only (no
+    `.job__description`, only "Greenhouse Verified" chrome). `pageHostsAtsJobEmbed()` blanked
+    the wrapper JD, so Extract kept the embed's 419-char badge text. Company came from a
+    customer case-study img alt (`Leven Logo`) before domain/title (`Apply | Mews`). Fixed:
+    treat substantial on-page postings as non-embed-shells; reject Greenhouse Verified-only
+    chrome as JD; prefer domain/title when a page logo doesn't match the host brand; skip
+    award/customer logos. Reload and re-Extract on the Mews posting.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

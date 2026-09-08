@@ -1541,8 +1541,14 @@ function extractPageInfo() {
   // posting in an iframe. Their own body.innerText is long nav + "Want to join our team?"
   // chrome that otherwise wins the cross-frame "longest JD" contest over the embed's real
   // `.job__description`. Confirmed live on precisely.com/.../job/?gh_jid=4717903005.
+  // Greenhouse apply embeds also ship a "Greenhouse Verified" badge panel with no posting
+  // body (mews.com capture 20260908T182053Z frame5621) — reject that so the wrapper's real
+  // JD can win on length.
   function looksLikeCareersListingChrome(text) {
     const t = (text || "").toLowerCase();
+    if (/greenhouse verified/.test(t) && !/\b(responsibilit|requirement|qualification|what you.?ll do|about the (role|job)|job description)\b/i.test(t)) {
+      return true;
+    }
     let hits = 0;
     for (const phrase of [
       "skip to main",
@@ -1608,14 +1614,31 @@ function extractPageInfo() {
   // title live in that frame, not here). Used to skip wrapper-page landmark/body scraping.
   // Some Greenhouse wrappers (Feedzai careers.feedzai.com/job_description/?gh_jid=…) host the
   // full posting on-page in a jobDescriptionContent section and only embed the apply form.
+  // Others (mews.com/en/careers/jobs/…?gh_jid=…) put the full posting in <main> above a
+  // Greenhouse apply-only iframe that has no .job__description — confirmed
+  // www-mews-com-20260908T182053Z: blanking the wrapper left only "Greenhouse Verified" chrome
+  // from the embed as the "JD".
   function hasOnPageJobDescriptionShell() {
     return !!document.querySelector(
       '[class*="jobDescriptionContent"], [class*="job-description-content"], [class*="job-description-body"], [class*="job-post-content"], [class*="job_post_content"]'
     );
   }
 
+  function hasSubstantialOnPageJobPosting() {
+    const main = document.querySelector('main, article, [role="main"]');
+    if (!main) return false;
+    const text = cleanedText(main);
+    if (text.length < 800) return false;
+    if (looksLikeApplicationFormChrome(text) || looksLikeCareersListingChrome(text)) return false;
+    if (/\b(responsibilit|requirement|qualification|what you.?ll|about (the|this) (role|job|team)|we.?re looking|you.?ll work|help make)\b/i.test(text)) {
+      return true;
+    }
+    return text.length >= 2500;
+  }
+
   function pageHostsAtsJobEmbed() {
     if (hasOnPageJobDescriptionShell()) return false;
+    if (hasSubstantialOnPageJobPosting()) return false;
     if (document.getElementById("grnhse_iframe") || document.getElementById("grnhse_app")) return true;
     for (const iframe of document.querySelectorAll("iframe[src]")) {
       const src = iframe.getAttribute("src") || "";
@@ -2007,11 +2030,12 @@ function extractPageInfo() {
   }
 
   function companyFromLogoAlt() {
+    const candidates = [];
     for (const img of document.querySelectorAll("img[alt]")) {
       const alt = String(img.getAttribute("alt") || "").replace(/\s+/g, " ").trim();
       if (!alt || alt.length > 80) continue;
       if (!/\blogo\b/i.test(alt)) continue;
-      if (/secure privacy|cookie|consent|recaptcha|cloudflare|captcha|facebook|twitter|linkedin|instagram/i.test(alt)) {
+      if (/secure privacy|cookie|consent|recaptcha|cloudflare|captcha|facebook|twitter|linkedin|instagram|youtube/i.test(alt)) {
         continue;
       }
       // Generic placeholder alts on Comeet and similar boards — not the employer name.
@@ -2021,10 +2045,21 @@ function extractPageInfo() {
       if (/^logo[-_\s]?(dark|light|white|black|main|header|footer)?(\.(svg|png|webp|jpg))?$/i.test(alt)) {
         continue;
       }
+      // Award / badge / customer case-study logos on marketing careers pages
+      // (mews.com: "Leven Logo", "Best Place To Work Award 2025 Logo").
+      if (/\b(award|badge|certified|certificate|winner|choice)\b/i.test(alt)) continue;
+      if (img.closest && img.closest("footer, [class*='customer'], [class*='Customer'], [class*='award'], [class*='Award'], [class*='testimonial']")) {
+        continue;
+      }
       const name = tidyExtractedCompanyName(alt);
-      if (name && name.length >= 2 && name.length <= 60 && !looksLikeJobTitleNotCompany(name)) return name;
+      if (name && name.length >= 2 && name.length <= 60 && !looksLikeJobTitleNotCompany(name)) {
+        const inHeader = !!(img.closest && img.closest("header, nav, [role='banner'], [class*='navbar'], [class*='NavBar']"));
+        candidates.push({ name, inHeader });
+      }
     }
-    return "";
+    if (!candidates.length) return "";
+    const header = candidates.find((c) => c.inHeader);
+    return (header || candidates[0]).name;
   }
 
   function companyFromOwnDomain() {
@@ -2213,11 +2248,20 @@ function extractPageInfo() {
     }
     // 4b. Header logo alt ("Gurtam Logo") on first-party career sites — before title parsing,
     // which often mistakes "Role | Skills" for a company (gurtam.com capture).
+    // Prefer own-domain when a random page logo disagrees (mews.com "Leven Logo" customer
+    // case study vs domain brand Mews).
     const fromLogo = companyFromLogoAlt();
-    if (fromLogo) return fromLogo;
+    const fromDomainEarly = companyFromOwnDomain();
+    if (fromLogo) {
+      if (!fromDomainEarly) return fromLogo;
+      const logoNorm = fromLogo.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const domainNorm = fromDomainEarly.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (logoNorm && domainNorm && (logoNorm.includes(domainNorm) || domainNorm.includes(logoNorm))) {
+        return fromLogo;
+      }
+    }
     // 4c. Own-domain fallback early when the host is the employer's site (gurtam.com → Gurtam).
     // Still runs again at step 6 if title patterns somehow yield nothing usable.
-    const fromDomainEarly = companyFromOwnDomain();
     // 5. Page title patterns like "Job Title at Company", "Company - Job Title", or
     // SuccessFactors "Job Title Job Details | Company".
     // Include hyphen / apostrophe — Greenhouse (and others) use "at SingleStore-LinkedIn",
@@ -2231,14 +2275,16 @@ function extractPageInfo() {
     m = title.match(/\|\s*([A-Z][\w& .,'/-]{1,80})$/);
     if (m) {
       const fromPipe = tidyExtractedCompanyName(m[1].trim());
-      if (fromPipe && !/^(job details?|careers?|jobs?)$/i.test(fromPipe) && !looksLikeJobTitleNotCompany(fromPipe)) {
+      if (fromPipe && !/^(job details?|careers?|jobs?|apply)$/i.test(fromPipe) && !looksLikeJobTitleNotCompany(fromPipe)) {
         return fromPipe;
       }
     }
     m = title.match(/^([A-Z][\w& .'-]{1,60})\s*[-|]/);
     if (m) {
       const fromLead = tidyExtractedCompanyName(m[1].trim());
-      if (fromLead && !looksLikeJobTitleNotCompany(fromLead)) return fromLead;
+      if (fromLead && !/^(apply|application|job|careers?)$/i.test(fromLead) && !looksLikeJobTitleNotCompany(fromLead)) {
+        return fromLead;
+      }
     }
     if (fromDomainEarly) return fromDomainEarly;
     // 6. Last resort: derive from the page's own domain — only meaningful when the
