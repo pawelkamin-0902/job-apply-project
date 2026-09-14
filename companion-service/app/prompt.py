@@ -71,8 +71,17 @@ words like **built** or **data**.
 If the JD emphasizes a skill the candidate cannot honestly claim even with consulting/product framing, \
 omit it and surface the closest genuinely-held skills instead."""
 
-_SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and nothing else \
-(no markdown code fences, no commentary before or after). It must match exactly this shape:
+_SCHEMA_CONTRACT = """CRITICAL OUTPUT — MACHINE PARSE ONLY:
+- Your entire reply MUST be exactly one JSON object. Nothing else.
+- The first character of your reply MUST be `{`. The last character MUST be `}`.
+- Do NOT wrap the JSON in markdown code fences (no ```).
+- Do NOT write any title, heading, prose, apology, note, or explanation before or after the JSON.
+- Do NOT offer follow-ups, next steps, refinements, or suggestions of any kind — including lines like \
+"Refine the tailored resume", "Refine the X application", "Add quantified impact", "Create a cover letter", \
+"Create a one-page version", or any bullet list of optional improvements.
+- Do NOT ask clarifying questions. Do NOT invite another turn. Output ends at the closing brace.
+
+The JSON object must match exactly this shape:
 
 {
   "name": "string",
@@ -102,7 +111,9 @@ def build_user_message(profile: dict, job_description: str) -> str:
         f"{json.dumps(profile, indent=2)}\n\n"
         "JOB DESCRIPTION:\n"
         f"{job_description}\n\n"
-        "Generate the tailored resume JSON now."
+        "Generate the tailored resume JSON now.\n"
+        "Reminder: reply with the JSON object only — first char `{`, last char `}`, no follow-up "
+        "suggestions or other text after the closing brace."
     )
 
 
