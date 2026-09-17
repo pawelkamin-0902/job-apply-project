@@ -3791,6 +3791,16 @@ unverified outside a live browser).
     `gpt-auto-headless` — with UUID labels it would have prompted uselessly anyway. Reload
     the extension, re-Auto Fill, and Attach Resume on the Dover apply page.
 
+159. **Innovecs careers: company "Jobs" + JD = benefits blurb.** `Author: Cursor`. Capture
+    `jobs-innovecs-com-20260917T040706Z` (`jobs.innovecs.com/vacancies/…`). Yoast sets
+    `og:site_name` to generic "Jobs" (title suffix "| Jobs (ua)"), so Extract returned
+    company "Jobs" before `jobs.innovecs.com` → Innovecs. No JobPosting JSON-LD; real
+    Overview/Requirements live in `.job-content`, but landmark `.description` matched short
+    "Why us?" perk cards (~476 chars). Fixed: reject generic career site names; prefer
+    host-matching JSON-LD Organization ("Innovecs"); add `.job-content` /
+    `single-vacancies-v2--body` / `.wrap-description` to JD ATS selectors. Reload extension
+    and re-Extract on the Innovecs vacancy.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

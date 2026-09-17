@@ -1997,9 +1997,14 @@ function extractPageInfo() {
     // `.tp-career-details-wrap` (Job Summary + Responsibilities + Qualifications). Prefer that
     // over the outer `.tp-career-details-ptb` shell, which also includes the salary sidebar and
     // apply-modal chrome.
+    // Innovecs (jobs.innovecs.com) WordPress vacancies: full Overview/Requirements/
+    // Responsibilities live in `.job-content` / `.box--single-vacancies-v2--body`. Without
+    // these, landmark `.description` matched short perk blurb cards ("Why us? Personalized
+    // benefits…", ~476 chars) and Extract returned that instead of the real posting
+    // (jobs-innovecs-com-20260917T040706Z).
     let best = pickBest(
       document.querySelectorAll(
-        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap']"
+        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .job-content, [class*='single-vacancies-v2--body'], [class*='single-vacancies-v2--tabs'], .wrap-description, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap']"
       ),
       200
     );
@@ -2052,6 +2057,48 @@ function extractPageInfo() {
     s = s.replace(/[- ]linkedin$/i, "").trim();
     if (/^(greenhouse|job application|careers?)$/i.test(s)) return "";
     return s;
+  }
+
+  // WordPress/Yoast career boards often set og:site_name / title suffix to a generic product
+  // label ("Jobs", "Jobs (ua)", "Careers") while the real employer is in the domain
+  // (jobs.innovecs.com → Innovecs) or JSON-LD Organization. Confirmed
+  // jobs-innovecs-com-20260917T040706Z: og:site_name "Jobs" won before companyFromOwnDomain.
+  function isGenericCareerSiteName(name) {
+    const t = String(name || "").replace(/\s+/g, " ").trim();
+    if (!t) return true;
+    return /^(jobs?|careers?|career|career center|job board|job openings?|vacancies|opportunities|open positions?)(\s*[\-(].*)?$/i.test(
+      t
+    );
+  }
+
+  // Prefer a schema.org Organization whose URL matches this careers host (Innovecs JSON-LD
+  // has Organization name "Innovecs" + url https://jobs.innovecs.com/ with no JobPosting).
+  function organizationNameFromJsonLd() {
+    const host = (location.hostname || "").replace(/^www\./i, "").toLowerCase();
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const data = JSON.parse(script.textContent);
+        const items = Array.isArray(data) ? data : data["@graph"] || [data];
+        for (const item of items) {
+          if (!item || item["@type"] !== "Organization") continue;
+          const name = String(item.name || "").trim();
+          if (!name || isGenericCareerSiteName(name) || looksLikeJobTitleNotCompany(name)) continue;
+          const orgUrl = String(item.url || item["@id"] || "");
+          let orgHost = "";
+          try {
+            orgHost = new URL(orgUrl, location.href).hostname.replace(/^www\./i, "").toLowerCase();
+          } catch {
+            orgHost = "";
+          }
+          if (orgHost && (orgHost === host || host.endsWith("." + orgHost) || orgHost.endsWith("." + host))) {
+            return tidyExtractedCompanyName(name) || name;
+          }
+        }
+      } catch {
+        /* ignore malformed JSON-LD */
+      }
+    }
+    return "";
   }
 
   // Title patterns like "Senior DevOps Engineer | Kubernetes, CI/CD & …" wrongly take the
@@ -2261,9 +2308,15 @@ function extractPageInfo() {
       const fromPath = companyFromGreenhousePath();
       if (fromPath) return fromPath;
     }
-    // 3. og:site_name meta tag.
+    // 2b. JSON-LD Organization matching this host (before generic og:site_name "Jobs").
+    const fromLdOrg = organizationNameFromJsonLd();
+    if (fromLdOrg) return fromLdOrg;
+    // 3. og:site_name meta tag — skip generic career-board labels (see isGenericCareerSiteName).
     const ogSite = document.querySelector('meta[property="og:site_name"]');
-    if (ogSite && ogSite.content && ogSite.content.trim()) return ogSite.content.trim();
+    if (ogSite && ogSite.content && ogSite.content.trim()) {
+      const ogName = ogSite.content.trim();
+      if (!isGenericCareerSiteName(ogName) && !looksLikeJobTitleNotCompany(ogName)) return ogName;
+    }
     // 4. Common class/attribute patterns used by various job boards/ATS.
     // SuccessFactors (confirmed live: jobs.igt.com) puts the employer on
     // `<meta itemprop="hiringOrganization" content="IGT, a Nevada Corporation">` — no
@@ -2322,7 +2375,14 @@ function extractPageInfo() {
     m = title.match(/\|\s*([A-Z][\w& .,'/-]{1,80})$/);
     if (m) {
       const fromPipe = tidyExtractedCompanyName(m[1].trim());
-      if (fromPipe && !/^(job details?|careers?|jobs?|apply)$/i.test(fromPipe) && !looksLikeJobTitleNotCompany(fromPipe)) {
+      // "Jobs (ua)" / "Careers" — generic board chrome, not the employer
+      // (jobs-innovecs-com-20260917T040706Z title ends with "| Jobs (ua)").
+      if (
+        fromPipe &&
+        !isGenericCareerSiteName(fromPipe) &&
+        !/^(job details?|careers?|jobs?|apply)$/i.test(fromPipe) &&
+        !looksLikeJobTitleNotCompany(fromPipe)
+      ) {
         return fromPipe;
       }
     }
