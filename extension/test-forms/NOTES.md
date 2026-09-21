@@ -3801,6 +3801,15 @@ unverified outside a live browser).
     `single-vacancies-v2--body` / `.wrap-description` to JD ATS selectors. Reload extension
     and re-Extract on the Innovecs vacancy.
 
+160. **Ashby "Where are you based?" Autofill took ~3 minutes.** `Author: Cursor`. Capture
+    `jobs-ashbyhq-com-20260921T175058Z` (Pennylane on jobs.ashbyhq.com). Console: Warsaw
+    attempt ~96s, Poland ~69s, then chevron discovery found 17 country options and committed
+    Poland in ~3s. Root cause: the question matched Places `where are you` wording, so Auto
+    Fill used long location pacing and typed city "Warsaw" into a fixed country autocomplete
+    that only opens via the chevron. Fixed: treat Ashby chevron autocomplete (not
+    `_systemfield_location`) as a fixed list; prefer profile country for where-based labels;
+    open via chevron; abort empty option polls quickly. Reload extension and re-Auto Fill.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

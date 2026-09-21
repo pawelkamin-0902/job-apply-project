@@ -1768,6 +1768,31 @@ function isAshbyLocationField(element) {
   return /^location\b/i.test(ashbyFieldQuestionLabel(element));
 }
 
+// Ashby custom-question autocomplete with a chevron toggle is a FIXED filtered list (countries,
+// Yes/No sources, …), not Google Places. Confirmed jobs-ashbyhq-com-20260921T175058Z: "Where
+// are your currently based?" matched the Places `where are you` wording, typed "Warsaw" with
+// long location pacing (~3 min), and only succeeded after chevron discovery found "Poland".
+function isAshbyFixedAutocompleteField(element) {
+  if (!element || !element.closest) return false;
+  if (isAshbyLocationField(element)) return false;
+  const entry = element.closest("[data-field-path], .ashby-application-form-field-entry");
+  if (!entry && !/ashby-application-form-input-autocomplete/i.test(String(element.className || ""))) {
+    return false;
+  }
+  return Boolean(ashbyComboboxChevronButton(element));
+}
+
+function ashbyComboboxChevronButton(element) {
+  if (!element || !element.closest) return null;
+  const container =
+    element.closest('[class*="_inputContainer"], [class*="inputContainer"]') || element.parentElement;
+  if (!container || !container.querySelector) return null;
+  const btn = container.querySelector(
+    'button[class*="_toggleButton"], button[class*="toggleButton"], button[aria-label*="toggle" i]'
+  );
+  return btn && btn !== element ? btn : null;
+}
+
 function isAshbyRequiredField(element) {
   if (!element || !element.closest) return false;
   const entry = element.closest(".ashby-application-form-field-entry, [data-field-path]");

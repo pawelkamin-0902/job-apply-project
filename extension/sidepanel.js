@@ -3586,6 +3586,13 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { re: /^country\b(?!.*\b(phone|code|dial)\b)/i, get: (p) => p.contact.country },
     { re: /country of residence|current country of residence/i, get: (p) => p.contact.country },
     { re: /what country are you currently based|country you(?:'re| are) currently based in/i, get: (p) => p.contact.country },
+    // "Where are you currently based?" (Ashby Pennylane et al.) is usually a COUNTRY list —
+    // prefer country over free-text location/city. Confirmed jobs-ashbyhq-com-20260921T175058Z:
+    // contact.location/city "Warsaw" burned ~3 min of Places pacing before "Poland" stuck.
+    {
+      re: /where.*(you|currently).*(located|based)/i,
+      get: (p) => (p.contact && (p.contact.country || p.contact.location || p.contact.city)) || null,
+    },
     // Broadened beyond a bare leading "Location" after a Recruitee form's "Where are you
     // currently located? (City, country)" fell through to generation and got answered with the
     // candidate's own tech stack instead (a small local model, given a job description that
@@ -3593,7 +3600,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // plain personal-info question) - the same "broaden structured coverage so generation is
     // never even reached" fix as the Workday alias above, not a smarter/costlier check on
     // whatever the model happens to generate.
-    { re: /^location\b|current(ly)?\s+located|where.*(you|currently).*(located|based)/i, get: (p) => p.contact.location },
+    { re: /^location\b|current(ly)?\s+located/i, get: (p) => p.contact.location },
     // "Given Name(s)"/"Family Name" are Workday's own terms for first/last name - confirmed
     // live, without these aliases neither pattern matched, so the field fell through to Ollama
     // generation, which returned "Polish" (the candidate's nationality, from the QA bank) for
@@ -6525,9 +6532,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         // Word boundaries required: bare /city/ matched inside id `hispanic_ethnicity`
         // (ethniCITY) and routed EEO Yes/No through the Places typeahead — confirmed live
         // job-boards.greenhouse.io/easyship 20260813T094934Z (typed "Warsaw" into Hispanic).
-        /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
+        // Ashby fixed-list autocomplete (chevron + not `_systemfield_location`) must NOT use
+        // Places pacing — jobs-ashbyhq-com-20260921T175058Z "Where are your currently based?".
+        ((/\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
           fieldHint
-        )
+        ) &&
+          !(typeof isAshbyFixedAutocompleteField === "function" && isAshbyFixedAutocompleteField(element))))
     ) && !/relocat|relocation\s*plans|based (in|outside) the|willing to (move|relocate)/i.test(fieldHint);
     // True geocode/Places widgets only — NOT fixed Greenhouse selects that merely mention
     // location (apaleo 20260813T100213Z: "Current location and relocation plans" options are
@@ -6605,6 +6615,23 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     element.focus();
     // Open → wait (short for static lists; a bit longer for country/location menus).
     await new Promise((resolve) => setTimeout(resolve, pace.open));
+    // Ashby fixed autocomplete: the text box alone often opens nothing — chevron reveals the
+    // real option list (same as discoverComboboxOptions). Without this, "Where are your
+    // currently based?" typed Warsaw/Poland with no menu for the full Places budget
+    // (jobs-ashbyhq-com-20260921T175058Z).
+    if (
+      typeof isAshbyFixedAutocompleteField === "function" &&
+      isAshbyFixedAutocompleteField(element) &&
+      !findComboboxOptions(prefix, before, element).length
+    ) {
+      const chevron =
+        (typeof ashbyComboboxChevronButton === "function" && ashbyComboboxChevronButton(element)) ||
+        (typeof comboboxChevronButton === "function" && comboboxChevronButton(element));
+      if (chevron) {
+        simulateClick(chevron);
+        await new Promise((resolve) => setTimeout(resolve, pace.poll * 2));
+      }
+    }
     if (
       isGreenhouseSelect &&
       !findComboboxOptions(prefix, before, element).length &&
@@ -6790,12 +6817,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     let options = [];
       let lastSig = "";
       let stableReads = 0;
+      let emptyPolls = 0;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, pollMs));
         if (menuStillLoading()) {
           lastSig = "";
           stableReads = 0;
           options = [];
+          emptyPolls = 0;
           continue;
         }
         const found = readUsableOptions();
@@ -6803,8 +6832,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           lastSig = "";
           stableReads = 0;
           options = [];
+          // Places geocode can take longer; fixed lists / misrouted "location" wording must
+          // not burn the full maxPolls when nothing ever appears (Ashby where-based ~96s/attempt
+          // before this abort — jobs-ashbyhq-com-20260921T175058Z).
+          emptyPolls += 1;
+          if (!isGeocodePlacesField && emptyPolls >= 8) return [];
           continue;
         }
+        emptyPolls = 0;
         const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
         if (sig === lastSig) {
           stableReads += 1;
@@ -7920,7 +7955,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         if (basedIn) add(basedIn);
       }
     }
-    if (/what country are you currently based|country you(?:'re| are) currently based in/i.test(String(label || ""))) {
+    if (/what country are you currently based|country you(?:'re| are) currently based in|where.*(you|currently).*(located|based)/i.test(String(label || ""))) {
       const country = String((profile && profile.contact && profile.contact.country) || "").trim();
       if (country) {
         const exact = optionLabels.find((o) => String(o).trim().toLowerCase() === country.toLowerCase());
@@ -11751,9 +11786,12 @@ async function fillGeneratedAnswersInPage(answers) {
         )) ||
         // Word boundaries required: bare /city/ matched inside id `hispanic_ethnicity`
         // (ethniCITY) — see runAutofillInPage copy above (easyship 20260813T094934Z).
-        /\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
+        // Ashby fixed-list autocomplete must not use Places pacing
+        // (jobs-ashbyhq-com-20260921T175058Z).
+        ((/\blocation\b|\bcity\b|where (are|do) you|place of residence|current (city|location)/i.test(
           fieldHint
-        )
+        ) &&
+          !(typeof isAshbyFixedAutocompleteField === "function" && isAshbyFixedAutocompleteField(element))))
     ) && !/relocat|relocation\s*plans|based (in|outside) the|willing to (move|relocate)/i.test(fieldHint);
     // Kept in sync with runAutofillInPage — Places only for true geocode widgets.
     const isGeocodePlacesField = Boolean(
@@ -11828,6 +11866,21 @@ async function fillGeneratedAnswersInPage(answers) {
     simulateClick(controlEl || element);
     element.focus();
     await new Promise((resolve) => setTimeout(resolve, pace.open));
+    // Ashby fixed autocomplete: chevron opens the list (see runAutofillInPage copy —
+    // jobs-ashbyhq-com-20260921T175058Z).
+    if (
+      typeof isAshbyFixedAutocompleteField === "function" &&
+      isAshbyFixedAutocompleteField(element) &&
+      !findComboboxOptions(prefix, before, element).length
+    ) {
+      const chevron =
+        (typeof ashbyComboboxChevronButton === "function" && ashbyComboboxChevronButton(element)) ||
+        (typeof comboboxChevronButton === "function" && comboboxChevronButton(element));
+      if (chevron) {
+        simulateClick(chevron);
+        await new Promise((resolve) => setTimeout(resolve, pace.poll * 2));
+      }
+    }
     if (
       isGreenhouseSelect &&
       !findComboboxOptions(prefix, before, element).length &&
@@ -11996,12 +12049,14 @@ async function fillGeneratedAnswersInPage(answers) {
     let options = [];
       let lastSig = "";
       let stableReads = 0;
+      let emptyPolls = 0;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, pollMs));
         if (menuStillLoading()) {
           lastSig = "";
           stableReads = 0;
           options = [];
+          emptyPolls = 0;
           continue;
         }
         const found = readUsableOptions();
@@ -12009,8 +12064,14 @@ async function fillGeneratedAnswersInPage(answers) {
           lastSig = "";
           stableReads = 0;
           options = [];
+          // Places geocode can take longer; fixed lists / misrouted "location" wording must
+          // not burn the full maxPolls when nothing ever appears (Ashby where-based ~96s/attempt
+          // before this abort — jobs-ashbyhq-com-20260921T175058Z).
+          emptyPolls += 1;
+          if (!isGeocodePlacesField && emptyPolls >= 8) return [];
           continue;
         }
+        emptyPolls = 0;
         const sig = found.map((o) => (o.textContent || "").trim()).join("\0");
         if (sig === lastSig) {
           stableReads += 1;
@@ -12857,6 +12918,13 @@ function captureSampleInPage(profile, qaBank) {
     { re: /^country\b(?!.*\b(phone|code|dial)\b)/i, get: (p) => p.contact.country },
     { re: /country of residence|current country of residence/i, get: (p) => p.contact.country },
     { re: /what country are you currently based|country you(?:'re| are) currently based in/i, get: (p) => p.contact.country },
+    // "Where are you currently based?" (Ashby Pennylane et al.) is usually a COUNTRY list —
+    // prefer country over free-text location/city. Confirmed jobs-ashbyhq-com-20260921T175058Z:
+    // contact.location/city "Warsaw" burned ~3 min of Places pacing before "Poland" stuck.
+    {
+      re: /where.*(you|currently).*(located|based)/i,
+      get: (p) => (p.contact && (p.contact.country || p.contact.location || p.contact.city)) || null,
+    },
     // Broadened beyond a bare leading "Location" after a Recruitee form's "Where are you
     // currently located? (City, country)" fell through to generation and got answered with the
     // candidate's own tech stack instead (a small local model, given a job description that
@@ -12864,7 +12932,7 @@ function captureSampleInPage(profile, qaBank) {
     // plain personal-info question) - the same "broaden structured coverage so generation is
     // never even reached" fix as the Workday alias above, not a smarter/costlier check on
     // whatever the model happens to generate.
-    { re: /^location\b|current(ly)?\s+located|where.*(you|currently).*(located|based)/i, get: (p) => p.contact.location },
+    { re: /^location\b|current(ly)?\s+located/i, get: (p) => p.contact.location },
     // "Given Name(s)"/"Family Name" are Workday's own terms for first/last name - confirmed
     // live, without these aliases neither pattern matched, so the field fell through to Ollama
     // generation, which returned "Polish" (the candidate's nationality, from the QA bank) for
