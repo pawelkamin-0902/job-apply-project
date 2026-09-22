@@ -3882,6 +3882,14 @@ unverified outside a live browser).
     Delete menuitem matching + confirm; tries next candidate if a menu has no Delete; returns
     `via`/`tried` in phase3 logs.
 
+167. **Delete confirm button is "Delete chat" (type=submit), not "Delete".** `Author: Cursor`.
+    User provided the open confirm dialog HTML + a screenshot of the Chat actions menu
+    (radix popper: View files / Pin / Archive / Delete). Confirm is
+    `role="dialog".codex-dialog` → `button[type="submit"]` labeled **Delete chat**. Old matcher
+    only accepted exact `^Delete$`, so phase3 failed at `confirm-missing` even when the dialog
+    opened. Fixed: match `Delete chat` / submit in `.codex-dialog`; find menu Delete inside
+    `[data-radix-popper-content-wrapper]`.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

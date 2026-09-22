@@ -3166,34 +3166,66 @@ function deleteChatGptConversationInPage() {
   }
 
   function findMenuItemByText() {
-    const nodes = [
-      ...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [data-radix-collection-item]'),
-      ...document.querySelectorAll('[data-testid*="delete" i]'),
-      ...document.querySelectorAll('[role="menu"] button, [data-radix-menu-content] button, [data-state="open"] button'),
+    // Open Chat actions menu lives in a Radix popper portal (live screenshot: data-radix-
+    // popper-content-wrapper with View files / Pin / Archive / Delete). Items may be
+    // role=menuitem or plain buttons/divs inside that wrapper.
+    const scopes = [
+      ...document.querySelectorAll("[data-radix-popper-content-wrapper], [data-radix-menu-content], [role='menu']"),
+      document.body,
     ];
-    for (const item of nodes) {
-      const text = (item.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-      const testId = (item.getAttribute("data-testid") || "").toLowerCase();
-      const label = (item.getAttribute("aria-label") || "").toLowerCase();
-      if (
-        /^delete(\s+chat)?$/.test(text) ||
-        /^delete(\s+chat)?$/.test(label) ||
-        testId.includes("delete") ||
-        (text.includes("delete") && !text.includes("all chats") && text.length < 40)
-      ) {
-        return item;
+    for (const scope of scopes) {
+      if (!scope) continue;
+      const nodes = [
+        ...scope.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [data-radix-collection-item]'),
+        ...scope.querySelectorAll("button, [role='option'], div[data-disabled], [data-highlighted]"),
+      ];
+      for (const item of nodes) {
+        const text = (item.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const testId = (item.getAttribute("data-testid") || "").toLowerCase();
+        const label = (item.getAttribute("aria-label") || "").toLowerCase();
+        // Exact "Delete" in the actions menu (not "Delete chat" — that is the confirm button).
+        if (text === "delete" || label === "delete" || /^delete$/i.test(testId)) return item;
+        if (
+          /^delete(\s+chat)?$/.test(text) ||
+          /^delete(\s+chat)?$/.test(label) ||
+          (testId.includes("delete") && !testId.includes("all"))
+        ) {
+          return item;
+        }
       }
     }
     return null;
   }
 
   function findDialogConfirmButton() {
-    const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
-    if (!dialog) return null;
-    for (const btn of dialog.querySelectorAll("button")) {
-      const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
-      const testId = (btn.getAttribute("data-testid") || "").toLowerCase();
-      if (/^delete$/i.test(text) || /^confirm$/i.test(text) || testId.includes("delete")) return btn;
+    // Live confirm HTML (user-provided 2026-09-22): role=dialog.codex-dialog with
+    // <button type="submit">Delete chat</button> (NOT plain "Delete").
+    const dialogs = [
+      ...document.querySelectorAll('[role="dialog"].codex-dialog, .codex-dialog[role="dialog"]'),
+      ...document.querySelectorAll('[role="dialog"], [role="alertdialog"]'),
+    ];
+    for (const dialog of dialogs) {
+      const heading = (dialog.textContent || "").toLowerCase();
+      if (heading && !/delete\s+chat/i.test(heading) && !/permanently delete/i.test(heading)) {
+        // Prefer dialogs that are clearly the delete confirmation when several are open.
+      }
+      const submit = dialog.querySelector('button[type="submit"]');
+      if (submit) {
+        const t = (submit.textContent || "").replace(/\s+/g, " ").trim();
+        if (/^delete(\s+chat)?$/i.test(t)) return submit;
+      }
+      for (const btn of dialog.querySelectorAll("button")) {
+        const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+        const testId = (btn.getAttribute("data-testid") || "").toLowerCase();
+        if (/^cancel$/i.test(text) || /close dialog/i.test(text)) continue;
+        if (
+          /^delete(\s+chat)?$/i.test(text) ||
+          /^confirm$/i.test(text) ||
+          testId.includes("delete")
+        ) {
+          return btn;
+        }
+      }
     }
     return null;
   }
