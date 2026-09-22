@@ -14227,6 +14227,17 @@ function validateResumeShape(resume) {
   // shapes (see app/resume_normalize.py) and reports real shape problems itself.
   if (!resume || typeof resume !== "object" || Array.isArray(resume)) return ["a JSON object"];
   if (!Array.isArray(resume.experience)) return ["experience (array)"];
+  // Reject the schema-contract example accidentally scraped from our own prompt
+  // (live: "Generated via ChatGPT for string" with contact_line starting "string: phone |…").
+  if (resume.name === "string") return ["a real name (got schema placeholder 'string')"];
+  if (typeof resume.contact_line === "string" && /^string\s*:/i.test(resume.contact_line)) {
+    return ["a real contact_line (got schema placeholder)"];
+  }
+  if (!resume.experience.length) return ["at least one experience entry"];
+  const first = resume.experience[0];
+  if (!first || first.title === "string" || first.company === "string") {
+    return ["real experience titles/companies (got schema placeholder)"];
+  }
   return [];
 }
 
