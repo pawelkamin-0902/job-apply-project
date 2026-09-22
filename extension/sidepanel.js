@@ -3084,27 +3084,105 @@ function pollChatGptResponseInPage() {
 
 // Phase 3: delete the open conversation. Separate inject so a failed/killed wait never skips
 // cleanup when Settings > Delete ChatGPT conversation is on.
+// Supports both ChatGPT UIs (confirmed via chatgpt-com-20260922T043713Z.html Save Sample):
+// - Newer: header button aria-label="Chat actions" (old conversation-options-button is gone)
+// - Older: data-testid="conversation-options-button" / history-item-*-options
 function deleteChatGptConversationInPage() {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  function findOptionsButton() {
-    return (
-      document.querySelector('button[data-testid="conversation-options-button"]') ||
-      document.querySelector('button[data-testid*="conversation-options" i]') ||
-      document.querySelector('button[aria-label*="Open conversation options" i]') ||
-      document.querySelector('button[aria-label*="conversation options" i]') ||
-      document.querySelector('[data-testid="history-item-0-options"]') ||
-      document.querySelector('nav [data-testid$="-options"]') ||
-      document.querySelector('nav button[aria-label*="options" i]') ||
-      document.querySelector('nav button[aria-label*="more" i]')
-    );
+  function simulateClick(el) {
+    if (!el) return;
+    try {
+      el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+      el.click();
+    } catch {
+      try {
+        el.click();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function findOptionsButtons() {
+    // Order matters: prefer the open conversation's own header menu, then legacy, then sidebar.
+    const candidates = [];
+    const push = (el, via) => {
+      if (el && !candidates.some((c) => c.el === el)) candidates.push({ el, via });
+    };
+
+    // NEW UI (2026 Free capture): "Chat actions" = ••• on the current chat header.
+    push(document.querySelector('button[aria-label="Chat actions"]'), "chat-actions");
+    push(document.querySelector('button[aria-label*="Chat actions" i]'), "chat-actions-i");
+
+    // OLD UI
+    push(document.querySelector('button[data-testid="conversation-options-button"]'), "conversation-options-testid");
+    push(document.querySelector('button[data-testid*="conversation-options" i]'), "conversation-options-testid-i");
+    push(document.querySelector('button[aria-label*="Open conversation options" i]'), "open-conversation-options");
+    push(document.querySelector('button[aria-label*="conversation options" i]'), "conversation-options-label");
+    push(document.querySelector('[data-testid="history-item-0-options"]'), "history-item-0");
+    push(document.querySelector('nav [data-testid$="-options"]'), "nav-options-testid");
+
+    // Fallbacks that may open a useful menu on either UI.
+    push(document.querySelector('button[aria-label="More actions"]'), "more-actions");
+    push(document.querySelector('button[aria-label="More"][aria-haspopup="menu"]'), "more-haspopup");
+
+    // Active sidebar row for this /c/<uuid> conversation, if its ••• is in the DOM.
+    const m = (location.pathname || "").match(/\/c\/([a-z0-9-]+)/i);
+    if (m) {
+      const id = m[1];
+      const row =
+        document.querySelector(`a[href*="${id}"]`) ||
+        document.querySelector(`[href*="/c/${id}"]`) ||
+        [...document.querySelectorAll("nav a, nav button, aside a, aside button")].find((el) =>
+          (el.getAttribute("href") || "").includes(id)
+        );
+      if (row) {
+        const scope = row.closest("div, li, a, button") || row.parentElement;
+        if (scope) {
+          // Hover-reveal options on some layouts.
+          try {
+            scope.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+            scope.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+          } catch {
+            /* ignore */
+          }
+          push(
+            scope.querySelector(
+              'button[aria-haspopup="menu"], button[data-testid*="options" i], button[aria-label*="options" i], button[aria-label*="More" i]'
+            ),
+            "sidebar-row-options"
+          );
+        }
+      }
+    }
+
+    push(document.querySelector('nav button[aria-label*="options" i]'), "nav-options-label");
+    push(document.querySelector('nav button[aria-label*="more" i]'), "nav-more");
+    return candidates;
   }
 
   function findMenuItemByText() {
-    for (const item of document.querySelectorAll('[role="menuitem"], [data-testid*="delete" i], button')) {
+    const nodes = [
+      ...document.querySelectorAll('[role="menuitem"], [role="menuitemradio"], [data-radix-collection-item]'),
+      ...document.querySelectorAll('[data-testid*="delete" i]'),
+      ...document.querySelectorAll('[role="menu"] button, [data-radix-menu-content] button, [data-state="open"] button'),
+    ];
+    for (const item of nodes) {
       const text = (item.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
       const testId = (item.getAttribute("data-testid") || "").toLowerCase();
-      if (/^delete(\s+chat)?$/.test(text) || testId.includes("delete")) return item;
+      const label = (item.getAttribute("aria-label") || "").toLowerCase();
+      if (
+        /^delete(\s+chat)?$/.test(text) ||
+        /^delete(\s+chat)?$/.test(label) ||
+        testId.includes("delete") ||
+        (text.includes("delete") && !text.includes("all chats") && text.length < 40)
+      ) {
+        return item;
+      }
     }
     return null;
   }
@@ -3114,39 +3192,72 @@ function deleteChatGptConversationInPage() {
     if (!dialog) return null;
     for (const btn of dialog.querySelectorAll("button")) {
       const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
-      if (/^delete$/i.test(text) || /delete/i.test(btn.getAttribute("data-testid") || "")) return btn;
+      const testId = (btn.getAttribute("data-testid") || "").toLowerCase();
+      if (/^delete$/i.test(text) || /^confirm$/i.test(text) || testId.includes("delete")) return btn;
     }
     return null;
   }
 
   return (async () => {
-    const optionsBtn = findOptionsButton();
-    if (!optionsBtn) {
-      return { ok: false, deleted: false, step: "options-button-missing", href: location.href };
+    const candidates = findOptionsButtons();
+    if (!candidates.length) {
+      return {
+        ok: false,
+        deleted: false,
+        step: "options-button-missing",
+        href: location.href,
+        tried: [],
+      };
     }
-    optionsBtn.click();
 
-    let deleteItem = null;
-    for (let attempt = 0; attempt < 15 && !deleteItem; attempt++) {
-      deleteItem = findMenuItemByText();
-      if (!deleteItem) await sleep(150);
-    }
-    if (!deleteItem) {
-      return { ok: false, deleted: false, step: "menu-delete-missing", href: location.href };
-    }
-    deleteItem.click();
+    const tried = [];
+    for (const { el, via } of candidates) {
+      tried.push(via);
+      simulateClick(el);
+      let deleteItem = null;
+      for (let attempt = 0; attempt < 12 && !deleteItem; attempt++) {
+        deleteItem = findMenuItemByText();
+        if (!deleteItem) await sleep(150);
+      }
+      if (!deleteItem) {
+        // Close a wrong menu (Escape) before trying the next candidate.
+        try {
+          document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        } catch {
+          /* ignore */
+        }
+        await sleep(100);
+        continue;
+      }
+      simulateClick(deleteItem);
 
-    let confirmBtn = null;
-    for (let attempt = 0; attempt < 15 && !confirmBtn; attempt++) {
-      confirmBtn = findDialogConfirmButton();
-      if (!confirmBtn) await sleep(150);
+      let confirmBtn = null;
+      for (let attempt = 0; attempt < 15 && !confirmBtn; attempt++) {
+        confirmBtn = findDialogConfirmButton();
+        if (!confirmBtn) await sleep(150);
+      }
+      if (!confirmBtn) {
+        return {
+          ok: false,
+          deleted: false,
+          step: "confirm-missing",
+          via,
+          tried,
+          href: location.href,
+        };
+      }
+      simulateClick(confirmBtn);
+      await sleep(400);
+      return { ok: true, deleted: true, step: "done", via, tried, href: location.href };
     }
-    if (!confirmBtn) {
-      return { ok: false, deleted: false, step: "confirm-missing", href: location.href };
-    }
-    confirmBtn.click();
-    await sleep(300);
-    return { ok: true, deleted: true, step: "done", href: location.href };
+
+    return {
+      ok: false,
+      deleted: false,
+      step: "menu-delete-missing",
+      tried,
+      href: location.href,
+    };
   })();
 }
 
