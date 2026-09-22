@@ -292,9 +292,24 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       // Never let a progress-reporting bug affect the actual generation.
     }
   };
+  // Prefer temporary chat when we would delete anyway: stays out of history (so delete is less
+  // critical) and is closer to a plain text-only thread — Free accounts increasingly hit a
+  // separate "data analysis" cap on ordinary /c/<uuid> threads that auto-enable tools.
+  const startUrl = deleteConversation
+    ? "https://chatgpt.com/?temporary-chat=true"
+    : "https://chatgpt.com/";
+  // Explicitly ask ChatGPT not to invoke data analysis / code interpreter / tools — Free tier
+  // pauses the whole chat when that tool quota is exhausted even if the user never asked for it.
+  const textOnlyGuard =
+    "IMPORTANT: This is a plain text-only chat. Do NOT use data analysis, code interpreter, " +
+    "file tools, browsing, or any other tools. Reply with plain text only.\n\n";
+  const guardedPrompt = prompt.startsWith("IMPORTANT: This is a plain text-only")
+    ? prompt
+    : textOnlyGuard + prompt;
+
   notify("creating tab...");
-  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
-  notify(`tab ${tab.id} created`);
+  const tab = await chrome.tabs.create({ url: startUrl, active: false });
+  notify(`tab ${tab.id} created (${startUrl})`);
   let debuggerAttached = false;
   try {
     notify("attaching debugger...");
@@ -360,7 +375,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       const [sendInj] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: sendChatGptPromptInPage,
-        args: [prompt],
+        args: [guardedPrompt],
       });
       sendResult = sendInj && sendInj.result;
     } catch (err) {
@@ -378,6 +393,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
     notify("phase2: polling for assistant reply...");
     let text = "";
     let lastPollSummary = "";
+    let lastRateLimit = null;
     const pollDeadline = Date.now() + 180000;
     let pollIndex = 0;
     while (Date.now() < pollDeadline) {
@@ -398,14 +414,15 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         notify(`phase2 poll#${pollIndex}: empty inject result (SPA navigation?)`);
         continue;
       }
-      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} href=${pollResult.href || "?"}`;
+      if (pollResult.rateLimit) lastRateLimit = pollResult.rateLimit;
+      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})} href=${pollResult.href || "?"}`;
       if (summary !== lastPollSummary) {
         notify(`phase2 poll#${pollIndex}: ${summary}`);
         lastPollSummary = summary;
       }
       if (pollResult.completeJson && pollResult.text) {
         text = pollResult.text;
-        notify(`phase2: complete JSON captured (${text.length} chars)`);
+        notify(`phase2: complete JSON captured (${text.length} chars, via=${pollResult.via})`);
         break;
       }
       // Stop button gone + substantial text but not yet valid JSON — keep polling; if it stays
@@ -413,14 +430,19 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       if (!pollResult.generating && pollResult.text && pollResult.text.length > 80 && pollIndex >= 8) {
         if (pollResult.stableComplete) {
           text = pollResult.text;
-          notify(`phase2: stable non-JSON text accepted (${text.length} chars)`);
+          notify(`phase2: stable non-JSON text accepted (${text.length} chars, via=${pollResult.via})`);
           break;
         }
+      }
+      // Free-tier data-analysis pause with nothing readable yet — fail fast (don't sit 3 min).
+      if (pollResult.rateLimit && !pollResult.text && pollIndex >= 5 && !pollResult.generating) {
+        notify(`phase2: rate-limit banner with no reply yet (${pollResult.rateLimit})`);
+        break;
       }
     }
     if (!text) {
       // Still try delete — a conversation may exist even when we could not read the reply.
-      if (deleteConversation) {
+      if (deleteConversation && !String(startUrl).includes("temporary-chat")) {
         notify("phase2 failed; attempting delete before abort...");
         try {
           const [delInj] = await chrome.scripting.executeScript({
@@ -432,13 +454,20 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
           notify(`phase3 (on failure) delete threw: ${err && err.message ? err.message : err}`);
         }
       }
+      if (lastRateLimit) {
+        throw new Error(
+          `ChatGPT paused this chat (${lastRateLimit}). Free accounts have a separate limit for ` +
+            `"data analysis" chats — start a new text-only chat (or wait for the reset), then retry. ` +
+            `The extension now opens temporary text-only chats and asks ChatGPT not to use tools.`
+        );
+      }
       throw new Error(
-        "No response came back from the ChatGPT tab. Generation may have finished in the UI, but the extension could not read the assistant message (check [gpt-auto] logs in the side panel console)."
+        "No response came back from the ChatGPT tab. Generation may have finished in the UI, but the extension could not read the assistant message (check the [gpt-auto] lines under Generate JSON)."
       );
     }
 
-    // --- Phase 3: delete conversation (separate inject so SPA death can't skip it) ---
-    if (deleteConversation) {
+    // --- Phase 3: delete conversation (skip for temporary chats — they never hit history) ---
+    if (deleteConversation && !String(startUrl).includes("temporary-chat")) {
       notify("phase3: deleting conversation...");
       let deleteResult = null;
       try {
@@ -451,6 +480,8 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         notify(`phase3 delete threw: ${err && err.message ? err.message : err}`);
       }
       notify(`phase3 delete result: ${JSON.stringify(deleteResult || null)}`);
+    } else if (deleteConversation) {
+      notify("phase3: delete skipped (temporary chat — not saved to history)");
     } else {
       notify("phase3: delete skipped (setting off)");
     }
@@ -2818,19 +2849,68 @@ function sendChatGptPromptInPage(prompt) {
     );
   }
 
+  function detectRateLimit() {
+    const body = (document.body && document.body.innerText) || "";
+    if (/chat paused until usage resets/i.test(body)) return "chat-paused-usage-reset";
+    if (/reached the limit for chats that include data analysis/i.test(body)) return "data-analysis-limit";
+    if (/start a new text-only chat/i.test(body)) return "needs-text-only-chat";
+    return null;
+  }
+
+  function clickNewChatIfNeeded() {
+    // Free-tier "data analysis" pause blocks the composer — "New chat" / text-only is the escape.
+    const rateLimit = detectRateLimit();
+    if (!rateLimit) return { clicked: false, rateLimit: null };
+    const buttons = [...document.querySelectorAll("button, a[role='button']")];
+    const newChat = buttons.find((b) => {
+      const t = (b.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      return t === "new chat" || t === "start a new text-only chat" || /text-only chat/i.test(t);
+    });
+    if (newChat) {
+      newChat.click();
+      return { clicked: true, rateLimit };
+    }
+    return { clicked: false, rateLimit };
+  }
+
+  function tryDisableTools() {
+    // Best-effort: turn off composer tools so ChatGPT doesn't auto-attach data analysis.
+    const toggles = [...document.querySelectorAll("button, [role='switch']")];
+    for (const el of toggles) {
+      const label = `${el.getAttribute("aria-label") || ""} ${el.textContent || ""}`.toLowerCase();
+      const pressed = el.getAttribute("aria-pressed") === "true" || el.getAttribute("aria-checked") === "true";
+      if (!pressed) continue;
+      if (/tool|plugin|code interpreter|data analysis|search|browse/i.test(label) && !/send|stop|new chat/i.test(label)) {
+        try {
+          el.click();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   return (async () => {
+    const rescue = clickNewChatIfNeeded();
+    if (rescue.clicked) await sleep(800);
+    tryDisableTools();
+
     let composer = null;
     for (let attempt = 0; attempt < 50 && !composer; attempt++) {
       composer = findComposer();
       if (!composer) await sleep(200);
     }
     if (!composer) {
+      const rateLimit = detectRateLimit() || rescue.rateLimit;
       return {
         ok: false,
-        error: "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in.",
+        error: rateLimit
+          ? `ChatGPT is paused (${rateLimit}). Wait for the reset or click New chat for a text-only thread, then retry.`
+          : "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in.",
         href: location.href,
+        rateLimit,
       };
     }
 
@@ -2844,7 +2924,15 @@ function sendChatGptPromptInPage(prompt) {
       if (!sendBtn) await sleep(200);
     }
     if (!sendBtn) {
-      return { ok: false, error: "Could not find (or enable) ChatGPT's send button.", href: location.href };
+      const rateLimit = detectRateLimit();
+      return {
+        ok: false,
+        error: rateLimit
+          ? `ChatGPT send is blocked (${rateLimit}). Start a new text-only chat and retry.`
+          : "Could not find (or enable) ChatGPT's send button.",
+        href: location.href,
+        rateLimit,
+      };
     }
     sendBtn.click();
 
@@ -2858,6 +2946,7 @@ function sendChatGptPromptInPage(prompt) {
       sent: true,
       generating: isGenerating(),
       href: location.href,
+      rateLimit: detectRateLimit(),
     };
   })();
 }
@@ -2901,29 +2990,145 @@ function pollChatGptResponseInPage() {
     }
   }
 
-  function findAssistantNodes() {
-    const byRole = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
-    if (byRole.length) return byRole;
-    // Profile/UI variants: attribute may be missing — take the last agent turn article.
-    const articles = [...document.querySelectorAll('article[data-testid^="conversation-turn-"], [data-testid^="conversation-turn-"]')];
-    if (articles.length) {
-      // User message is usually the first turn after send; assistant is the last turn.
-      return [articles[articles.length - 1]];
+  function extractBalancedJsonObjects(text) {
+    const src = text || "";
+    const out = [];
+    for (let start = 0; start < src.length; start++) {
+      if (src[start] !== "{") continue;
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      for (let i = start; i < src.length; i++) {
+        const ch = src[i];
+        if (inString) {
+          if (escape) escape = false;
+          else if (ch === "\\") escape = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+          continue;
+        }
+        if (ch === "{") depth += 1;
+        else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            const slice = src.slice(start, i + 1).trim();
+            if (looksLikeCompleteJson(slice)) out.push(slice);
+            start = i;
+            break;
+          }
+        }
+      }
     }
-    const markdown = [...document.querySelectorAll(".markdown, .prose, [class*='markdown']")];
+    return out;
+  }
+
+  function looksLikeResumeJson(text) {
+    // Prefer a filled resume reply over schema/examples / profile JSON in the user prompt.
+    if (!/"contact_line"\s*:/.test(text)) return false;
+    if (!/"summary"\s*:/.test(text)) return false;
+    if (!/"skills"\s*:/.test(text)) return false;
+    if (!/"experience"\s*:/.test(text)) return false;
+    if (!/"bullets"\s*:/.test(text)) return false;
+    if (!/"education"\s*:/.test(text)) return false;
+    return text.length > 600;
+  }
+
+  function extractResumeJsonFromBody(text, { allowWhileGenerating }) {
+    const objects = extractBalancedJsonObjects(text).filter(looksLikeResumeJson);
+    if (!objects.length) return "";
+    // While streaming, require 2+ candidates (profile in the user message + partial/full reply)
+    // so we don't treat the profile JSON as the answer.
+    if (allowWhileGenerating && objects.length < 2) return "";
+    return objects[objects.length - 1];
+  }
+
+  function detectRateLimit() {
+    const body = (document.body && document.body.innerText) || "";
+    if (/reached the limit for chats that include data analysis/i.test(body)) return "data-analysis-limit";
+    if (/chat paused until usage resets/i.test(body)) return "chat-paused-usage-reset";
+    if (/start a new text-only chat/i.test(body)) return "needs-text-only-chat";
+    return null;
+  }
+
+  function roleOf(el) {
+    if (!el) return "";
+    const attr =
+      el.getAttribute("data-message-author-role") ||
+      el.getAttribute("data-turn") ||
+      el.getAttribute("data-author") ||
+      "";
+    if (/assistant|bot/i.test(attr)) return "assistant";
+    if (/user/i.test(attr)) return "user";
+    const nested = el.querySelector("[data-message-author-role], [data-turn], [data-author]");
+    if (nested) return roleOf(nested);
+    return "";
+  }
+
+  function findAssistantNodes() {
+    const direct = [
+      ...document.querySelectorAll('[data-message-author-role="assistant"]'),
+      ...document.querySelectorAll('[data-turn="assistant"]'),
+      ...document.querySelectorAll('article[data-turn="assistant"]'),
+    ];
+    if (direct.length) return direct;
+
+    // New ChatGPT layouts use data-testid="conversation-turn" (no "-N" suffix) and/or
+    // data-turn on wrappers — the old conversation-turn-N prefix alone misses them.
+    const turns = [
+      ...document.querySelectorAll(
+        'article[data-testid^="conversation-turn"], [data-testid="conversation-turn"], [data-testid^="conversation-turn-"], [data-turn], [data-message-author-role], main article'
+      ),
+    ];
+    const assistants = turns.filter((el) => roleOf(el) === "assistant");
+    if (assistants.length) return assistants;
+    // Last turn that is not clearly the user message.
+    const nonUser = turns.filter((el) => roleOf(el) !== "user");
+    if (nonUser.length) return [nonUser[nonUser.length - 1]];
+    if (turns.length) return [turns[turns.length - 1]];
+
+    const markdown = [
+      ...document.querySelectorAll(
+        ".markdown, .prose, [class*='markdown'], [class*='prose'], pre code, div[class*='assistant']"
+      ),
+    ];
     return markdown.length ? [markdown[markdown.length - 1]] : [];
   }
 
   const generating = isGenerating();
+  const rateLimit = detectRateLimit();
+  const probe = {
+    roleAssistant: document.querySelectorAll('[data-message-author-role="assistant"]').length,
+    turnAssistant: document.querySelectorAll('[data-turn="assistant"]').length,
+    turnTestId: document.querySelectorAll('[data-testid="conversation-turn"], [data-testid^="conversation-turn"]').length,
+    articles: document.querySelectorAll("main article").length,
+    bodyLen: ((document.body && document.body.innerText) || "").length,
+  };
+
   const assistants = findAssistantNodes();
   let text = "";
+  let via = "none";
   if (assistants.length) {
     const last = assistants[assistants.length - 1];
     text = reconstructMarkdown(last).trim();
+    if (!text) text = (last.innerText || last.textContent || "").trim();
+    via = "assistant-node";
   }
+
+  // Ultimate fallback: ChatGPT UI variants / virtualization can hide role attrs while the
+  // JSON is still visible as plain text (confirmed live: msgs=0 while JSON on screen).
+  // Take the last resume-shaped JSON so we don't scrape the schema from the user prompt.
+  if (!looksLikeCompleteJson(text) || !looksLikeResumeJson(text)) {
+    const fromBody = extractResumeJsonFromBody((document.body && document.body.innerText) || "");
+    if (fromBody) {
+      text = fromBody;
+      via = "body-json";
+    }
+  }
+
   const completeJson = looksLikeCompleteJson(text);
-  // Track stability across polls via a page-global stamp (survives within the same document;
-  // resets on hard navigation, which is fine — we just need consecutive equal reads).
   const prev = window.__afGptPollPrev || { text: "", same: 0 };
   const same = prev.text === text && text ? prev.same + 1 : text ? 1 : 0;
   window.__afGptPollPrev = { text, same };
@@ -2934,6 +3139,9 @@ function pollChatGptResponseInPage() {
     completeJson,
     stableComplete: !generating && same >= 2 && text.length > 80,
     href: location.href,
+    rateLimit,
+    via,
+    probe,
   };
 }
 
