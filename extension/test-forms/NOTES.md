@@ -3845,6 +3845,15 @@ unverified outside a live browser).
     **Generate JSON**; Chrome DevTools on the ChatGPT/job tab will not show them. For
     `console.info`, right-click the **extension side panel** → Inspect.
 
+163. **gpt-auto closed tab immediately and saved schema `"name":"string"`.** `Author: Cursor`.
+    Temporary chat + body-text JSON scrape grabbed the **schema example inside our own prompt**
+    (still sitting in the composer/user turn) before ChatGPT finished generating, then closed
+    the tab — UI showed "Generated via ChatGPT for string". Fix: stop using temporary chat
+    (back to normal `chatgpt.com/`); reject placeholder/schema JSON (`name === "string"`,
+    instructional `contact_line`, etc.); only accept a real filled resume; wait until
+    generation has started/finished; harden `validateResumeShape`. Keep the text-only prompt
+    guard (no tools) without temporary chat.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
