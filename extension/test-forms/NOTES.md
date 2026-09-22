@@ -3825,6 +3825,26 @@ unverified outside a live browser).
     panel DevTools console, re-run gpt-auto on a failing profile, and watch `[gpt-auto]` lines
     (phase1/2/3 + delete step).
 
+162. **gpt-auto follow-up: msgs=0 while JSON visible + Free "data analysis" pause + tab stays
+    open + "where's the console?".** `Author: Cursor`. Live log under Generate JSON:
+    `phase2 poll#39: gen=false msgs=0 len=0` while the ChatGPT tab clearly showed a finished
+    resume JSON and a Free-plan banner: "Chat paused… limit for chats that include data
+    analysis. Start a new text-only chat…". Three separate issues: (1) **Extract** — ChatGPT's
+    newer DOM often uses `data-turn="assistant"` / `data-testid="conversation-turn"` without
+    the old `conversation-turn-N` / `data-message-author-role` attrs, so the poller's assistant
+    count stayed 0; fixed with those selectors plus a last-resume-shaped **body.innerText JSON
+    scrape** fallback (skips the profile JSON in the user prompt). (2) **Data analysis limit** —
+    Free accounts meter tool/data-analysis separately from unlimited text chat; long structured
+    resume prompts can auto-trigger that path. Mitigation: open
+    `?temporary-chat=true` when delete-after-generate is on, prepend an explicit "plain
+    text-only, no tools/data analysis" guard to the prompt, try to click New chat / disable
+    tool toggles before Send, and fail fast with a clear error when the pause banner appears
+    with no reply. (3) **Tab not closing** — cleanup only runs after the poll loop ends; with
+    msgs=0 it sat ~3 minutes. Faster abort on rate-limit + successful extract closes sooner.
+    (4) **Console** — `[gpt-auto]` lines already stream into the side panel status under
+    **Generate JSON**; Chrome DevTools on the ChatGPT/job tab will not show them. For
+    `console.info`, right-click the **extension side panel** → Inspect.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

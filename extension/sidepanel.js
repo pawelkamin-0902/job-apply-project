@@ -3119,9 +3119,11 @@ function pollChatGptResponseInPage() {
 
   // Ultimate fallback: ChatGPT UI variants / virtualization can hide role attrs while the
   // JSON is still visible as plain text (confirmed live: msgs=0 while JSON on screen).
-  // Take the last resume-shaped JSON so we don't scrape the schema from the user prompt.
+  // Take the last resume-shaped JSON so we don't scrape the schema/profile from the user prompt.
   if (!looksLikeCompleteJson(text) || !looksLikeResumeJson(text)) {
-    const fromBody = extractResumeJsonFromBody((document.body && document.body.innerText) || "");
+    const fromBody = extractResumeJsonFromBody((document.body && document.body.innerText) || "", {
+      allowWhileGenerating: generating,
+    });
     if (fromBody) {
       text = fromBody;
       via = "body-json";
