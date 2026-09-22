@@ -3866,6 +3866,14 @@ unverified outside a live browser).
     JSON in the user prompt is not mistaken for the reply), and probe
     `markdownAssistant`/`agentTurn`/`userBubble` in logs.
 
+165. **Simplify gpt-auto: keep dual DOM, drop prompt/tool forcing experiments.** `Author: Cursor`.
+    User confirmed some ChatGPT profiles use the new assistant-message DOM and some still use
+    the original `data-message-author-role` path — poller keeps both. Reverted the extras that
+    were confusing and unrelated to the real bug: temporary chat, "plain text-only" prompt
+    guard prepend, New-chat / tool-toggle forcing, and data-analysis rate-limit special-casing.
+    Left in place: send→poll→delete short injects (SPA nav), dual DOM extract, schema-placeholder
+    rejection, and the existing background-tab debugger (unchanged from before this thread).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

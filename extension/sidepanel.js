@@ -3031,7 +3031,6 @@ function pollChatGptResponseInPage() {
   }
 
   const generating = isGenerating();
-  const rateLimit = detectRateLimit();
   const probe = {
     roleAssistant: document.querySelectorAll('[data-message-author-role="assistant"]').length,
     turnAssistant: document.querySelectorAll('[data-turn="assistant"]').length,
@@ -3078,7 +3077,6 @@ function pollChatGptResponseInPage() {
     isRealResume,
     stableComplete: !generating && same >= 2 && isRealResume,
     href: location.href,
-    rateLimit,
     via,
     probe,
   };
