@@ -2966,6 +2966,10 @@ function pollChatGptResponseInPage() {
     if (!node) return "";
     if (node.nodeType === 3) return node.textContent;
     if (node.nodeType !== 1) return "";
+    // ChatGPT injects external-link icons marked exclude — they are not part of the reply text
+    // (confirmed in chatgpt-com-20260922T043713Z.html capture).
+    if (node.getAttribute && node.getAttribute("data-markdown-copy") === "exclude") return "";
+    if (node.tagName === "SVG" || node.tagName === "PATH") return "";
     const tag = node.tagName;
     if (tag === "BR") return "\n";
     if (tag === "CODE" || tag === "PRE") return node.textContent;
@@ -3057,10 +3061,14 @@ function pollChatGptResponseInPage() {
       if (obj.name === "string") return true;
       if (typeof obj.contact_line === "string" && /^string\s*:/i.test(obj.contact_line)) return true;
       if (!Array.isArray(obj.experience) || obj.experience.length === 0) return true;
-      // Real resumes have at least one role with a real title, not the schema's "string".
       const first = obj.experience[0];
       if (!first || first.title === "string" || first.company === "string") return true;
       if (typeof obj.summary === "string" && (/^string\s*:/i.test(obj.summary) || obj.summary.length < 40)) return true;
+      // Profile JSON in the user prompt has empty bullets []; a real tailored resume has content.
+      const hasBullet = obj.experience.some(
+        (e) => Array.isArray(e && e.bullets) && e.bullets.some((b) => typeof b === "string" && b.trim().length > 20)
+      );
+      if (!hasBullet) return true;
     } catch {
       return true;
     }
@@ -3071,12 +3079,10 @@ function pollChatGptResponseInPage() {
     return looksLikeResumeJson(text) && looksLikeCompleteJson(text) && !isSchemaOrPlaceholderResume(text);
   }
 
-  function extractResumeJsonFromBody(text, { allowWhileGenerating }) {
+  function extractResumeJsonFromText(text, { requireMultiple }) {
     const objects = extractBalancedJsonObjects(text).filter(isRealResumeJson);
     if (!objects.length) return "";
-    // While streaming, require 2+ candidates (profile in the user message + partial/full reply)
-    // so we don't treat the profile JSON as the answer.
-    if (allowWhileGenerating && objects.length < 2) return "";
+    if (requireMultiple && objects.length < 2) return "";
     return objects[objects.length - 1];
   }
 
@@ -3094,15 +3100,30 @@ function pollChatGptResponseInPage() {
       el.getAttribute("data-message-author-role") ||
       el.getAttribute("data-turn") ||
       el.getAttribute("data-author") ||
+      el.getAttribute("data-markdown-text-style") ||
       "";
     if (/assistant|bot/i.test(attr)) return "assistant";
     if (/user/i.test(attr)) return "user";
-    const nested = el.querySelector("[data-message-author-role], [data-turn], [data-author]");
+    const nested = el.querySelector(
+      "[data-message-author-role], [data-turn], [data-author], [data-markdown-text-style], [data-user-message-bubble]"
+    );
     if (nested) return roleOf(nested);
+    if (el.getAttribute("data-user-message-bubble") === "true") return "user";
     return "";
   }
 
+  // Confirmed live via Save Sample chatgpt-com-20260922T043713Z.html (2026-09-22): ChatGPT's
+  // current Free UI no longer uses data-message-author-role / conversation-turn articles.
+  // Assistant reply is a MarkdownRoot div with data-markdown-text-style="assistant-message".
+  // User prompt uses data-user-message-bubble="true". Probe on that capture: roleAssistant=0,
+  // articles=0, but assistant-message=1 and the resume JSON parses cleanly from that node.
   function findAssistantNodes() {
+    const byStyle = [...document.querySelectorAll('[data-markdown-text-style="assistant-message"]')];
+    if (byStyle.length) return byStyle;
+
+    const byAgentTurn = [...document.querySelectorAll("[data-chatgpt-agent-turn-start]")];
+    if (byAgentTurn.length) return byAgentTurn;
+
     const direct = [
       ...document.querySelectorAll('[data-message-author-role="assistant"]'),
       ...document.querySelectorAll('[data-turn="assistant"]'),
@@ -3110,18 +3131,25 @@ function pollChatGptResponseInPage() {
     ];
     if (direct.length) return direct;
 
-    // New ChatGPT layouts use data-testid="conversation-turn" (no "-N" suffix) and/or
-    // data-turn on wrappers — the old conversation-turn-N prefix alone misses them.
     const turns = [
       ...document.querySelectorAll(
         'article[data-testid^="conversation-turn"], [data-testid="conversation-turn"], [data-testid^="conversation-turn-"], [data-turn], [data-message-author-role], main article'
       ),
     ];
-    const assistants = turns.filter((el) => roleOf(el) === "assistant");
-    if (assistants.length) return assistants;
-    // Do NOT fall back to "last turn" / random markdown — that often is the USER prompt
-    // (which embeds our schema example) and caused early "Generated for string" closes.
-    return [];
+    return turns.filter((el) => roleOf(el) === "assistant");
+  }
+
+  function readAssistantText(node) {
+    let text = reconstructMarkdown(node).trim();
+    if (!isRealResumeJson(text)) {
+      // Links/icons can confuse reconstruct; plain innerText of the assistant node is enough
+      // for JSON.parse (confirmed on the Save Sample capture).
+      const plain = (node.innerText || node.textContent || "").replace(/\u200b/g, "").trim();
+      if (isRealResumeJson(plain)) return plain;
+      const extracted = extractResumeJsonFromText(plain, { requireMultiple: false });
+      if (extracted) return extracted;
+    }
+    return text;
   }
 
   const generating = isGenerating();
@@ -3129,6 +3157,9 @@ function pollChatGptResponseInPage() {
   const probe = {
     roleAssistant: document.querySelectorAll('[data-message-author-role="assistant"]').length,
     turnAssistant: document.querySelectorAll('[data-turn="assistant"]').length,
+    markdownAssistant: document.querySelectorAll('[data-markdown-text-style="assistant-message"]').length,
+    agentTurn: document.querySelectorAll("[data-chatgpt-agent-turn-start]").length,
+    userBubble: document.querySelectorAll('[data-user-message-bubble="true"]').length,
     turnTestId: document.querySelectorAll('[data-testid="conversation-turn"], [data-testid^="conversation-turn"]').length,
     articles: document.querySelectorAll("main article").length,
     bodyLen: ((document.body && document.body.innerText) || "").length,
@@ -3138,24 +3169,21 @@ function pollChatGptResponseInPage() {
   let text = "";
   let via = "none";
   if (assistants.length) {
-    const last = assistants[assistants.length - 1];
-    text = reconstructMarkdown(last).trim();
-    if (!text) text = (last.innerText || last.textContent || "").trim();
+    text = readAssistantText(assistants[assistants.length - 1]);
     via = "assistant-node";
   }
 
-  // Ultimate fallback: ChatGPT UI variants can hide role attrs while a real reply is still
-  // visible as plain text. Only accept filled resume JSON — never the schema from our prompt.
+  // Fallback: scrape resume JSON from the page text, but never the schema/profile in the prompt.
   if (!isRealResumeJson(text)) {
-    const fromBody = extractResumeJsonFromBody((document.body && document.body.innerText) || "", {
-      allowWhileGenerating: generating,
+    const fromBody = extractResumeJsonFromText((document.body && document.body.innerText) || "", {
+      requireMultiple: generating,
     });
     if (fromBody) {
       text = fromBody;
       via = "body-json";
     } else if (isSchemaOrPlaceholderResume(text)) {
       text = "";
-      via = "rejected-placeholder";
+      via = assistants.length ? "rejected-placeholder" : "no-assistant-node";
     }
   }
 
