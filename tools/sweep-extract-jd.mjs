@@ -28,7 +28,7 @@ function extractFunctionBetween(source, name, nextName) {
 const EXTRACT_PAGE_INFO = extractFunctionBetween(
   SIDEPANEL,
   "extractPageInfo",
-  "submitChatGptPromptInPage"
+  "sendChatGptPromptInPage"
 );
 
 function stripScriptsKeepJsonLd(html) {

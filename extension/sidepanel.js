@@ -269,78 +269,40 @@ function extractFirstJsonValue(text) {
 }
 
 // The shared mechanism both resume-generation-via-GPT and Auto-Fill-via-GPT are built on: opens
-// a real, visible chatgpt.com tab (NOT background - a background/inactive tab gets throttled by
-// Chrome's own power-saving timer throttling, which would make the polling loops inside
-// submitChatGptPromptInPage far slower and less reliable than watching a real, focused tab),
-// submits the prompt, waits for and extracts the response, then closes the tab regardless of
-// success or failure. Returns the raw response text - callers decide how to parse it (a
-// resume-JSON prompt vs. an answer-matching prompt might want different handling of malformed
-// output).
+// a real chatgpt.com tab, submits the prompt, waits for and extracts the response, then closes
+// the tab regardless of success or failure.
 //
-// CONFIRMED: an out-of-band Playwright browser (companion-service, no visible tab at all - same
-// idea as the Portal sync) was tried here and does NOT work for chatgpt.com specifically, unlike
-// the Portal - reported live, Cloudflare's own bot-detection blocked the page outright ("Just a
-// moment..." challenge screen), and separately, Google's own OAuth sign-in refused to complete
-// ("Couldn't sign you in - this browser or app may not be secure"). Both are real, deliberate
-// anti-automation protections (a different company each), not bugs to route around - this tab-
-// based approach works BECAUSE it reuses the user's own real, human-authenticated browser
-// session/fingerprint instead of a separate automated one, which is why it has to stay this way.
-// TEMPORARY diagnostic trail (onProgress) - reported live: even after the chrome.debugger
-// session-limit fix below, a generation still got stuck at "Opening ChatGPT tab and
-// generating..." under conditions that don't match that specific theory anymore (as few as one
-// other tab running, not specifically the 5th of five). Rather than guess a third fix blind,
-// this surfaces exactly which awaited step it's actually stuck on, directly in the status text -
-// remove once the real bottleneck is confirmed live and fixed.
+// Architecture (2026-09 rewrite): ChatGPT's SPA often navigates `/` → `/c/<uuid>` right after
+// Send. A single long-lived executeScript that waits for the reply dies with that navigation —
+// executeScript returns no result ("No response came back from the ChatGPT tab"), delete never
+// runs, and (if the Promise hangs) the tab may stay open. Confirmed profile-dependent (some
+// accounts navigate harder / Temporary Chat / Teams UI). Fix: short SEND inject, then repeated
+// short POLL injects (each survives navigation), then a separate DELETE inject.
+//
 async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
   const notify = (msg) => {
+    try {
+      console.info(`[gpt-auto] ${msg}`);
+    } catch {
+      /* ignore */
+    }
     try {
       if (onProgress) onProgress(msg);
     } catch {
       // Never let a progress-reporting bug affect the actual generation.
     }
   };
-  // Opened in the BACKGROUND (active: false), not focused - explicitly requested, so several of
-  // these can run without repeatedly interrupting whatever tab/app the user is actually looking
-  // at. The chrome.debugger-based fix below (Page.setWebLifecycleState/
-  // Emulation.setFocusEmulationEnabled) is what's meant to keep this reliable despite never being
-  // the visible/active tab - not real OS/tab focus, which is exactly what this is now avoiding.
   notify("creating tab...");
   const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
   notify(`tab ${tab.id} created`);
   let debuggerAttached = false;
   try {
-    // Confirmed live: a tab that isn't the visible/active one stalls its own generation - it
-    // only actually finishes (correctly, in full) once brought back into focus. Chrome throttles
-    // a tab's own JS timers/rendering once it's no longer visible - this tab is now created
-    // backgrounded on purpose (explicitly requested, so it doesn't keep interrupting whatever
-    // the user is actually doing), so it NEEDS the fix below to behave correctly despite that.
-    //
-    // The actual fix: chrome.debugger (Chrome DevTools Protocol) - the same mechanism
-    // background.js's TRUSTED_CLICK handler already relies on for genuinely trusted clicks - can
-    // tell Chrome to keep this specific page in its "active" lifecycle state and emulate
-    // permanent focus, regardless of what's actually on screen. Real, unavoidable cost: shows
-    // Chrome's own "this extension started debugging this browser" banner on this tab for as
-    // long as generation is running - detached the moment it finishes (see the `finally` below).
-    //
-    // CONFIRMED LIVE: chrome.debugger.attach() can BLOCK INDEFINITELY (not error out, not time
-    // out on its own) once Chrome's own limit on simultaneous debugger sessions per extension is
-    // reached - reported live as "running 5 'Generate JSON' tabs at once, the 5th gets stuck on
-    // 'Opening ChatGPT tab...' until all 4 OTHER ones finish and close." A real Chrome-imposed
-    // constraint, not a bug in this codebase's own logic - but letting it block the ENTIRE
-    // generation (rather than just this one optional protection) was. Raced against a short
-    // timeout instead: if a session isn't granted quickly, this generation proceeds without the
-    // debugger-based throttling protection (falling back to the tab/window-focus mitigations
-    // below), rather than hanging indefinitely.
     notify("attaching debugger...");
     let gaveUpWaitingForDebugger = false;
     const debuggerAttachChain = chrome.debugger
       .attach({ tabId: tab.id }, "1.3")
       .then(async () => {
         if (gaveUpWaitingForDebugger) {
-          // Resolved AFTER we already moved on without it - no longer useful for this
-          // generation (we're not going back to send the commands below at this point), so
-          // release the session immediately rather than leaving it attached - and consuming one
-          // of Chrome's limited concurrent-session slots - until this tab eventually closes.
           await chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
           return;
         }
@@ -352,23 +314,19 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
           .sendCommand({ tabId: tab.id }, "Emulation.setFocusEmulationEnabled", { enabled: true })
           .catch(() => {});
       })
-      .catch(() => {});
+      .catch((err) => {
+        notify(`debugger attach error: ${err && err.message ? err.message : err}`);
+      });
     const debuggerTimedOut = await Promise.race([
       debuggerAttachChain.then(() => false),
       new Promise((resolve) => setTimeout(() => resolve(true), 4000)),
     ]);
     if (debuggerTimedOut) gaveUpWaitingForDebugger = true;
     notify(`debugger step done (timedOut=${debuggerTimedOut}, attached=${debuggerAttached})`);
-    // Belt-and-suspenders alongside the debugger-based fix above, cheap and harmless either way -
-    // stops Chrome from evicting/discarding this tab under memory pressure while it's not the
-    // visible one. Deliberately NOT also focusing its window (an earlier version did) - the tab
-    // is now opened in the background on purpose (see above), and forcing window focus would
-    // undo exactly that, yanking the user's attention away from whatever they're actually doing
-    // just as much as switching to the tab itself would.
     try {
       await chrome.tabs.update(tab.id, { autoDiscardable: false });
     } catch {
-      // Not worth failing the whole call over.
+      /* ignore */
     }
     notify("waiting for tab to finish loading...");
     await new Promise((resolve) => {
@@ -384,55 +342,134 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         if (tabId === tab.id && info.status === "complete") finish();
       }
       chrome.tabs.onUpdated.addListener(onUpdated);
-      // Guards a real race: if the tab already reached "complete" before this listener
-      // attached (an instant/cached load can finish before chrome.tabs.create even resolves
-      // here), that transition already happened and won't fire again - this promise would
-      // otherwise hang forever. chrome.tabs.onUpdated listeners aren't scoped to a tab's
-      // lifetime either, so a hang here permanently leaks this listener in the side panel's
-      // own long-lived context (it stays alive as long as the window's side panel does, not
-      // just for this one call) - same for a tab closed early by the user before "complete"
-      // ever fires. The timeout below is the general-case backstop for both.
-      chrome.tabs.get(tab.id).then((t) => {
-        if (t.status === "complete") finish();
-      }).catch(() => finish()); // tab already gone - nothing left to wait for
+      chrome.tabs
+        .get(tab.id)
+        .then((t) => {
+          if (t.status === "complete") finish();
+        })
+        .catch(() => finish());
       const timer = setTimeout(finish, 20000);
     });
     notify("tab finished loading");
-    // ChatGPT's own app still needs a moment to hydrate after the browser's "complete" status
-    // fires (React mounts asynchronously) - submitChatGptPromptInPage's own internal polling
-    // handles most of this, but a short head start avoids hammering the page mid-hydration.
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    // Deliberately NOT periodically re-activating/focusing this tab during generation (an
-    // earlier version did, via a repeating chrome.tabs.update({active:true})) - confirmed live,
-    // that visibly yanked the user BACK to this tab every few seconds even after they'd
-    // deliberately switched to another one, which is worse than the problem it was trying to
-    // solve. The chrome.debugger-based fix above is the actual mechanism meant to let this run
-    // to completion without ever needing to be the visible/active tab at all - if it turns out
-    // insufficient on its own, the fix belongs in strengthening that, not in stealing the tab
-    // back by force.
-    notify("starting executeScript (fill/send/wait/extract)...");
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: submitChatGptPromptInPage,
-      args: [prompt, deleteConversation],
-    });
-    notify("executeScript returned");
-    if (!injection || !injection.result) throw new Error("No response came back from the ChatGPT tab.");
-    if (!injection.result.ok) throw new Error(injection.result.error || "ChatGPT tab automation failed.");
-    return injection.result.text;
+    // --- Phase 1: send only (must finish before SPA navigates away) ---
+    notify("phase1: sending prompt...");
+    let sendResult = null;
+    try {
+      const [sendInj] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: sendChatGptPromptInPage,
+        args: [prompt],
+      });
+      sendResult = sendInj && sendInj.result;
+    } catch (err) {
+      notify(`phase1 executeScript threw: ${err && err.message ? err.message : err}`);
+    }
+    notify(`phase1 result: ${JSON.stringify(sendResult || null)}`);
+    if (!sendResult || !sendResult.ok) {
+      throw new Error(
+        (sendResult && sendResult.error) ||
+          "Could not send the prompt to ChatGPT (tab may not be logged in, or the page layout changed)."
+      );
+    }
+
+    // --- Phase 2: poll extract (fresh inject each tick — survives /c/<uuid> navigation) ---
+    notify("phase2: polling for assistant reply...");
+    let text = "";
+    let lastPollSummary = "";
+    const pollDeadline = Date.now() + 180000;
+    let pollIndex = 0;
+    while (Date.now() < pollDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      pollIndex += 1;
+      let pollResult = null;
+      try {
+        const [pollInj] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: pollChatGptResponseInPage,
+        });
+        pollResult = pollInj && pollInj.result;
+      } catch (err) {
+        notify(`phase2 poll#${pollIndex} threw: ${err && err.message ? err.message : err}`);
+        continue;
+      }
+      if (!pollResult) {
+        notify(`phase2 poll#${pollIndex}: empty inject result (SPA navigation?)`);
+        continue;
+      }
+      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} href=${pollResult.href || "?"}`;
+      if (summary !== lastPollSummary) {
+        notify(`phase2 poll#${pollIndex}: ${summary}`);
+        lastPollSummary = summary;
+      }
+      if (pollResult.completeJson && pollResult.text) {
+        text = pollResult.text;
+        notify(`phase2: complete JSON captured (${text.length} chars)`);
+        break;
+      }
+      // Stop button gone + substantial text but not yet valid JSON — keep polling; if it stays
+      // stable and non-empty for a while without parsing, still accept (caller may recover).
+      if (!pollResult.generating && pollResult.text && pollResult.text.length > 80 && pollIndex >= 8) {
+        if (pollResult.stableComplete) {
+          text = pollResult.text;
+          notify(`phase2: stable non-JSON text accepted (${text.length} chars)`);
+          break;
+        }
+      }
+    }
+    if (!text) {
+      // Still try delete — a conversation may exist even when we could not read the reply.
+      if (deleteConversation) {
+        notify("phase2 failed; attempting delete before abort...");
+        try {
+          const [delInj] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: deleteChatGptConversationInPage,
+          });
+          notify(`phase3 (on failure) delete result: ${JSON.stringify((delInj && delInj.result) || null)}`);
+        } catch (err) {
+          notify(`phase3 (on failure) delete threw: ${err && err.message ? err.message : err}`);
+        }
+      }
+      throw new Error(
+        "No response came back from the ChatGPT tab. Generation may have finished in the UI, but the extension could not read the assistant message (check [gpt-auto] logs in the side panel console)."
+      );
+    }
+
+    // --- Phase 3: delete conversation (separate inject so SPA death can't skip it) ---
+    if (deleteConversation) {
+      notify("phase3: deleting conversation...");
+      let deleteResult = null;
+      try {
+        const [delInj] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: deleteChatGptConversationInPage,
+        });
+        deleteResult = delInj && delInj.result;
+      } catch (err) {
+        notify(`phase3 delete threw: ${err && err.message ? err.message : err}`);
+      }
+      notify(`phase3 delete result: ${JSON.stringify(deleteResult || null)}`);
+    } else {
+      notify("phase3: delete skipped (setting off)");
+    }
+
+    return text;
   } finally {
+    notify(`cleanup: debuggerAttached=${debuggerAttached}, closing tab ${tab && tab.id}`);
     if (debuggerAttached) {
       try {
         await chrome.debugger.detach({ tabId: tab.id });
       } catch {
-        // Tab may already be gone - not worth failing over.
+        /* Tab may already be gone */
       }
     }
     try {
       await chrome.tabs.remove(tab.id);
-    } catch {
-      // Tab may have already been closed by the user - not worth failing the whole call over.
+      notify("cleanup: tab closed");
+    } catch (err) {
+      notify(`cleanup: tabs.remove failed: ${err && err.message ? err.message : err}`);
     }
   }
 }
@@ -2728,12 +2765,10 @@ function extractPageInfo() {
   };
 }
 
-// Injected into a chatgpt.com tab — must be fully self-contained. Types the given prompt into
-// ChatGPT's own message composer, submits it, waits for the response to finish streaming, and
-// returns the response text. Uses resilient, generic selectors (role/data-testid/placeholder-
-// based) rather than exact class names, since ChatGPT's own classes are auto-generated hashes
-// that change often — same reasoning as every ATS-specific fixture in this codebase.
-function submitChatGptPromptInPage(prompt, deleteConversation) {
+// Injected into a chatgpt.com tab — must be fully self-contained. Phase 1 of gpt-auto:
+// type the prompt and click Send, then return quickly so SPA navigation to /c/<uuid> cannot
+// kill a long-lived wait/extract script (see runChatGptPrompt).
+function sendChatGptPromptInPage(prompt) {
   function nativeSet(element, value) {
     const proto = element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
@@ -2743,10 +2778,6 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  // ChatGPT's composer is a contenteditable div (id="prompt-textarea" as of this writing), not
-  // a plain <textarea> - a value-setter based nativeSet doesn't apply to it, since contenteditable
-  // elements track their content via the DOM tree itself. Each line becomes its own <p>, matching
-  // what a real paste/keystroke sequence produces, then an InputEvent tells React to notice.
   function setComposerText(el, text) {
     el.focus();
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
@@ -2756,7 +2787,7 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
     el.textContent = "";
     for (const line of text.split("\n")) {
       const p = document.createElement("p");
-      p.textContent = line || "​"; // zero-width space - keeps a genuinely blank line from collapsing
+      p.textContent = line || "​";
       el.appendChild(p);
     }
     el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
@@ -2780,91 +2811,11 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
   }
 
   function isGenerating() {
-    return Boolean(document.querySelector('button[data-testid="stop-button"], button[aria-label*="Stop" i]'));
-  }
-
-  // Fallback ALONGSIDE the plain sleep()-based poll below, not a replacement for it - reported
-  // live: generation appears to silently stall whenever the ChatGPT tab isn't the visible one
-  // on screen (covered by another app/window), only ever completing once the user looks at it
-  // again. Two different things could cause that identical symptom: (a) Chrome throttling this
-  // function's OWN setTimeout-based polling while the tab is hidden, so it simply checks far
-  // less often, or (b) ChatGPT's own page pausing whatever renders the stop button's removal
-  // while hidden, so there's genuinely nothing new to see no matter how often anything checks.
-  // Only (a) is fixable from here - a MutationObserver reacts to a REAL DOM mutation the
-  // instant it happens rather than on a throttled timer schedule, so if the bottleneck really
-  // is this function's own polling cadence, racing this alongside the untouched original loop
-  // lets whichever one notices first win, with no change in behavior if it turns out (b) is the
-  // actual cause (the original loop's own timeout still applies exactly as before either way).
-  function waitForStopButtonGoneViaMutation(timeoutMs) {
-    return new Promise((resolve) => {
-      if (!isGenerating()) return resolve();
-      const observer = new MutationObserver(() => {
-        if (!isGenerating()) {
-          observer.disconnect();
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-      const timer = setTimeout(() => {
-        observer.disconnect();
-        resolve();
-      }, timeoutMs);
-    });
-  }
-
-  // The schema contract explicitly tells the model NOT to wrap its JSON reply in a markdown
-  // code fence (a real requirement for Claude/Ollama, which return this text straight through
-  // an API with no rendering step in between) - but ChatGPT's own browser UI still renders
-  // whatever it gets AS markdown whenever it ISN'T inside a fenced code block. That means a
-  // genuine "**bold**" or "[text](url)" the model wrote INSIDE a JSON string value (meant to
-  // survive as literal characters for our own PDF/DOCX renderer to interpret later) gets
-  // visually converted into a real <strong>/<a> element by ChatGPT itself - and reading
-  // .textContent/.innerText off THAT already-rendered HTML gets back just the plain words, with
-  // the markdown syntax already stripped by the browser's own rendering, not by anything in
-  // this codebase. Confirmed live: a generated resume's bullets sometimes kept their **bold**
-  // markers (whenever the model happened to wrap the reply in a code fence anyway, despite
-  // being told not to) and sometimes silently lost them (whenever it didn't) - the exact
-  // inconsistency this reconstructs around instead of depending on.
-  //
-  // Walks the assistant message's actual rendered DOM and "un-renders" it back into the
-  // equivalent markdown text before reading anything - <strong>/<b> becomes **text** again,
-  // <a href> becomes [text](url) again - so the extracted text is correct whether or not the
-  // model used a code fence. A genuine <pre><code> block (when the model DOES fence it) is
-  // still read via its own raw .textContent, unprocessed - the exact fix for the earlier
-  // "long line's visual soft-wrap becomes a literal embedded newline" bug, preserved here
-  // rather than replaced by it.
-  function reconstructMarkdown(node) {
-    if (node.nodeType === 3) return node.textContent; // TEXT_NODE
-    if (node.nodeType !== 1) return ""; // not an ELEMENT_NODE
-    const tag = node.tagName;
-    if (tag === "BR") return "\n";
-    if (tag === "CODE" || tag === "PRE") return node.textContent;
-    const inner = Array.from(node.childNodes).map(reconstructMarkdown).join("");
-    if (tag === "STRONG" || tag === "B") return `**${inner}**`;
-    if (tag === "EM" || tag === "I") return `_${inner}_`;
-    if (tag === "A" && node.getAttribute("href")) return `[${inner}](${node.getAttribute("href")})`;
-    if (tag === "P" || tag === "DIV" || tag === "LI") return `${inner}\n`;
-    return inner;
-  }
-
-  // Two consecutive equal reads means "nothing changed between them" - which is just as true
-  // for "genuinely finished" as it is for "frozen mid-stream because the tab lost focus/got
-  // throttled." Actually parsing as JSON is a real, independent completeness signal a merely-
-  // unchanged read can't provide - every reply this function is ever used for (resume JSON,
-  // batched-answer JSON) is expected to parse, so a still-truncated reply will reliably fail
-  // this even while "stable."
-  function looksLikeCompleteJson(text) {
-    let candidate = text.trim();
-    if (candidate.startsWith("```")) {
-      candidate = candidate.replace(/^```[a-zA-Z]*\n/, "").replace(/\n```$/, "").trim();
-    }
-    try {
-      JSON.parse(candidate);
-      return true;
-    } catch {
-      return false;
-    }
+    return Boolean(
+      document.querySelector(
+        'button[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Stop streaming" i], button[aria-label*="Stop generating" i]'
+      )
+    );
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2876,11 +2827,15 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
       if (!composer) await sleep(200);
     }
     if (!composer) {
-      return { ok: false, error: "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in." };
+      return {
+        ok: false,
+        error: "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in.",
+        href: location.href,
+      };
     }
 
     setComposerText(composer, prompt);
-    await sleep(300); // give React a moment to enable the send button after the composer's content changes
+    await sleep(300);
 
     let sendBtn = null;
     for (let attempt = 0; attempt < 25 && !sendBtn; attempt++) {
@@ -2888,146 +2843,166 @@ function submitChatGptPromptInPage(prompt, deleteConversation) {
       sendBtn = candidate && !candidate.disabled ? candidate : null;
       if (!sendBtn) await sleep(200);
     }
-    if (!sendBtn) return { ok: false, error: "Could not find (or enable) ChatGPT's send button." };
+    if (!sendBtn) {
+      return { ok: false, error: "Could not find (or enable) ChatGPT's send button.", href: location.href };
+    }
     sendBtn.click();
 
-    // Wait for generation to actually start before waiting for it to finish - guards against
-    // reading a stale, pre-submission DOM as if it were already "done." Reported live: "ChatGPT's
-    // response was empty" sometimes happens even though ChatGPT visibly answered - root cause
-    // wasn't the delete-conversation cleanup (that only ever runs AFTER text is successfully
-    // extracted below, and the tab only closes after this whole function has already returned -
-    // neither can interrupt extraction). The real cause: a longer "thinking" pause before the
-    // visible answer starts streaming can outlast this wait, meaning isGenerating() never once
-    // sees the stop button appear - the second loop's condition is then already false, so it
-    // exits after zero iterations, and the code below reads the assistant message container
-    // while it's still genuinely empty, before any real content has streamed in. Widened from
-    // 25*200ms (5s) to 75*200ms (15s) to cover a real thinking pause, not just a network hiccup.
-    for (let attempt = 0; attempt < 75 && !isGenerating(); attempt++) await sleep(200);
-    // Original poll loop left completely untouched, still the sole thing this depends on if the
-    // race below never helps (e.g. a page that never mutates while hidden) - the
-    // MutationObserver-based wait is raced ALONGSIDE it purely as a chance to finish sooner,
-    // never a replacement for it.
-    await Promise.race([
-      (async () => {
-        for (let attempt = 0; attempt < 300 && isGenerating(); attempt++) await sleep(500);
-      })(),
-      waitForStopButtonGoneViaMutation(150000),
-    ]);
-    if (isGenerating()) return { ok: false, error: "Timed out waiting for ChatGPT's response to finish." };
-
-    const assistantMessages = document.querySelectorAll('[data-message-author-role="assistant"]');
-    if (!assistantMessages.length) return { ok: false, error: "No response found from ChatGPT." };
-    const last = assistantMessages[assistantMessages.length - 1];
-    // Retries before giving up: even once isGenerating() correctly reports "finished," the DOM
-    // can plausibly take one more tick to reflect the final rendered content (React commits
-    // asynchronously) - a single immediate read landing in that gap would report an empty
-    // response even though real content is a few hundred ms from appearing.
-    let text = "";
-    for (let attempt = 0; attempt < 10 && !text; attempt++) {
-      text = reconstructMarkdown(last).trim();
-      if (!text) await sleep(300);
-    }
-    if (!text) return { ok: false, error: "ChatGPT's response was empty." };
-
-    // Reported live TWICE: a JSON reply came back truncated mid-property, not empty - the
-    // empty-retry loop above only guards the "nothing rendered yet" gap, but isGenerating()
-    // going false (stop button removed) can itself land a beat BEFORE a long reply's LAST chunk
-    // actually commits to the DOM - or, reported the second time, land well BEFORE that if the
-    // tab lost real OS focus and got throttled (see runChatGptPrompt's own window-focus fix).
-    // Two consecutive equal reads alone can't tell "genuinely finished" apart from "frozen
-    // mid-stream, so of course it hasn't changed" - both look identical. Requires BOTH stability
-    // AND that the settled text actually parses as JSON (every reply this function handles is
-    // always expected to) before trusting it; if it's stable but not valid JSON, keeps
-    // re-reading with longer pauses (giving a previously-throttled tab real time to catch up
-    // now that runChatGptPrompt has re-focused its window) before finally giving up.
-    for (let attempt = 0; attempt < 20; attempt++) {
-      await sleep(attempt < 10 ? 300 : 600);
-      const reread = reconstructMarkdown(last).trim();
-      const changed = reread !== text;
-      text = reread;
-      if (!changed && looksLikeCompleteJson(text)) break;
-    }
-
-    // Best-effort cleanup: this tab exists purely to generate one JSON blob, not to leave a
-    // real conversation sitting in the user's ChatGPT history - so delete it via the same
-    // "..." menu -> Delete -> confirm click-path a real user would use, same click-simulation
-    // approach as everything else here (no backend-api calls, no session token handling).
-    // Never lets a failure here affect the actual result - deleting is cleanup, not the point.
-    // Skippable (Settings > "Delete the ChatGPT conversation after generating") - once deleted,
-    // the actual prompt/response is gone with no way to go back and inspect it, which matters
-    // when a result looks wrong and needs debugging.
-    let deleted = false;
-    if (deleteConversation) {
-      try {
-        deleted = await tryDeleteConversation();
-      } catch {
-        deleted = false;
-      }
-    }
-    return { ok: true, text, deleted };
+    // Return almost immediately after click. Waiting here for the stop button is unsafe:
+    // ChatGPT often navigates `/` → `/c/<uuid>` right after Send, which tears down this
+    // inject and leaves the side panel with an empty result (the original "no response"
+    // bug). Generation progress is observed by phase-2 poll injects instead.
+    await sleep(250);
+    return {
+      ok: true,
+      sent: true,
+      generating: isGenerating(),
+      href: location.href,
+    };
   })();
+}
 
-  // Confirmed live (real chatgpt.com DOM, 2026-07-27): the currently-open conversation's own
-  // top-bar "..." button is `button[data-testid="conversation-options-button"]` - tied
-  // directly to whatever conversation is open right now via its own id
-  // ("conversation-options-<uuid>"), not to sidebar position/ordering the way
-  // `history-item-N-options` is (pinned chats, search state, etc. could all shift which sidebar
-  // row is "newest") - a strictly more reliable target for "the chat this tab just created and
-  // is currently showing." Kept `history-item-0-options` as a fallback in case the top-bar
-  // button itself is ever missing (e.g. a narrower viewport hides it). The menu-item/dialog
-  // selectors below are still best guesses - real text/data-testid unconfirmed since the menu
-  // itself wasn't open in what was captured live.
-  async function tryDeleteConversation() {
-    function findOptionsButton() {
-      return (
-        document.querySelector('button[data-testid="conversation-options-button"]') ||
-        document.querySelector('[data-testid="history-item-0-options"]') ||
-        document.querySelector('nav [data-testid$="-options"]') ||
-        document.querySelector('nav button[aria-label*="options" i]') ||
-        document.querySelector('nav button[aria-label*="more" i]')
-      );
+// Phase 2: one cheap DOM read. Called repeatedly from the side panel so each call is a fresh
+// inject on whatever document ChatGPT currently shows (including after /c/<uuid> navigation).
+function pollChatGptResponseInPage() {
+  function isGenerating() {
+    return Boolean(
+      document.querySelector(
+        'button[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Stop streaming" i], button[aria-label*="Stop generating" i]'
+      )
+    );
+  }
+
+  function reconstructMarkdown(node) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1) return "";
+    const tag = node.tagName;
+    if (tag === "BR") return "\n";
+    if (tag === "CODE" || tag === "PRE") return node.textContent;
+    const inner = Array.from(node.childNodes).map(reconstructMarkdown).join("");
+    if (tag === "STRONG" || tag === "B") return `**${inner}**`;
+    if (tag === "EM" || tag === "I") return `_${inner}_`;
+    if (tag === "A" && node.getAttribute("href")) return `[${inner}](${node.getAttribute("href")})`;
+    if (tag === "P" || tag === "DIV" || tag === "LI") return `${inner}\n`;
+    return inner;
+  }
+
+  function looksLikeCompleteJson(text) {
+    let candidate = (text || "").trim();
+    if (candidate.startsWith("```")) {
+      candidate = candidate.replace(/^```[a-zA-Z]*\n/, "").replace(/\n```$/, "").trim();
     }
-
-    function findMenuItemByText(label) {
-      for (const item of document.querySelectorAll('[role="menuitem"], [data-testid*="delete" i]')) {
-        const text = (item.textContent || "").trim().toLowerCase();
-        if (text === label || (item.getAttribute("data-testid") || "").toLowerCase().includes(label)) return item;
-      }
-      return null;
+    try {
+      JSON.parse(candidate);
+      return true;
+    } catch {
+      return false;
     }
+  }
 
-    function findDialogConfirmButton() {
-      const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
-      if (!dialog) return null;
-      for (const btn of dialog.querySelectorAll("button")) {
-        const text = (btn.textContent || "").trim();
-        if (/^delete$/i.test(text) || /delete/i.test(btn.getAttribute("data-testid") || "")) return btn;
-      }
-      return null;
+  function findAssistantNodes() {
+    const byRole = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+    if (byRole.length) return byRole;
+    // Profile/UI variants: attribute may be missing — take the last agent turn article.
+    const articles = [...document.querySelectorAll('article[data-testid^="conversation-turn-"], [data-testid^="conversation-turn-"]')];
+    if (articles.length) {
+      // User message is usually the first turn after send; assistant is the last turn.
+      return [articles[articles.length - 1]];
     }
+    const markdown = [...document.querySelectorAll(".markdown, .prose, [class*='markdown']")];
+    return markdown.length ? [markdown[markdown.length - 1]] : [];
+  }
 
+  const generating = isGenerating();
+  const assistants = findAssistantNodes();
+  let text = "";
+  if (assistants.length) {
+    const last = assistants[assistants.length - 1];
+    text = reconstructMarkdown(last).trim();
+  }
+  const completeJson = looksLikeCompleteJson(text);
+  // Track stability across polls via a page-global stamp (survives within the same document;
+  // resets on hard navigation, which is fine — we just need consecutive equal reads).
+  const prev = window.__afGptPollPrev || { text: "", same: 0 };
+  const same = prev.text === text && text ? prev.same + 1 : text ? 1 : 0;
+  window.__afGptPollPrev = { text, same };
+  return {
+    generating,
+    assistantCount: assistants.length,
+    text,
+    completeJson,
+    stableComplete: !generating && same >= 2 && text.length > 80,
+    href: location.href,
+  };
+}
+
+// Phase 3: delete the open conversation. Separate inject so a failed/killed wait never skips
+// cleanup when Settings > Delete ChatGPT conversation is on.
+function deleteChatGptConversationInPage() {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function findOptionsButton() {
+    return (
+      document.querySelector('button[data-testid="conversation-options-button"]') ||
+      document.querySelector('button[data-testid*="conversation-options" i]') ||
+      document.querySelector('button[aria-label*="Open conversation options" i]') ||
+      document.querySelector('button[aria-label*="conversation options" i]') ||
+      document.querySelector('[data-testid="history-item-0-options"]') ||
+      document.querySelector('nav [data-testid$="-options"]') ||
+      document.querySelector('nav button[aria-label*="options" i]') ||
+      document.querySelector('nav button[aria-label*="more" i]')
+    );
+  }
+
+  function findMenuItemByText() {
+    for (const item of document.querySelectorAll('[role="menuitem"], [data-testid*="delete" i], button')) {
+      const text = (item.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const testId = (item.getAttribute("data-testid") || "").toLowerCase();
+      if (/^delete(\s+chat)?$/.test(text) || testId.includes("delete")) return item;
+    }
+    return null;
+  }
+
+  function findDialogConfirmButton() {
+    const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
+    if (!dialog) return null;
+    for (const btn of dialog.querySelectorAll("button")) {
+      const text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+      if (/^delete$/i.test(text) || /delete/i.test(btn.getAttribute("data-testid") || "")) return btn;
+    }
+    return null;
+  }
+
+  return (async () => {
     const optionsBtn = findOptionsButton();
-    if (!optionsBtn) return false;
+    if (!optionsBtn) {
+      return { ok: false, deleted: false, step: "options-button-missing", href: location.href };
+    }
     optionsBtn.click();
 
     let deleteItem = null;
-    for (let attempt = 0; attempt < 10 && !deleteItem; attempt++) {
-      deleteItem = findMenuItemByText("delete");
+    for (let attempt = 0; attempt < 15 && !deleteItem; attempt++) {
+      deleteItem = findMenuItemByText();
       if (!deleteItem) await sleep(150);
     }
-    if (!deleteItem) return false;
+    if (!deleteItem) {
+      return { ok: false, deleted: false, step: "menu-delete-missing", href: location.href };
+    }
     deleteItem.click();
 
     let confirmBtn = null;
-    for (let attempt = 0; attempt < 10 && !confirmBtn; attempt++) {
+    for (let attempt = 0; attempt < 15 && !confirmBtn; attempt++) {
       confirmBtn = findDialogConfirmButton();
       if (!confirmBtn) await sleep(150);
     }
-    if (!confirmBtn) return false;
+    if (!confirmBtn) {
+      return { ok: false, deleted: false, step: "confirm-missing", href: location.href };
+    }
     confirmBtn.click();
     await sleep(300);
-    return true;
-  }
+    return { ok: true, deleted: true, step: "done", href: location.href };
+  })();
 }
 
 // Injected into the page — must be fully self-contained (no closures over outer scope).

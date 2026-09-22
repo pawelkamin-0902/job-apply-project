@@ -3810,6 +3810,21 @@ unverified outside a live browser).
     `_systemfield_location`) as a fixed list; prefer profile country for where-based labels;
     open via chevron; abort empty option polls quickly. Reload extension and re-Auto Fill.
 
+161. **gpt-auto: answer visible in ChatGPT tab, job tab says "no response", no delete, tab
+    stays open — some profiles only.** `Author: Cursor`. Not a timeout (timeout has its own
+    message). Root cause: ChatGPT's SPA often navigates `/` → `/c/<uuid>` right after Send.
+    The old path ran one long-lived `executeScript` (`submitChatGptPromptInPage`) that waited
+    for streaming + extract + delete; that inject dies with the navigation, so
+    `injection.result` is empty → "No response came back from the ChatGPT tab", delete never
+    runs, and cleanup can leave the tab open depending on how the Promise settles. Profile-
+    dependent because some accounts/UI variants (Teams, Temporary Chat, different layouts)
+    navigate harder or change message/options selectors. Fix: split into short **send** →
+    repeated **poll** → separate **delete** injects (each survives SPA nav); richer
+    `[gpt-auto]` `console.info` in the side panel for every phase; broader assistant/options
+    selectors; delete attempted even when extract fails. Reload the extension, open the side
+    panel DevTools console, re-run gpt-auto on a failing profile, and watch `[gpt-auto]` lines
+    (phase1/2/3 + delete step).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
