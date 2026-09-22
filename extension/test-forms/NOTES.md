@@ -3874,6 +3874,14 @@ unverified outside a live browser).
     Left in place: send→poll→delete short injects (SPA nav), dual DOM extract, schema-placeholder
     rejection, and the existing background-tab debugger (unchanged from before this thread).
 
+166. **Delete chat: dual UI — new "Chat actions" + legacy conversation-options.** `Author: Cursor`.
+    Same Save Sample `chatgpt-com-20260922T043713Z`: zero `conversation-options-button` /
+    `history-item-*-options`. Current chat's ••• is `button[aria-label="Chat actions"]` in the
+    header (menu closed in the capture, so Delete item isn't in static HTML). Delete inject now
+    tries Chat actions first, then legacy testids/labels, then sidebar-row options; broader
+    Delete menuitem matching + confirm; tries next candidate if a menu has no Delete; returns
+    `via`/`tried` in phase3 logs.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
