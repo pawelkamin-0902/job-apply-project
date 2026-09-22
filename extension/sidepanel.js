@@ -701,7 +701,9 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
   function collectFileInputs(root) {
     const found = [...root.querySelectorAll("input")].filter((input) => input.type === "file");
     for (const host of root.querySelectorAll("*")) {
-      if (host.tagName.includes("-") && host.shadowRoot) found.push(...collectFileInputs(host.shadowRoot));
+      // Any open shadow root — not only hyphenated custom elements. Manatal careers attach the
+      // resume <input type="file"> under plain `#application-root` (careers-xaba-ai-20260922T055436Z).
+      if (host.shadowRoot) found.push(...collectFileInputs(host.shadowRoot));
     }
     return found;
   }
@@ -814,16 +816,49 @@ function attachResumeFileInPage(base64, filename, mimeType, isWorkday) {
       if (sectionTitle && sectionTitle.length < 80 && !isGenericFileDropChrome(sectionTitle)) return sectionTitle;
     }
 
+    // Manatal careers-page.com widget: real file input has no id; the "Resume" <label for>
+    // points at a sibling readonly display field (careers-xaba-ai-20260922T055436Z).
+    const manatalFileTestId = (input.getAttribute("data-testid") || "").trim();
+    if (/^m-attachment-file-input$/i.test(manatalFileTestId)) {
+      let climb = input.parentElement;
+      for (let depth = 0; depth < 8 && climb; depth++, climb = climb.parentElement) {
+        const lab = climb.querySelector && climb.querySelector("label");
+        const labText = cleanedText(lab);
+        if (labText && labText.length < 80 && !isGenericFileDropChrome(labText) && !isGenericFileAriaLabel(labText)) {
+          return labText;
+        }
+        if (climb.getAttribute && climb.getAttribute("data-testid") === "m-attachment-container") {
+          const prev = climb.parentElement && climb.parentElement.querySelector("label");
+          const prevText = cleanedText(prev);
+          if (prevText && !isGenericFileDropChrome(prevText)) return prevText;
+        }
+      }
+      return "Resume";
+    }
+
     const groupLabel = findGroupContextLabel(input);
     if (groupLabel) return groupLabel;
     if (input.id) {
       // Workable's dropzone has MULTIPLE label[for=id]: an SVG-only preview icon first,
       // then the visible "Choose file" button. querySelector returns the first (SVG), which
       // used to win with garbage text before aria-labelledby ("Resume") was ever consulted.
-      for (const labelEl of document.querySelectorAll(`label[for="${CSS.escape(input.id)}"]`)) {
-        const text = cleanedText(labelEl);
-        if (text && !isGenericFileDropChrome(text) && !isGenericFileAriaLabel(text)) {
-          return text;
+      // Search the control's own tree first (open shadow), then document.
+      const root = (input.getRootNode && input.getRootNode()) || document;
+      const scopes = root.querySelectorAll && root !== document ? [root, document] : [document];
+      for (const scope of scopes) {
+        for (const labelEl of scope.querySelectorAll(`label[for="${CSS.escape(input.id)}"]`)) {
+          const text = cleanedText(labelEl);
+          if (text && !isGenericFileDropChrome(text) && !isGenericFileAriaLabel(text)) {
+            return text;
+          }
+        }
+      }
+      if (input.labels && input.labels.length) {
+        for (const labelEl of input.labels) {
+          const text = cleanedText(labelEl);
+          if (text && !isGenericFileDropChrome(text) && !isGenericFileAriaLabel(text)) {
+            return text;
+          }
         }
       }
     }

@@ -614,8 +614,30 @@ function resolveOwnLabel(element, host) {
     if (pfPhoneLabel && cleanedText(pfPhoneLabel)) return cleanedText(pfPhoneLabel);
   }
   if (element.id) {
-    const labelEl = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+    // Prefer the same tree as the control (open shadow roots: Manatal #application-root).
+    // document.querySelector cannot see label[for] inside a shadow tree.
+    const root = (element.getRootNode && element.getRootNode()) || document;
+    const scope = root.querySelector ? root : document;
+    let labelEl = null;
+    try {
+      labelEl = scope.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+    } catch {
+      labelEl = null;
+    }
+    if (!labelEl && scope !== document) {
+      try {
+        labelEl = document.querySelector(`label[for="${CSS.escape(element.id)}"]`);
+      } catch {
+        labelEl = null;
+      }
+    }
     if (labelEl && cleanedText(labelEl)) return cleanedText(labelEl);
+    // HTMLLabelElement association within the same tree (incl. open shadow).
+    if (element.labels && element.labels.length) {
+      for (const lab of element.labels) {
+        if (cleanedText(lab)) return cleanedText(lab);
+      }
+    }
   }
   // Workable wraps controls inside a giant <label> whose textContent includes the field value
   // (summary textarea) or intl-tel-input's country list — use aria-labelledby / phone_label first.
@@ -1145,6 +1167,20 @@ function isAutofillExcludedField(element) {
   // Zoho 3m-consultancy: Facebook was listed as "need your input" and burned GPT/select time
   // despite being optional and having no profile value.
   if (/^(facebook|twitter|instagram|tiktok|xing)\b/i.test(label)) return true;
+  // Manatal (mnkt / careers-page.com) resume widget: a readonly display input shows
+  // "Select the attachment" beside the real hidden <input type="file">. Filling it as text
+  // is wrong — Attach Resume owns the file input (careers-xaba-ai-20260922T055436Z).
+  const manatalTestId = (element.getAttribute && element.getAttribute("data-testid")) || "";
+  if (/^m-attachment-input$/i.test(manatalTestId)) return true;
+  if (
+    element.readOnly &&
+    element.closest &&
+    element.closest('[data-testid="m-attachment-container"]') &&
+    (element.type || "").toLowerCase() !== "file"
+  ) {
+    return true;
+  }
+  if (element.readOnly && /select the attachment/i.test(element.placeholder || "")) return true;
   return false;
 }
 
@@ -1317,9 +1353,11 @@ function collectNativeElements() {
     .filter((el) => !(el.name === "locale" && el.closest && el.closest("footer")))
 }
 
-// SmartRecruiters-style custom elements (<spl-input label="...">) with an open shadow root
-// wrapping a real input/select/textarea. Closed shadow roots are genuinely inaccessible from a
-// content script — those fields just fall through as unmatched.
+// Open shadow roots hosting real form controls — not only hyphenated custom elements.
+// SmartRecruiters uses <spl-*>; Manatal career pages (careers.xaba.ai / api.careers-page.com)
+// attach the whole application form under a plain `<div id="application-root">` open shadow
+// (careers-xaba-ai-20260922T055436Z: detect groups=0/singles=0 while name/email/phone/cover
+// were visible). The hyphen-only gate skipped that host entirely.
 function collectShadowElements() {
   // querySelector (singular) here was a real bug: a single custom element whose shadow root
   // renders MULTIPLE fields (e.g. a schema-driven form component rendering five separate
@@ -1328,7 +1366,7 @@ function collectShadowElements() {
   function collectFrom(root) {
     const found = [];
     for (const host of root.querySelectorAll("*")) {
-      if (!host.tagName.includes("-") || !host.shadowRoot) continue;
+      if (!host.shadowRoot) continue;
       for (const inner of host.shadowRoot.querySelectorAll("input, select, textarea")) {
         if (!isVisible(inner) || isHoneypot(inner) || isCharacterCounterField(inner) || isAutofillExcludedField(inner)) {
           continue;
