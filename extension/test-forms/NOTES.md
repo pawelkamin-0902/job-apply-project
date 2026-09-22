@@ -3916,6 +3916,16 @@ unverified outside a live browser).
     pass `expectKind` `"resume"` vs `"answers"`; lifecycle (tab, debugger, send, poll, delete
     setting, close) is unchanged and shared.
 
+171. **Manatal careers (xaba.ai): form in plain-div open shadow → detect 0 / no Attach Resume.**
+    `Author: Cursor`. Capture `careers-xaba-ai-20260922T055436Z`: Auto Fill logged
+    `groups=0 singles=0`, Attach Resume said no file input. Form lives under
+    `<div id="application-root"><template shadowrootmode=open>…` (Manatal / careers-page.com
+    `mnkt-*` widgets). Detection + file collect only walked hyphenated custom-element shadows
+    (`<spl-*>`), so a plain-div host was invisible. Fix: walk any open `shadowRoot`; resolve
+    `label[for]` / `element.labels` inside the control's tree; Attach Resume finds
+    `data-testid=m-attachment-file-input` and maps it to Resume; exclude the readonly
+    "Select the attachment" display input from Auto Fill.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

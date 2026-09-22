@@ -1368,6 +1368,9 @@ function collectShadowElements() {
     for (const host of root.querySelectorAll("*")) {
       if (!host.shadowRoot) continue;
       for (const inner of host.shadowRoot.querySelectorAll("input, select, textarea")) {
+        // Same exclusions as collectNativeElements — file uploads are Attach Resume's job.
+        if (inner.tagName === "INPUT" && (inner.type || "").toLowerCase() === "file") continue;
+        if (inner.tagName === "INPUT" && /^(hidden|submit|button)$/i.test(inner.type || "")) continue;
         if (!isVisible(inner) || isHoneypot(inner) || isCharacterCounterField(inner) || isAutofillExcludedField(inner)) {
           continue;
         }
