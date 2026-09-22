@@ -69,7 +69,7 @@ from app.schemas import (
 )
 from app.security import get_active_person, verify_token
 from app import store
-from app.utils import compute_person_day_dir, compute_save_dir, strip_json_fences
+from app.utils import compute_person_day_dir, compute_save_dir, strip_form_answer_markdown, strip_json_fences
 
 # Lives alongside the manually-curated fixtures in extension/test-forms/ rather than the
 # ~/.job-apply-project app-data dir, so real captures build up in the same place (and get
@@ -408,6 +408,8 @@ async def generate_answer(body: AnswerRequest, active_person: str = Depends(get_
         answerable = bool(answer_dict.get("answerable", True))
         raw_answer = answer_dict.get("answer")
         answer = str(raw_answer) if answerable and raw_answer is not None else None
+        if answerable and answer is not None:
+            answer = strip_form_answer_markdown(answer) or None
         if answerable and answer is None:
             answerable = False
     except Exception as exc:

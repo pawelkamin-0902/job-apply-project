@@ -33,3 +33,20 @@ def strip_json_fences(text: str) -> str:
         text = re.sub(r"^```[a-zA-Z]*\n", "", text)
         text = re.sub(r"\n```$", "", text)
     return text.strip()
+
+
+def strip_form_answer_markdown(text: str) -> str:
+    """Plain-text form answers only — strip common markdown the model (or ChatGPT UI extract) adds.
+    Resume generation keeps markdown on purpose; do not use this on resume JSON fields."""
+    if not isinstance(text, str):
+        return text
+    s = text
+    s = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"__([^_]+)__", r"\1", s)
+    s = re.sub(r"(^|[\s(])\*([^*\n]+)\*(?=[\s).,]|$)", r"\1\2", s)
+    s = re.sub(r"(^|[\s(])_([^_\n]+)_(?=[\s).,]|$)", r"\1\2", s)
+    s = re.sub(r"`([^`]+)`", r"\1", s)
+    s = re.sub(r"^#{1,6}\s+", "", s, flags=re.M)
+    s = re.sub(r"^\s*[-*+]\s+", "", s, flags=re.M)
+    return s.strip()

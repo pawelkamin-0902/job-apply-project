@@ -3899,6 +3899,14 @@ unverified outside a live browser).
     present; else new markdown-style; else turn; always balanced-extract resume JSON from the
     node text when the full string does not parse cleanly.
 
+169. **Q/A answers: plain text only (no markdown in form fields).** `Author: Cursor`.
+    User: application Q/A sometimes returned with markdown (`**bold**`, links, etc.) and
+    that shouldn't be filled into form fields. Resume generation still keeps markdown on
+    purpose. Changes: (1) prompt contracts for single + batch answer paths require plain
+    text in `answer` strings; (2) `stripFormAnswerMarkdown` in the extension before fill
+    (gpt-auto batch + `/generate-answer`); (3) matching `strip_form_answer_markdown` on
+    `/generate-answer` in the companion service. Does not touch resume JSON fields.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

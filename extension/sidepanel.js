@@ -200,6 +200,23 @@ function stripJsonFences(text) {
   return t.trim();
 }
 
+// Application-form Q/A answers must be plain text. ChatGPT (and the tab extract path that
+// re-adds ** from <strong>) sometimes still returns markdown inside answer strings — strip
+// common markers before filling fields. Resume JSON generation keeps markdown on purpose.
+function stripFormAnswerMarkdown(text) {
+  if (typeof text !== "string") return text;
+  let s = text;
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  s = s.replace(/__([^_]+)__/g, "$1");
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,]|$)/g, "$1$2");
+  s = s.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,]|$)/g, "$1$2");
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/^#{1,6}\s+/gm, "");
+  s = s.replace(/^\s*[-*+]\s+/gm, "");
+  return s.trim();
+}
+
 // Defensive second layer against the exact bug confirmed live: a raw newline (or other
 // control character) landing INSIDE a JSON string value, which JSON.parse rejects outright
 // ("Bad control character in string literal"). The whitespace BETWEEN tokens (indentation,
@@ -14860,7 +14877,7 @@ el("autofillBtn").addEventListener("click", async () => {
             }
             return;
           }
-          let value = ans.answer;
+          let value = stripFormAnswerMarkdown(String(ans.answer));
           if (item.kind === "select") {
             const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
             if (!picked.length) return;
@@ -14892,7 +14909,7 @@ el("autofillBtn").addEventListener("click", async () => {
             }),
           });
           if (data.answerable !== false && data.answer) {
-            let value = data.answer;
+            let value = stripFormAnswerMarkdown(String(data.answer));
             if (item.kind === "select") {
               const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
               if (!picked.length) continue;

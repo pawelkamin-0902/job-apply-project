@@ -119,7 +119,9 @@ def build_user_message(profile: dict, job_description: str) -> str:
 
 _ANSWER_SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and nothing else \
 (no markdown code fences, no commentary before or after): \
-{"answerable": true or false, "answer": "string" or null}"""
+{"answerable": true or false, "answer": "string" or null} \
+When answerable is true, answer MUST be plain text only — no markdown (**bold**, *italic*, \
+`code`, [links](url), headings, or bullet markers). Application form fields need plain values."""
 
 
 def build_answer_system_prompt() -> str:
@@ -130,6 +132,9 @@ def build_answer_system_prompt() -> str:
         "provided profile. Never invent motivations, experience, or facts that aren't grounded in what's "
         "provided — this applies to soft questions (\"why do you want to work here\") just as much as "
         "factual ones.\n\n"
+        "Plain text only in answer strings: never use markdown formatting of any kind (**bold**, italics, "
+        "backticks, [text](url) links, headings, or list markers). The answer is pasted into a form field "
+        "as-is.\n\n"
         "Exception — salary / compensation / expected pay and notice period / available from / start date: "
         "ALWAYS answer these (answerable true). Match the question's format exactly — currency named in "
         "the field (USD, EUR, INR, …), and the period it implies (yearly/annual/CTC, monthly, hourly, "
@@ -255,7 +260,9 @@ _BATCH_ANSWER_SCHEMA_CONTRACT = """Respond with ONLY a single JSON object and no
 "answer": "string" or null}, ...]} \
 with exactly one entry per question. question_number must match the number each question was given in the \
 list below (1, 2, 3, ...) - this is how each answer gets matched back to its own question, so it must be \
-correct even if you don't answer them in the same order they were given."""
+correct even if you don't answer them in the same order they were given. \
+Each answer string MUST be plain text only — no markdown (**bold**, *italic*, `code`, [links](url), \
+headings, or bullet markers). Form fields need plain values."""
 
 
 # Used by the GPT-tab-automation path for Auto Fill (see runChatGptPrompt/the answer_provider
@@ -269,6 +276,9 @@ def build_batch_answer_system_prompt() -> str:
         "Answer exactly what each question asks, using only the parts of the saved Q&A bank actually "
         "relevant to it — don't pull in unrelated saved answers just because they're available.\n\n"
         "All answers should be truable.\n\n"
+        "Plain text only in every answer string: never use markdown (**bold**, italics, backticks, "
+        "[text](url) links, headings, or list markers). Answers are pasted into application form "
+        "fields as-is.\n\n"
         "Exception — salary / compensation / expected pay and notice period / available from / start date: "
         "ALWAYS answer these (answerable true). Match the question's format exactly — currency named in "
         "the field (USD, EUR, INR, …), and the period it implies (yearly/annual/CTC, monthly, hourly, "
