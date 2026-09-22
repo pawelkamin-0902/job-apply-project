@@ -3890,6 +3890,15 @@ unverified outside a live browser).
     opened. Fixed: match `Delete chat` / submit in `.codex-dialog`; find menu Delete inside
     `[data-radix-popper-content-wrapper]`.
 
+168. **Original ChatGPT UI regressed: poller read `data-turn` wrapper instead of message role.**
+    `Author: Cursor`. Capture `chatgpt-com-20260922T045959Z` (profile that worked before): has
+    `data-message-author-role="assistant"` + `conversation-options-button` (aria-label More), and
+    **no** `assistant-message` markdown attr. Bug: findAssistantNodes concatenated role + 
+    `data-turn="assistant"` and took `.at(-1)` (the outer turn, which includes popover/chrome);
+    JSON.parse then hit "Extra data" and extract failed. Fix: prefer role-only nodes when
+    present; else new markdown-style; else turn; always balanced-extract resume JSON from the
+    node text when the full string does not parse cleanly.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
