@@ -292,12 +292,10 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       // Never let a progress-reporting bug affect the actual generation.
     }
   };
-  // Prefer temporary chat when we would delete anyway: stays out of history (so delete is less
-  // critical) and is closer to a plain text-only thread — Free accounts increasingly hit a
-  // separate "data analysis" cap on ordinary /c/<uuid> threads that auto-enable tools.
-  const startUrl = deleteConversation
-    ? "https://chatgpt.com/?temporary-chat=true"
-    : "https://chatgpt.com/";
+  // Always use a normal chatgpt.com chat (same as before). Temporary chat was an experiment to
+  // dodge Free-tier "data analysis" metering / history clutter — it caused early closes and
+  // confused the flow; text-only is enforced by the prompt guard + tool-toggle disable instead.
+  const startUrl = "https://chatgpt.com/";
   // Explicitly ask ChatGPT not to invoke data analysis / code interpreter / tools — Free tier
   // pauses the whole chat when that tool quota is exhausted even if the user never asked for it.
   const textOnlyGuard =
@@ -394,6 +392,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
     let text = "";
     let lastPollSummary = "";
     let lastRateLimit = null;
+    let seenGenerating = Boolean(sendResult && sendResult.generating);
     const pollDeadline = Date.now() + 180000;
     let pollIndex = 0;
     while (Date.now() < pollDeadline) {
@@ -415,34 +414,38 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         continue;
       }
       if (pollResult.rateLimit) lastRateLimit = pollResult.rateLimit;
-      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})} href=${pollResult.href || "?"}`;
+      if (pollResult.generating) seenGenerating = true;
+      const summary = `gen=${pollResult.generating} seenGen=${seenGenerating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} real=${pollResult.isRealResume} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})} href=${pollResult.href || "?"}`;
       if (summary !== lastPollSummary) {
         notify(`phase2 poll#${pollIndex}: ${summary}`);
         lastPollSummary = summary;
       }
-      if (pollResult.completeJson && pollResult.text) {
+      // Never accept the schema/example JSON that lives inside our own prompt — that was the
+      // live bug where the tab closed immediately with `"name": "string"`.
+      if (pollResult.completeJson && pollResult.text && pollResult.isRealResume) {
+        // Wait until generation has actually started at least once (or enough time passed that
+        // a fast reply could have finished without us seeing the stop button).
+        if (!seenGenerating && pollIndex < 8) {
+          notify(`phase2 poll#${pollIndex}: ignoring early JSON until generation starts (via=${pollResult.via})`);
+          continue;
+        }
+        if (pollResult.generating) {
+          // Still streaming — keep waiting for a settled copy.
+          continue;
+        }
         text = pollResult.text;
-        notify(`phase2: complete JSON captured (${text.length} chars, via=${pollResult.via})`);
+        notify(`phase2: real resume JSON captured (${text.length} chars, via=${pollResult.via})`);
         break;
       }
-      // Stop button gone + substantial text but not yet valid JSON — keep polling; if it stays
-      // stable and non-empty for a while without parsing, still accept (caller may recover).
-      if (!pollResult.generating && pollResult.text && pollResult.text.length > 80 && pollIndex >= 8) {
-        if (pollResult.stableComplete) {
-          text = pollResult.text;
-          notify(`phase2: stable non-JSON text accepted (${text.length} chars, via=${pollResult.via})`);
-          break;
-        }
-      }
       // Free-tier data-analysis pause with nothing readable yet — fail fast (don't sit 3 min).
-      if (pollResult.rateLimit && !pollResult.text && pollIndex >= 5 && !pollResult.generating) {
-        notify(`phase2: rate-limit banner with no reply yet (${pollResult.rateLimit})`);
+      if (pollResult.rateLimit && !pollResult.isRealResume && pollIndex >= 5 && !pollResult.generating) {
+        notify(`phase2: rate-limit banner with no real reply yet (${pollResult.rateLimit})`);
         break;
       }
     }
     if (!text) {
       // Still try delete — a conversation may exist even when we could not read the reply.
-      if (deleteConversation && !String(startUrl).includes("temporary-chat")) {
+      if (deleteConversation) {
         notify("phase2 failed; attempting delete before abort...");
         try {
           const [delInj] = await chrome.scripting.executeScript({
@@ -457,8 +460,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       if (lastRateLimit) {
         throw new Error(
           `ChatGPT paused this chat (${lastRateLimit}). Free accounts have a separate limit for ` +
-            `"data analysis" chats — start a new text-only chat (or wait for the reset), then retry. ` +
-            `The extension now opens temporary text-only chats and asks ChatGPT not to use tools.`
+            `"data analysis" chats — wait for the reset or click New chat, then retry.`
         );
       }
       throw new Error(
@@ -466,8 +468,8 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       );
     }
 
-    // --- Phase 3: delete conversation (skip for temporary chats — they never hit history) ---
-    if (deleteConversation && !String(startUrl).includes("temporary-chat")) {
+    // --- Phase 3: delete conversation ---
+    if (deleteConversation) {
       notify("phase3: deleting conversation...");
       let deleteResult = null;
       try {
@@ -480,8 +482,6 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         notify(`phase3 delete threw: ${err && err.message ? err.message : err}`);
       }
       notify(`phase3 delete result: ${JSON.stringify(deleteResult || null)}`);
-    } else if (deleteConversation) {
-      notify("phase3: delete skipped (temporary chat — not saved to history)");
     } else {
       notify("phase3: delete skipped (setting off)");
     }
@@ -3036,8 +3036,43 @@ function pollChatGptResponseInPage() {
     return text.length > 600;
   }
 
+  // The schema contract embedded in our prompt is itself valid-looking JSON with
+  // "name":"string", "contact_line":"string: phone | email…". That got scraped as the
+  // "answer" and closed the tab before ChatGPT generated anything (live: Generated for string).
+  function isSchemaOrPlaceholderResume(text) {
+    if (!text) return true;
+    if (/"name"\s*:\s*"string"/i.test(text)) return true;
+    if (/"contact_line"\s*:\s*"string\s*:/i.test(text)) return true;
+    if (/"summary"\s*:\s*"string\s*:/i.test(text)) return true;
+    if (/each separated by ' \| '/i.test(text)) return true;
+    if (/CRITICAL OUTPUT|MACHINE PARSE ONLY|CANDIDATE PROFILE \(JSON\)/i.test(text)) return true;
+    if (/Write phone as plain text \(no markdown link/i.test(text)) return true;
+    try {
+      const obj = JSON.parse(
+        text.trim().startsWith("```")
+          ? text.trim().replace(/^```[a-zA-Z]*\n/, "").replace(/\n```$/, "").trim()
+          : text.trim()
+      );
+      if (!obj || typeof obj !== "object") return true;
+      if (obj.name === "string") return true;
+      if (typeof obj.contact_line === "string" && /^string\s*:/i.test(obj.contact_line)) return true;
+      if (!Array.isArray(obj.experience) || obj.experience.length === 0) return true;
+      // Real resumes have at least one role with a real title, not the schema's "string".
+      const first = obj.experience[0];
+      if (!first || first.title === "string" || first.company === "string") return true;
+      if (typeof obj.summary === "string" && (/^string\s*:/i.test(obj.summary) || obj.summary.length < 40)) return true;
+    } catch {
+      return true;
+    }
+    return false;
+  }
+
+  function isRealResumeJson(text) {
+    return looksLikeResumeJson(text) && looksLikeCompleteJson(text) && !isSchemaOrPlaceholderResume(text);
+  }
+
   function extractResumeJsonFromBody(text, { allowWhileGenerating }) {
-    const objects = extractBalancedJsonObjects(text).filter(looksLikeResumeJson);
+    const objects = extractBalancedJsonObjects(text).filter(isRealResumeJson);
     if (!objects.length) return "";
     // While streaming, require 2+ candidates (profile in the user message + partial/full reply)
     // so we don't treat the profile JSON as the answer.
@@ -3084,17 +3119,9 @@ function pollChatGptResponseInPage() {
     ];
     const assistants = turns.filter((el) => roleOf(el) === "assistant");
     if (assistants.length) return assistants;
-    // Last turn that is not clearly the user message.
-    const nonUser = turns.filter((el) => roleOf(el) !== "user");
-    if (nonUser.length) return [nonUser[nonUser.length - 1]];
-    if (turns.length) return [turns[turns.length - 1]];
-
-    const markdown = [
-      ...document.querySelectorAll(
-        ".markdown, .prose, [class*='markdown'], [class*='prose'], pre code, div[class*='assistant']"
-      ),
-    ];
-    return markdown.length ? [markdown[markdown.length - 1]] : [];
+    // Do NOT fall back to "last turn" / random markdown — that often is the USER prompt
+    // (which embeds our schema example) and caused early "Generated for string" closes.
+    return [];
   }
 
   const generating = isGenerating();
@@ -3117,29 +3144,33 @@ function pollChatGptResponseInPage() {
     via = "assistant-node";
   }
 
-  // Ultimate fallback: ChatGPT UI variants / virtualization can hide role attrs while the
-  // JSON is still visible as plain text (confirmed live: msgs=0 while JSON on screen).
-  // Take the last resume-shaped JSON so we don't scrape the schema/profile from the user prompt.
-  if (!looksLikeCompleteJson(text) || !looksLikeResumeJson(text)) {
+  // Ultimate fallback: ChatGPT UI variants can hide role attrs while a real reply is still
+  // visible as plain text. Only accept filled resume JSON — never the schema from our prompt.
+  if (!isRealResumeJson(text)) {
     const fromBody = extractResumeJsonFromBody((document.body && document.body.innerText) || "", {
       allowWhileGenerating: generating,
     });
     if (fromBody) {
       text = fromBody;
       via = "body-json";
+    } else if (isSchemaOrPlaceholderResume(text)) {
+      text = "";
+      via = "rejected-placeholder";
     }
   }
 
-  const completeJson = looksLikeCompleteJson(text);
+  const isRealResume = isRealResumeJson(text);
+  const completeJson = isRealResume;
   const prev = window.__afGptPollPrev || { text: "", same: 0 };
   const same = prev.text === text && text ? prev.same + 1 : text ? 1 : 0;
   window.__afGptPollPrev = { text, same };
   return {
     generating,
     assistantCount: assistants.length,
-    text,
+    text: isRealResume ? text : "",
     completeJson,
-    stableComplete: !generating && same >= 2 && text.length > 80,
+    isRealResume,
+    stableComplete: !generating && same >= 2 && isRealResume,
     href: location.href,
     rateLimit,
     via,
