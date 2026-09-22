@@ -272,44 +272,23 @@ function extractFirstJsonValue(text) {
 // a real chatgpt.com tab, submits the prompt, waits for and extracts the response, then closes
 // the tab regardless of success or failure.
 //
-// Architecture (2026-09 rewrite): ChatGPT's SPA often navigates `/` → `/c/<uuid>` right after
-// Send. A single long-lived executeScript that waits for the reply dies with that navigation —
-// executeScript returns no result ("No response came back from the ChatGPT tab"), delete never
-// runs, and (if the Promise hangs) the tab may stay open. Confirmed profile-dependent (some
-// accounts navigate harder / Temporary Chat / Teams UI). Fix: short SEND inject, then repeated
-// short POLL injects (each survives navigation), then a separate DELETE inject.
+// Send / poll / delete are separate short injects: ChatGPT's SPA often navigates `/` → `/c/<uuid>`
+// right after Send, which kills a single long-lived executeScript (empty result, no delete).
 //
 async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
   const notify = (msg) => {
-    try {
-      console.info(`[gpt-auto] ${msg}`);
-    } catch {
-      /* ignore */
-    }
     try {
       if (onProgress) onProgress(msg);
     } catch {
       // Never let a progress-reporting bug affect the actual generation.
     }
   };
-  // Always use a normal chatgpt.com chat (same as before). Temporary chat was an experiment to
-  // dodge Free-tier "data analysis" metering / history clutter — it caused early closes and
-  // confused the flow; text-only is enforced by the prompt guard + tool-toggle disable instead.
-  const startUrl = "https://chatgpt.com/";
-  // Explicitly ask ChatGPT not to invoke data analysis / code interpreter / tools — Free tier
-  // pauses the whole chat when that tool quota is exhausted even if the user never asked for it.
-  const textOnlyGuard =
-    "IMPORTANT: This is a plain text-only chat. Do NOT use data analysis, code interpreter, " +
-    "file tools, browsing, or any other tools. Reply with plain text only.\n\n";
-  const guardedPrompt = prompt.startsWith("IMPORTANT: This is a plain text-only")
-    ? prompt
-    : textOnlyGuard + prompt;
-
   notify("creating tab...");
-  const tab = await chrome.tabs.create({ url: startUrl, active: false });
-  notify(`tab ${tab.id} created (${startUrl})`);
+  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
+  notify(`tab ${tab.id} created`);
   let debuggerAttached = false;
   try {
+    // Same as before: keep a background tab from being throttled (shows Chrome's debugger banner).
     notify("attaching debugger...");
     let gaveUpWaitingForDebugger = false;
     const debuggerAttachChain = chrome.debugger
@@ -327,9 +306,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
           .sendCommand({ tabId: tab.id }, "Emulation.setFocusEmulationEnabled", { enabled: true })
           .catch(() => {});
       })
-      .catch((err) => {
-        notify(`debugger attach error: ${err && err.message ? err.message : err}`);
-      });
+      .catch(() => {});
     const debuggerTimedOut = await Promise.race([
       debuggerAttachChain.then(() => false),
       new Promise((resolve) => setTimeout(() => resolve(true), 4000)),
@@ -366,14 +343,13 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
     notify("tab finished loading");
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    // --- Phase 1: send only (must finish before SPA navigates away) ---
     notify("phase1: sending prompt...");
     let sendResult = null;
     try {
       const [sendInj] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: sendChatGptPromptInPage,
-        args: [guardedPrompt],
+        args: [prompt],
       });
       sendResult = sendInj && sendInj.result;
     } catch (err) {
@@ -387,11 +363,9 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       );
     }
 
-    // --- Phase 2: poll extract (fresh inject each tick — survives /c/<uuid> navigation) ---
     notify("phase2: polling for assistant reply...");
     let text = "";
     let lastPollSummary = "";
-    let lastRateLimit = null;
     let seenGenerating = Boolean(sendResult && sendResult.generating);
     const pollDeadline = Date.now() + 180000;
     let pollIndex = 0;
@@ -413,38 +387,22 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         notify(`phase2 poll#${pollIndex}: empty inject result (SPA navigation?)`);
         continue;
       }
-      if (pollResult.rateLimit) lastRateLimit = pollResult.rateLimit;
       if (pollResult.generating) seenGenerating = true;
-      const summary = `gen=${pollResult.generating} seenGen=${seenGenerating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} real=${pollResult.isRealResume} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})} href=${pollResult.href || "?"}`;
+      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})}`;
       if (summary !== lastPollSummary) {
         notify(`phase2 poll#${pollIndex}: ${summary}`);
         lastPollSummary = summary;
       }
-      // Never accept the schema/example JSON that lives inside our own prompt — that was the
-      // live bug where the tab closed immediately with `"name": "string"`.
+      // Only accept a real filled resume — never the schema example from our own prompt.
       if (pollResult.completeJson && pollResult.text && pollResult.isRealResume) {
-        // Wait until generation has actually started at least once (or enough time passed that
-        // a fast reply could have finished without us seeing the stop button).
-        if (!seenGenerating && pollIndex < 8) {
-          notify(`phase2 poll#${pollIndex}: ignoring early JSON until generation starts (via=${pollResult.via})`);
-          continue;
-        }
-        if (pollResult.generating) {
-          // Still streaming — keep waiting for a settled copy.
-          continue;
-        }
+        if (!seenGenerating && pollIndex < 8) continue;
+        if (pollResult.generating) continue;
         text = pollResult.text;
-        notify(`phase2: real resume JSON captured (${text.length} chars, via=${pollResult.via})`);
-        break;
-      }
-      // Free-tier data-analysis pause with nothing readable yet — fail fast (don't sit 3 min).
-      if (pollResult.rateLimit && !pollResult.isRealResume && pollIndex >= 5 && !pollResult.generating) {
-        notify(`phase2: rate-limit banner with no real reply yet (${pollResult.rateLimit})`);
+        notify(`phase2: resume JSON captured (${text.length} chars, via=${pollResult.via})`);
         break;
       }
     }
     if (!text) {
-      // Still try delete — a conversation may exist even when we could not read the reply.
       if (deleteConversation) {
         notify("phase2 failed; attempting delete before abort...");
         try {
@@ -457,18 +415,11 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
           notify(`phase3 (on failure) delete threw: ${err && err.message ? err.message : err}`);
         }
       }
-      if (lastRateLimit) {
-        throw new Error(
-          `ChatGPT paused this chat (${lastRateLimit}). Free accounts have a separate limit for ` +
-            `"data analysis" chats — wait for the reset or click New chat, then retry.`
-        );
-      }
       throw new Error(
-        "No response came back from the ChatGPT tab. Generation may have finished in the UI, but the extension could not read the assistant message (check the [gpt-auto] lines under Generate JSON)."
+        "No response came back from the ChatGPT tab. Generation may have finished in the UI, but the extension could not read the assistant message."
       );
     }
 
-    // --- Phase 3: delete conversation ---
     if (deleteConversation) {
       notify("phase3: deleting conversation...");
       let deleteResult = null;
@@ -488,7 +439,6 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
 
     return text;
   } finally {
-    notify(`cleanup: debuggerAttached=${debuggerAttached}, closing tab ${tab && tab.id}`);
     if (debuggerAttached) {
       try {
         await chrome.debugger.detach({ tabId: tab.id });
@@ -498,9 +448,8 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
     }
     try {
       await chrome.tabs.remove(tab.id);
-      notify("cleanup: tab closed");
-    } catch (err) {
-      notify(`cleanup: tabs.remove failed: ${err && err.message ? err.message : err}`);
+    } catch {
+      /* Tab may already be closed */
     }
   }
 }
@@ -2849,68 +2798,19 @@ function sendChatGptPromptInPage(prompt) {
     );
   }
 
-  function detectRateLimit() {
-    const body = (document.body && document.body.innerText) || "";
-    if (/chat paused until usage resets/i.test(body)) return "chat-paused-usage-reset";
-    if (/reached the limit for chats that include data analysis/i.test(body)) return "data-analysis-limit";
-    if (/start a new text-only chat/i.test(body)) return "needs-text-only-chat";
-    return null;
-  }
-
-  function clickNewChatIfNeeded() {
-    // Free-tier "data analysis" pause blocks the composer — "New chat" / text-only is the escape.
-    const rateLimit = detectRateLimit();
-    if (!rateLimit) return { clicked: false, rateLimit: null };
-    const buttons = [...document.querySelectorAll("button, a[role='button']")];
-    const newChat = buttons.find((b) => {
-      const t = (b.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-      return t === "new chat" || t === "start a new text-only chat" || /text-only chat/i.test(t);
-    });
-    if (newChat) {
-      newChat.click();
-      return { clicked: true, rateLimit };
-    }
-    return { clicked: false, rateLimit };
-  }
-
-  function tryDisableTools() {
-    // Best-effort: turn off composer tools so ChatGPT doesn't auto-attach data analysis.
-    const toggles = [...document.querySelectorAll("button, [role='switch']")];
-    for (const el of toggles) {
-      const label = `${el.getAttribute("aria-label") || ""} ${el.textContent || ""}`.toLowerCase();
-      const pressed = el.getAttribute("aria-pressed") === "true" || el.getAttribute("aria-checked") === "true";
-      if (!pressed) continue;
-      if (/tool|plugin|code interpreter|data analysis|search|browse/i.test(label) && !/send|stop|new chat/i.test(label)) {
-        try {
-          el.click();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  }
-
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   return (async () => {
-    const rescue = clickNewChatIfNeeded();
-    if (rescue.clicked) await sleep(800);
-    tryDisableTools();
-
     let composer = null;
     for (let attempt = 0; attempt < 50 && !composer; attempt++) {
       composer = findComposer();
       if (!composer) await sleep(200);
     }
     if (!composer) {
-      const rateLimit = detectRateLimit() || rescue.rateLimit;
       return {
         ok: false,
-        error: rateLimit
-          ? `ChatGPT is paused (${rateLimit}). Wait for the reset or click New chat for a text-only thread, then retry.`
-          : "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in.",
+        error: "Could not find ChatGPT's message box - the page layout may have changed, or you're not logged in.",
         href: location.href,
-        rateLimit,
       };
     }
 
@@ -2924,29 +2824,17 @@ function sendChatGptPromptInPage(prompt) {
       if (!sendBtn) await sleep(200);
     }
     if (!sendBtn) {
-      const rateLimit = detectRateLimit();
-      return {
-        ok: false,
-        error: rateLimit
-          ? `ChatGPT send is blocked (${rateLimit}). Start a new text-only chat and retry.`
-          : "Could not find (or enable) ChatGPT's send button.",
-        href: location.href,
-        rateLimit,
-      };
+      return { ok: false, error: "Could not find (or enable) ChatGPT's send button.", href: location.href };
     }
     sendBtn.click();
 
-    // Return almost immediately after click. Waiting here for the stop button is unsafe:
-    // ChatGPT often navigates `/` → `/c/<uuid>` right after Send, which tears down this
-    // inject and leaves the side panel with an empty result (the original "no response"
-    // bug). Generation progress is observed by phase-2 poll injects instead.
+    // Return quickly after click — SPA nav to /c/<uuid> can kill a long wait here.
     await sleep(250);
     return {
       ok: true,
       sent: true,
       generating: isGenerating(),
       href: location.href,
-      rateLimit: detectRateLimit(),
     };
   })();
 }
@@ -3086,14 +2974,6 @@ function pollChatGptResponseInPage() {
     return objects[objects.length - 1];
   }
 
-  function detectRateLimit() {
-    const body = (document.body && document.body.innerText) || "";
-    if (/reached the limit for chats that include data analysis/i.test(body)) return "data-analysis-limit";
-    if (/chat paused until usage resets/i.test(body)) return "chat-paused-usage-reset";
-    if (/start a new text-only chat/i.test(body)) return "needs-text-only-chat";
-    return null;
-  }
-
   function roleOf(el) {
     if (!el) return "";
     const attr =
@@ -3112,11 +2992,9 @@ function pollChatGptResponseInPage() {
     return "";
   }
 
-  // Confirmed live via Save Sample chatgpt-com-20260922T043713Z.html (2026-09-22): ChatGPT's
-  // current Free UI no longer uses data-message-author-role / conversation-turn articles.
-  // Assistant reply is a MarkdownRoot div with data-markdown-text-style="assistant-message".
-  // User prompt uses data-user-message-bubble="true". Probe on that capture: roleAssistant=0,
-  // articles=0, but assistant-message=1 and the resume JSON parses cleanly from that node.
+  // Support both ChatGPT UIs (profile-dependent):
+  // - Newer Free UI (chatgpt-com-20260922T043713Z): data-markdown-text-style="assistant-message"
+  // - Older UI: data-message-author-role="assistant" / data-turn="assistant"
   function findAssistantNodes() {
     const byStyle = [...document.querySelectorAll('[data-markdown-text-style="assistant-message"]')];
     if (byStyle.length) return byStyle;
