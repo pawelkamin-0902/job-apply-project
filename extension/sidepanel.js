@@ -2993,21 +2993,26 @@ function pollChatGptResponseInPage() {
   }
 
   // Support both ChatGPT UIs (profile-dependent):
-  // - Newer Free UI (chatgpt-com-20260922T043713Z): data-markdown-text-style="assistant-message"
-  // - Older UI: data-message-author-role="assistant" / data-turn="assistant"
+  // - Original (chatgpt-com-20260922T045959Z): data-message-author-role="assistant"
+  //   (also has a parent data-turn="assistant" — do NOT prefer that wrapper; it includes
+  //   chrome/CSS that breaks JSON.parse / "Extra data")
+  // - Newer Free (chatgpt-com-20260922T043713Z): data-markdown-text-style="assistant-message"
+  // Pick ONE strategy — never concatenate role+turn and take .at(-1) (that regressed original).
   function findAssistantNodes() {
+    const byRole = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+    if (byRole.length) return byRole;
+
     const byStyle = [...document.querySelectorAll('[data-markdown-text-style="assistant-message"]')];
     if (byStyle.length) return byStyle;
 
     const byAgentTurn = [...document.querySelectorAll("[data-chatgpt-agent-turn-start]")];
     if (byAgentTurn.length) return byAgentTurn;
 
-    const direct = [
-      ...document.querySelectorAll('[data-message-author-role="assistant"]'),
+    const byTurnAttr = [
       ...document.querySelectorAll('[data-turn="assistant"]'),
       ...document.querySelectorAll('article[data-turn="assistant"]'),
     ];
-    if (direct.length) return direct;
+    if (byTurnAttr.length) return byTurnAttr;
 
     const turns = [
       ...document.querySelectorAll(
@@ -3018,16 +3023,19 @@ function pollChatGptResponseInPage() {
   }
 
   function readAssistantText(node) {
-    let text = reconstructMarkdown(node).trim();
-    if (!isRealResumeJson(text)) {
-      // Links/icons can confuse reconstruct; plain innerText of the assistant node is enough
-      // for JSON.parse (confirmed on the Save Sample capture).
-      const plain = (node.innerText || node.textContent || "").replace(/\u200b/g, "").trim();
-      if (isRealResumeJson(plain)) return plain;
-      const extracted = extractResumeJsonFromText(plain, { requireMultiple: false });
-      if (extracted) return extracted;
-    }
-    return text;
+    const reconstructed = reconstructMarkdown(node).trim();
+    if (isRealResumeJson(reconstructed)) return reconstructed;
+
+    const plain = (node.innerText || node.textContent || "").replace(/\u200b/g, "").trim();
+    if (isRealResumeJson(plain)) return plain;
+
+    // Original UI often has valid resume JSON plus trailing UI/chrome text ("Extra data" on
+    // JSON.parse). Pull the last real resume-shaped object out of either string.
+    const fromRebuilt = extractResumeJsonFromText(reconstructed, { requireMultiple: false });
+    if (fromRebuilt) return fromRebuilt;
+    const fromPlain = extractResumeJsonFromText(plain, { requireMultiple: false });
+    if (fromPlain) return fromPlain;
+    return reconstructed || plain;
   }
 
   const generating = isGenerating();
