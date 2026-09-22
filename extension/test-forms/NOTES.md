@@ -3854,6 +3854,18 @@ unverified outside a live browser).
     generation has started/finished; harden `validateResumeShape`. Keep the text-only prompt
     guard (no tools) without temporary chat.
 
+164. **gpt-auto poller used obsolete ChatGPT DOM; Save Sample proves the real selectors.**
+    `Author: Cursor`. Capture `chatgpt-com-20260922T043713Z` while a finished resume JSON was
+    visible: probe showed `articles:0`, `roleAssistant:0`, `msgs=0`, `via=rejected-placeholder`
+    — zero hits for `data-message-author-role` / `conversation-turn` / `<article>`. Actual
+    assistant reply is `[data-markdown-text-style="assistant-message"]` (MarkdownRoot), with
+    user prompt in `[data-user-message-bubble="true"]` and optional
+    `[data-chatgpt-agent-turn-start]`. Content is line-split `<span>…</span><br>` with
+    auto-linked email/LinkedIn (`data-markdown-copy="exclude"` icons). Fixed poller to prefer
+    those selectors, skip exclude/SVG nodes, require non-empty experience bullets (so profile
+    JSON in the user prompt is not mistaken for the reply), and probe
+    `markdownAssistant`/`agentTurn`/`userBubble` in logs.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
