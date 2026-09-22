@@ -3907,6 +3907,15 @@ unverified outside a live browser).
     (gpt-auto batch + `/generate-answer`); (3) matching `strip_form_answer_markdown` on
     `/generate-answer` in the companion service. Does not touch resume JSON fields.
 
+170. **gpt-auto Q/A: same open→delete→close as resume (accept answers JSON).** `Author: Cursor`.
+    User: Q/A mode should open/close(/delete) ChatGPT the same way as resume generation.
+    Root cause: shared `runChatGptPrompt` + poller only accepted resume-shaped JSON
+    (`contact_line`/`experience`/…), so a visible `{"answers":[...]}` reply never counted
+    as complete — poll timed out, happy-path delete often skipped the same way. Fix: poller
+    also recognizes real answers JSON (and rejects the batch schema placeholder); callers
+    pass `expectKind` `"resume"` vs `"answers"`; lifecycle (tab, debugger, send, poll, delete
+    setting, close) is unchanged and shared.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

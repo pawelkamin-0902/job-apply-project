@@ -292,7 +292,9 @@ function extractFirstJsonValue(text) {
 // Send / poll / delete are separate short injects: ChatGPT's SPA often navigates `/` → `/c/<uuid>`
 // right after Send, which kills a single long-lived executeScript (empty result, no delete).
 //
-async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
+// expectKind: "resume" (Generate JSON) or "answers" (Auto Fill Q/A). Same open→send→poll→delete→close
+// lifecycle either way; only the accepted JSON shape differs so Q/A isn't stuck waiting for a resume.
+async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, expectKind = "resume") {
   const notify = (msg) => {
     try {
       if (onProgress) onProgress(msg);
@@ -300,7 +302,8 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       // Never let a progress-reporting bug affect the actual generation.
     }
   };
-  notify("creating tab...");
+  const wantAnswers = expectKind === "answers";
+  notify(`creating tab (expect=${expectKind})...`);
   const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
   notify(`tab ${tab.id} created`);
   let debuggerAttached = false;
@@ -380,7 +383,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
       );
     }
 
-    notify("phase2: polling for assistant reply...");
+    notify(`phase2: polling for ${wantAnswers ? "answers" : "resume"} JSON...`);
     let text = "";
     let lastPollSummary = "";
     let seenGenerating = Boolean(sendResult && sendResult.generating);
@@ -405,17 +408,20 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress) {
         continue;
       }
       if (pollResult.generating) seenGenerating = true;
-      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} json=${pollResult.completeJson} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})}`;
+      const summary = `gen=${pollResult.generating} msgs=${pollResult.assistantCount} len=${(pollResult.text || "").length} kind=${pollResult.kind || "none"} via=${pollResult.via || "?"} probe=${JSON.stringify(pollResult.probe || {})}`;
       if (summary !== lastPollSummary) {
         notify(`phase2 poll#${pollIndex}: ${summary}`);
         lastPollSummary = summary;
       }
-      // Only accept a real filled resume — never the schema example from our own prompt.
-      if (pollResult.completeJson && pollResult.text && pollResult.isRealResume) {
+      // Accept only the shape this call asked for — never the schema example from our own prompt.
+      const matched = wantAnswers
+        ? pollResult.kind === "answers" && pollResult.isRealAnswers
+        : pollResult.kind === "resume" && pollResult.isRealResume;
+      if (matched && pollResult.text) {
         if (!seenGenerating && pollIndex < 8) continue;
         if (pollResult.generating) continue;
         text = pollResult.text;
-        notify(`phase2: resume JSON captured (${text.length} chars, via=${pollResult.via})`);
+        notify(`phase2: ${expectKind} JSON captured (${text.length} chars, via=${pollResult.via})`);
         break;
       }
     }
@@ -2945,6 +2951,12 @@ function pollChatGptResponseInPage() {
     return text.length > 600;
   }
 
+  function looksLikeAnswersJson(text) {
+    // Auto Fill Q/A batch reply: {"answers":[{question_number, answerable, answer}, ...]}
+    if (!/"answers"\s*:/.test(text)) return false;
+    return looksLikeCompleteJson(text) || extractBalancedJsonObjects(text).some((s) => /"answers"\s*:/.test(s));
+  }
+
   // The schema contract embedded in our prompt is itself valid-looking JSON with
   // "name":"string", "contact_line":"string: phone | email…". That got scraped as the
   // "answer" and closed the tab before ChatGPT generated anything (live: Generated for string).
@@ -2980,12 +2992,68 @@ function pollChatGptResponseInPage() {
     return false;
   }
 
+  function parseJsonCandidate(text) {
+    if (!text) return null;
+    let candidate = text.trim();
+    if (candidate.startsWith("```")) {
+      candidate = candidate.replace(/^```[a-zA-Z]*\n/, "").replace(/\n```$/, "").trim();
+    }
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+
+  // Batch Q/A schema in the prompt uses "answer": "string" or null / <the number ...> placeholders.
+  function isSchemaOrPlaceholderAnswers(text) {
+    if (!text) return true;
+    if (/question_number.*<the number/i.test(text)) return true;
+    if (/"answer"\s*:\s*"string"/i.test(text)) return true;
+    if (/Each answer string MUST be plain text/i.test(text)) return true;
+    if (/Respond with ONLY a single JSON object/i.test(text) && /"answers"\s*:/.test(text)) return true;
+    const obj = parseJsonCandidate(text);
+    if (!obj || typeof obj !== "object" || !Array.isArray(obj.answers) || obj.answers.length === 0) return true;
+    for (const a of obj.answers) {
+      if (!a || typeof a !== "object") return true;
+      if (a.answer === "string") return true;
+      if (typeof a.question_number === "string" && /</.test(a.question_number)) return true;
+    }
+    // At least one entry must look like a real model reply (has answerable boolean).
+    const anyReal = obj.answers.some(
+      (a) => typeof a.answerable === "boolean" || a.answer === null || typeof a.answer === "string"
+    );
+    return !anyReal;
+  }
+
   function isRealResumeJson(text) {
     return looksLikeResumeJson(text) && looksLikeCompleteJson(text) && !isSchemaOrPlaceholderResume(text);
   }
 
+  function isRealAnswersJson(text) {
+    if (!looksLikeAnswersJson(text)) return false;
+    const objects = extractBalancedJsonObjects(text);
+    const candidates = objects.length ? objects : looksLikeCompleteJson(text) ? [text.trim()] : [];
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const slice = candidates[i];
+      if (!/"answers"\s*:/.test(slice)) continue;
+      if (looksLikeCompleteJson(slice) && !isSchemaOrPlaceholderAnswers(slice)) return true;
+    }
+    return looksLikeCompleteJson(text) && !isSchemaOrPlaceholderAnswers(text);
+  }
+
   function extractResumeJsonFromText(text, { requireMultiple }) {
     const objects = extractBalancedJsonObjects(text).filter(isRealResumeJson);
+    if (!objects.length) return "";
+    if (requireMultiple && objects.length < 2) return "";
+    return objects[objects.length - 1];
+  }
+
+  function extractAnswersJsonFromText(text, { requireMultiple }) {
+    const objects = extractBalancedJsonObjects(text).filter((s) => {
+      if (!/"answers"\s*:/.test(s) || !looksLikeCompleteJson(s)) return false;
+      return !isSchemaOrPlaceholderAnswers(s);
+    });
     if (!objects.length) return "";
     if (requireMultiple && objects.length < 2) return "";
     return objects[objects.length - 1];
@@ -3039,20 +3107,30 @@ function pollChatGptResponseInPage() {
     return turns.filter((el) => roleOf(el) === "assistant");
   }
 
+  function pickBestJsonFromNode(reconstructed, plain) {
+    // Prefer a real resume or answers object over raw markdown chrome.
+    for (const candidate of [reconstructed, plain]) {
+      if (isRealResumeJson(candidate)) return candidate;
+      if (isRealAnswersJson(candidate)) {
+        const extracted = extractAnswersJsonFromText(candidate, { requireMultiple: false });
+        return extracted || candidate;
+      }
+    }
+    const fromRebuiltResume = extractResumeJsonFromText(reconstructed, { requireMultiple: false });
+    if (fromRebuiltResume) return fromRebuiltResume;
+    const fromPlainResume = extractResumeJsonFromText(plain, { requireMultiple: false });
+    if (fromPlainResume) return fromPlainResume;
+    const fromRebuiltAnswers = extractAnswersJsonFromText(reconstructed, { requireMultiple: false });
+    if (fromRebuiltAnswers) return fromRebuiltAnswers;
+    const fromPlainAnswers = extractAnswersJsonFromText(plain, { requireMultiple: false });
+    if (fromPlainAnswers) return fromPlainAnswers;
+    return reconstructed || plain;
+  }
+
   function readAssistantText(node) {
     const reconstructed = reconstructMarkdown(node).trim();
-    if (isRealResumeJson(reconstructed)) return reconstructed;
-
     const plain = (node.innerText || node.textContent || "").replace(/\u200b/g, "").trim();
-    if (isRealResumeJson(plain)) return plain;
-
-    // Original UI often has valid resume JSON plus trailing UI/chrome text ("Extra data" on
-    // JSON.parse). Pull the last real resume-shaped object out of either string.
-    const fromRebuilt = extractResumeJsonFromText(reconstructed, { requireMultiple: false });
-    if (fromRebuilt) return fromRebuilt;
-    const fromPlain = extractResumeJsonFromText(plain, { requireMultiple: false });
-    if (fromPlain) return fromPlain;
-    return reconstructed || plain;
+    return pickBestJsonFromNode(reconstructed, plain);
   }
 
   const generating = isGenerating();
@@ -3075,32 +3153,51 @@ function pollChatGptResponseInPage() {
     via = "assistant-node";
   }
 
-  // Fallback: scrape resume JSON from the page text, but never the schema/profile in the prompt.
-  if (!isRealResumeJson(text)) {
-    const fromBody = extractResumeJsonFromText((document.body && document.body.innerText) || "", {
-      requireMultiple: generating,
-    });
-    if (fromBody) {
-      text = fromBody;
-      via = "body-json";
-    } else if (isSchemaOrPlaceholderResume(text)) {
-      text = "";
-      via = assistants.length ? "rejected-placeholder" : "no-assistant-node";
+  const bodyText = (document.body && document.body.innerText) || "";
+  // Fallback: scrape resume or answers JSON from the page, but never the schema/profile in the prompt.
+  if (!isRealResumeJson(text) && !isRealAnswersJson(text)) {
+    const fromBodyResume = extractResumeJsonFromText(bodyText, { requireMultiple: generating });
+    if (fromBodyResume) {
+      text = fromBodyResume;
+      via = "body-json-resume";
+    } else {
+      const fromBodyAnswers = extractAnswersJsonFromText(bodyText, { requireMultiple: generating });
+      if (fromBodyAnswers) {
+        text = fromBodyAnswers;
+        via = "body-json-answers";
+      } else if (isSchemaOrPlaceholderResume(text) || isSchemaOrPlaceholderAnswers(text)) {
+        text = "";
+        via = assistants.length ? "rejected-placeholder" : "no-assistant-node";
+      }
     }
   }
 
+  // If we have answers JSON embedded in a longer string, prefer the balanced object.
+  if (!isRealResumeJson(text) && isRealAnswersJson(text)) {
+    const extracted = extractAnswersJsonFromText(text, { requireMultiple: false });
+    if (extracted) text = extracted;
+  }
+  if (isRealResumeJson(text) && !looksLikeCompleteJson(text)) {
+    const extracted = extractResumeJsonFromText(text, { requireMultiple: false });
+    if (extracted) text = extracted;
+  }
+
   const isRealResume = isRealResumeJson(text);
-  const completeJson = isRealResume;
+  const isRealAnswers = !isRealResume && isRealAnswersJson(text);
+  const kind = isRealResume ? "resume" : isRealAnswers ? "answers" : null;
+  const completeJson = Boolean(kind);
   const prev = window.__afGptPollPrev || { text: "", same: 0 };
   const same = prev.text === text && text ? prev.same + 1 : text ? 1 : 0;
   window.__afGptPollPrev = { text, same };
   return {
     generating,
     assistantCount: assistants.length,
-    text: isRealResume ? text : "",
+    text: completeJson ? text : "",
     completeJson,
     isRealResume,
-    stableComplete: !generating && same >= 2 && isRealResume,
+    isRealAnswers,
+    kind,
+    stableComplete: !generating && same >= 2 && completeJson,
     href: location.href,
     via,
     probe,
@@ -14358,7 +14455,7 @@ el("generateBtn").addEventListener("click", async () => {
         ? await runChatGptPromptHeadless(combined, deleteConversation)
         : await runChatGptPrompt(combined, deleteConversation, (step) => {
             genResultEl.textContent = `${baseStatus}\n[${new Date().toLocaleTimeString()}] ${step}`;
-          });
+          }, "resume");
 
       let parsed;
       try {
@@ -14817,7 +14914,7 @@ el("autofillBtn").addEventListener("click", async () => {
           ? await runChatGptPromptHeadless(combined, settings.delete_gpt_conversations !== false)
           : await runChatGptPrompt(combined, settings.delete_gpt_conversations !== false, (step) => {
               resultEl.textContent = `${baseStatus}\n[${new Date().toLocaleTimeString()}] ${step}`;
-            });
+            }, "answers");
 
         let answers;
         try {
