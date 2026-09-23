@@ -3926,6 +3926,18 @@ unverified outside a live browser).
     `data-testid=m-attachment-file-input` and maps it to Resume; exclude the readonly
     "Select the attachment" display input from Auto Fill.
 
+172. **HubSpot careers: JD/company/title all missed.** `Author: Cursor`. Capture
+    `www-hubspot-com-20260923T042611Z` (`hubspot.com/careers/jobs/8162969?gh_jid=`). No
+    JobPosting JSON-LD and no Greenhouse iframe; the posting is first-party React
+    (`#react-root-directory`: About the Team / In This Role / We Are Looking For) plus
+    `#hs-greenhouse-apply-form`. Extract used the listing `<h1>` "All Open Positions"
+    (then scrapeCurrentTab rejected it as generic → empty title), title suffix
+    "| All Openings" as company, and a compensation widget `.description` ("Pay &
+    Benefits") as the JD. Fixed: treat listing titles/site names as generic; strip
+    trailing "Careers"/"Jobs" from company leftovers; skip pay-transparency
+    `.description`; read HubSpot `#react-root-directory`; expand "About the Team" /
+    "In This Role" heading proximity.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

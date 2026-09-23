@@ -1560,7 +1560,7 @@ function extractPageInfo() {
     // Many sites without JobPosting schema still clearly label the section
     // (e.g. "Job description", "About the role") right before the real content.
     const headingRe =
-      /job description|job summary|about (the|this) role|responsibilities|qualifications|what you.?ll do|^summary\b|what we.?re looking for/i;
+      /job description|job summary|about (the|this) (role|team|job|position)|in this role|responsibilities|qualifications|what you.?ll (get to|do)|we are looking for|what we.?re looking for|^summary\b/i;
     for (const h of document.querySelectorAll("h1, h2, h3, h4, strong, b")) {
       const text = (h.textContent || "").trim();
       if (!headingRe.test(text) || text.length > 60) continue;
@@ -1571,7 +1571,7 @@ function extractPageInfo() {
       for (let depth = 0; depth < 6 && ancestor; depth++) {
         const ancestorText = (ancestor.innerText || "").trim();
         const hasPostingSections =
-          /\b(responsibilit|requirement|qualification|about (the|this|our) (role|stack)|nice to have|what we look for)\b/i.test(
+          /\b(responsibilit|requirement|qualification|about (the|this|our) (role|team|stack)|in this role|we are looking for|nice to have|what we look for)\b/i.test(
             ancestorText
           );
         if (ancestorText.length > 800 && hasPostingSections) return ancestor;
@@ -1666,6 +1666,15 @@ function extractPageInfo() {
   // Greenhouse apply embeds also ship a "Greenhouse Verified" badge panel with no posting
   // body (mews.com capture 20260908T182053Z frame5621) — reject that so the wrapper's real
   // JD can win on length.
+  function looksLikePayTransparencyChrome(el) {
+    if (!el) return false;
+    if (el.closest && el.closest(".content-pay-transparency, .pay-input, [class*='pay-transparency']")) {
+      return true;
+    }
+    const t = ((el.innerText || el.textContent || "") + "").replace(/\s+/g, " ").trim();
+    return /^pay\s*(&|and)?\s*benefits\b/i.test(t) && t.length < 2500;
+  }
+
   function looksLikeCareersListingChrome(text) {
     const t = (text || "").toLowerCase();
     if (/greenhouse verified/.test(t) && !/\b(responsibilit|requirement|qualification|what you.?ll do|about the (role|job)|job description)\b/i.test(t)) {
@@ -2078,9 +2087,9 @@ function extractPageInfo() {
     // benefits…", ~476 chars) and Extract returned that instead of the real posting
     // (jobs-innovecs-com-20260917T040706Z).
     let best = pickBest(
-      document.querySelectorAll(
+      [...document.querySelectorAll(
         ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .job-content, [class*='single-vacancies-v2--body'], [class*='single-vacancies-v2--tabs'], .wrap-description, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap']"
-      ),
+      )].filter((el) => !looksLikePayTransparencyChrome(el)),
       200
     );
     if (best) {
@@ -2094,8 +2103,26 @@ function extractPageInfo() {
     // Confirmed live: precisely.com international-jobs job page with #grnhse_iframe.
     if (pageHostsAtsJobEmbed()) return "";
 
+    // HubSpot careers (www.hubspot.com/careers/jobs/…?gh_jid=): no JobPosting / no
+    // `.job-description`. The posting lives under `#react-root-directory` (About the Team /
+    // In This Role / We Are Looking For). A compensation widget uses a bare `.description`
+    // class ("Pay & Benefits") that would otherwise win the landmark scan below
+    // (www-hubspot-com-20260923T042611Z).
+    const hubspotRoot = document.querySelector("#react-root-directory, .hsg-page-width-normal");
+    if (hubspotRoot && /(^|\.)hubspot\.com$/i.test(location.hostname || "")) {
+      const fromHubspot = acceptDescription(cleanedText(hubspotRoot));
+      if (fromHubspot && !looksLikeThinJobPostingDescription(fromHubspot)) return fromHubspot;
+    }
+
     // 3. Broader semantic landmarks (still more trustworthy than heading-proximity below).
-    best = pickBest(document.querySelectorAll('main, article, [role="main"], #content, .description'), 200);
+    // Skip pay-transparency / compensation `.description` widgets (HubSpot) so they cannot
+    // beat the real posting as "longest landmark".
+    best = pickBest(
+      [...document.querySelectorAll('main, article, [role="main"], #content, .description')].filter(
+        (el) => !looksLikePayTransparencyChrome(el)
+      ),
+      200
+    );
     if (best) {
       const text = acceptDescription(cleanedText(best));
       if (text) return text;
@@ -2130,7 +2157,9 @@ function extractPageInfo() {
     let s = String(name || "").replace(/\s+/g, " ").trim();
     s = s.replace(/\s+logo$/i, "").trim();
     s = s.replace(/[- ]linkedin$/i, "").trim();
-    if (/^(greenhouse|job application|careers?)$/i.test(s)) return "";
+    // "<Brand> Careers" / "<Brand> Jobs" title leftovers (HubSpot: "HubSpot Careers | All Openings").
+    s = s.replace(/\s+(careers?|jobs?|job board)$/i, "").trim();
+    if (/^(greenhouse|job application|careers?|all openings?|all open positions?)$/i.test(s)) return "";
     return s;
   }
 
@@ -2141,7 +2170,7 @@ function extractPageInfo() {
   function isGenericCareerSiteName(name) {
     const t = String(name || "").replace(/\s+/g, " ").trim();
     if (!t) return true;
-    return /^(jobs?|careers?|career|career center|job board|job openings?|vacancies|opportunities|open positions?)(\s*[\-(].*)?$/i.test(
+    return /^(jobs?|careers?|career|career center|job board|job openings?|vacancies|opportunities|open positions?|all openings?|all open positions?)(\s*[\-(].*)?$/i.test(
       t
     );
   }
@@ -2506,7 +2535,7 @@ function extractPageInfo() {
   // "Job openings"/"open positions" (PeopleForce: a generic <h1> sitting above the real title,
   // which lives in a separate <h2>) added alongside the apply-flow-chrome phrases above.
   const GENERIC_TITLE_RE =
-    /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|job details( page)?|.+\bopenings?)$/i;
+    /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|all open positions?|all openings?|open roles?|international openings?|current openings?|job details( page)?|.+\bopenings?)$/i;
 
   // JD section headings that sometimes win in embedded description iframes (RecruitCRM's first
   // <h2> is "Summary") — never treat these as the job title.
@@ -14233,7 +14262,7 @@ async function scrapeCurrentTab() {
       const badTitle = (t) =>
         !t ||
         /internet explorer|no longer supported|browser.+(not|no longer)\s+supported/i.test(t) ||
-        /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|open roles?|international openings?|current openings?|.+\bopenings?)$/i.test(
+        /^(apply( now)?|application( submitted)?|new application|careers?|career center|job application|job openings?|open positions?|all open positions?|all openings?|open roles?|international openings?|current openings?|.+\bopenings?)$/i.test(
           t
         ) ||
         /^(summary|overview|about (the|this) (role|job|position)|what you[''\u2019]?(ll| will) do|what we[''\u2019]?(re| are) looking for|requirements|qualifications|responsibilities|key responsibilities)$/i.test(
