@@ -1512,7 +1512,9 @@ function extractPageInfo() {
   function cleanedText(el) {
     const clone = el.cloneNode(true);
     clone
-      .querySelectorAll('nav, footer, header, script, style, form, button, svg, [role="navigation"]')
+      .querySelectorAll(
+        'nav, footer, header, script, style, form, button, svg, [role="navigation"], .welcome-message, .skip-link'
+      )
       .forEach((n) => n.remove());
     return (clone.textContent || "")
       .replace(/[ \t]+/g, " ")
@@ -2088,7 +2090,7 @@ function extractPageInfo() {
     // (jobs-innovecs-com-20260917T040706Z).
     let best = pickBest(
       [...document.querySelectorAll(
-        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .job-content, [class*='single-vacancies-v2--body'], [class*='single-vacancies-v2--tabs'], .wrap-description, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap']"
+        ".BambooRichText, .job-description, .jobDescription, .job__description, .posting-description, .opening-description, .opportunity-description, [data-automation='job-description'], .single-vacancy__content, .single-vacancy__info, .vacancy-content, .job-content, [class*='single-vacancies-v2--body'], [class*='single-vacancies-v2--tabs'], .wrap-description, .entry-content, .post-content, [class*='jobDescriptionContent'], [class*='job-description-content'], [class*='job-description-body'], [class*='job-post-content'], .jd-container, [class*='jd-container'], .mobile-view-jd, .tp-career-details-wrap, .tp-career-details-wrapper, [class*='tp-career-details-wrap'], #job-description, .page-body.job-details #job-description, .page-body.job-details .description"
       )].filter((el) => !looksLikePayTransparencyChrome(el)),
       200
     );
@@ -2263,7 +2265,7 @@ function extractPageInfo() {
   function companyFromOwnDomain() {
     const fullHost = location.hostname.replace(/^www\./, "");
     if (
-      /greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com|ashbyhq\.com|rippling\.com|comeet\.com|comeet\.co/i.test(
+      /greenhouse\.io|lever\.co|myworkdayjobs\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|ukg\.net|recruitcrm\.io|darwinbox\.com|successfactors\.com|ashbyhq\.com|rippling\.com|comeet\.com|comeet\.co|applytojob\.com/i.test(
         fullHost
       )
     ) {
@@ -2412,6 +2414,34 @@ function extractPageInfo() {
       const fromPath = companyFromGreenhousePath();
       if (fromPath) return fromPath;
     }
+    // JazzHR applytojob.com: shared ATS host (pearlwest.applytojob.com). Organization JSON-LD
+    // name is the employer; its url often points at the company's own site (not applytojob),
+    // so organizationNameFromJsonLd's host match misses it. Title pattern used to return
+    // "Full" from "Full-Stack … - Pearl West - Career Page" (hyphen inside the role).
+    // Confirmed pearlwest-applytojob-com-20260929T053626Z.
+    if (/(^|\.)applytojob\.com$/i.test(location.hostname || "")) {
+      for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const data = JSON.parse(script.textContent);
+          const items = Array.isArray(data) ? data : data["@graph"] || [data];
+          for (const item of items) {
+            if (!item || item["@type"] !== "Organization") continue;
+            const name = tidyExtractedCompanyName(String(item.name || "").trim());
+            if (name && !isGenericCareerSiteName(name) && !looksLikeJobTitleNotCompany(name)) return name;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const board = (location.hostname || "").replace(/^www\./i, "").split(".")[0];
+      if (board && !/^(app|apply|www)$/i.test(board)) {
+        return board
+          .split(/[-_]+/)
+          .filter(Boolean)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+      }
+    }
     // 2b. JSON-LD Organization matching this host (before generic og:site_name "Jobs").
     const fromLdOrg = organizationNameFromJsonLd();
     if (fromLdOrg) return fromLdOrg;
@@ -2490,7 +2520,7 @@ function extractPageInfo() {
         return fromPipe;
       }
     }
-    m = title.match(/^([A-Z][\w& .'-]{1,60})\s*[-|]/);
+    m = title.match(/^([A-Z][\w& .'-]{1,60})\s+[-|]/);
     if (m) {
       const fromLead = tidyExtractedCompanyName(m[1].trim());
       if (fromLead && !/^(apply|application|job|careers?)$/i.test(fromLead) && !looksLikeJobTitleNotCompany(fromLead)) {
@@ -2597,7 +2627,7 @@ function extractPageInfo() {
     // right side looks like a role and the left does not, keep the role.
     const ROLE_WORD_RE =
       /\b(engineer|developer|manager|analyst|designer|scientist|architect|specialist|consultant|director|lead|intern|officer|coordinator)\b/i;
-    const companyFirst = raw.match(/^([\w][\w& .'-]{0,40}?)\s*[-|]\s+(.+)$/);
+    const companyFirst = raw.match(/^([\w][\w& .'-]{0,40}?)\s+[-|]\s+(.+)$/);
     if (companyFirst) {
       const left = companyFirst[1].trim();
       const right = companyFirst[2].replace(/\s*[-|].*$/, "").trim();
@@ -2605,8 +2635,12 @@ function extractPageInfo() {
         return right;
       }
     }
-    const m = raw.match(/^([\w][\w& .,()/+#-]{1,100}?)\s*(?:[-|]|\bat\b)/i);
-    return m ? m[1].trim() : raw;
+    // Require whitespace before "-" / "|" so compound titles like "Full-Stack Developer … -
+    // Pearl West - Career Page" are not truncated to "Full" (pearlwest-applytojob-com-
+    // 20260929T053626Z). Also drop a trailing "Career Page" / "Careers" site label.
+    let t = raw.replace(/\s+[-|]\s+(career(s)?(\s+page)?|job board)\s*$/i, "").trim();
+    const m = t.match(/^([\w][\w& .,()/+#-]{1,120}?)\s+(?:[-|]|at)\s+/i);
+    return m ? m[1].trim() : t;
   }
 
   // Checks genericity on the RAW heading text first - confirmed live, a BreezyHR post-submit
@@ -2739,7 +2773,16 @@ function extractPageInfo() {
     // Do NOT include Darwinbox's `.title-section .title` here — SuccessFactors cookie CMP
     // reuses that class for "Required Cookies" / "Functional Cookies" and would win before
     // the real <h1>. Darwinbox is handled in the dedicated block above.
-    for (const sel of [".job-title", ".job__title h1", ".job__title", "[itemprop='title']", ".job-ad-title"]) {
+    // JazzHR applytojob: real title is `.job-header h2` (no <h1>); <title>/og:title append
+    // " - {Company} - Career Page" and used to truncate at the hyphen inside "Full-Stack".
+    for (const sel of [
+      ".job-header h2",
+      ".job-title",
+      ".job__title h1",
+      ".job__title",
+      "[itemprop='title']",
+      ".job-ad-title",
+    ]) {
       for (const found of document.querySelectorAll(sel)) {
         let text = (found.innerText || found.textContent || "").replace(/\s+/g, " ").trim();
         // `.job__title` wrapper: "Data Analyst … Location" — keep the heading line only.
