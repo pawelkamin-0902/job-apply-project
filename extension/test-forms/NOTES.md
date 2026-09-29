@@ -3938,6 +3938,15 @@ unverified outside a live browser).
     `.description`; read HubSpot `#react-root-directory`; expand "About the Team" /
     "In This Role" heading proximity.
 
+173. **JazzHR applytojob: title/company "Full", JD = welcome chrome.** `Author: Cursor`.
+    Capture `pearlwest-applytojob-com-20260929T053626Z`. `stripTrailingBoilerplate` and the
+    company title leading-dash regex used `\s*[-|]`, so "Full-Stack Developer … - Pearl
+    West - Career Page" truncated to "Full". JD picked `<main>` (hidden `.welcome-message`
+    + posting) instead of `#job-description`. Company missed Organization JSON-LD because
+    its url is pearlwestgroup.com, not applytojob. Fixed: require whitespace before title
+    separators; prefer `.job-header h2` / `#job-description`; JazzHR Organization +
+    subdomain company; strip `.welcome-message` from cleanedText.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
