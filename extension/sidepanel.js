@@ -5269,11 +5269,34 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
-  // Auto Fill does not use chrome.debugger / CDP trusted clicks — avoids the "Chrome is being
-  // controlled" banner during apply. Call sites still invoke trustedClick as a last resort in
-  // combobox chains; this stub always declines so they fall through to unmatched / synthetic only.
-  function trustedClick(_el) {
-    return Promise.resolve(false);
+  // Brief CDP trusted click on the job-application tab — only when Fabric/Bamboo (and similar)
+  // ignore synthetic events. Uses background TRUSTED_CLICK (attach → click → detach).
+  function trustedClick(el) {
+    return new Promise((resolve) => {
+      if (!el || typeof el.getBoundingClientRect !== "function") {
+        resolve(false);
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) {
+        resolve(false);
+        return;
+      }
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      try {
+        if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+          resolve(false);
+          return;
+        }
+        chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y }, (resp) => {
+          if (chrome.runtime.lastError) resolve(false);
+          else resolve(Boolean(resp && resp.ok));
+        });
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   // Finds whatever rendered as the option list after opening a combobox, trying
@@ -5730,6 +5753,23 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
 
   function reactSelectDisplayValue(element) {
+    if (element && element.classList && element.classList.contains("fab-SelectToggle")) {
+      const valueNode =
+        element.querySelector(".fab-SelectToggle__value") ||
+        element.querySelector("[class*='fab-SelectToggle__value']");
+      if (valueNode) {
+        const t = cleanedText(valueNode);
+        if (t && !isGenericSelectPlaceholder(t)) return t;
+      }
+      const placeholder = element.querySelector(".fab-SelectToggle__placeholder");
+      if (placeholder && cleanedText(placeholder)) {
+        const t = cleanedText(placeholder);
+        if (t && !/^[\u2013\u2014-]?\s*select\s*[\u2013\u2014-]?$/i.test(t.replace(/\u2013/g, "-"))) {
+          return t;
+        }
+      }
+      return "";
+    }
     if (isSuccessFactorsPicklist(element)) {
       const title = (element.getAttribute && element.getAttribute("title")) || "";
       const placeholder = (element.getAttribute && element.getAttribute("placeholder")) || "";
@@ -6612,6 +6652,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     if (await tryFillRecruitCrmCmdkCombobox(element, desiredText)) {
       comboboxTrace(element, `recruitcrm cmdk committed -> "${desiredText}"`, {});
+      return true;
+    }
+    if (
+      onBambooHr &&
+      element.classList &&
+      element.classList.contains("fab-SelectToggle") &&
+      (await fillBambooFabricSelect(element, desiredText))
+    ) {
+      comboboxTrace(element, `bamboo fabric committed -> "${desiredText}"`, {
+        displayAfter: reactSelectDisplayValue(element),
+      });
       return true;
     }
     const displayAtStart = reactSelectDisplayValue(element);
@@ -8222,6 +8273,135 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     console.info(
       `[Auto Fill][bamboo] settle timeout menuOpen=${bambooFabricMenuOpen()} blocked=${bambooLowerFieldsBlocked()}`
     );
+  }
+
+  function findBambooFabricHiddenSelect(toggle) {
+    if (!toggle || !toggle.closest) return null;
+    const scope =
+      toggle.closest('[data-fabric-component="Select"]') ||
+      toggle.closest(".fab-Select") ||
+      toggle.closest(".MuiFormControl-root") ||
+      toggle.parentElement;
+    if (!scope) return null;
+    return (
+      scope.querySelector('select[name="countryId.value"], select[name="country.value"], select[name="state.value"]') ||
+      scope.querySelector("select.chzn-ignore[aria-hidden='true']") ||
+      scope.querySelector("select.chzn-ignore")
+    );
+  }
+
+  function collectFabMenuOptions() {
+    const isVisible = (node) => {
+      const r = node.getBoundingClientRect();
+      return r.width > 1 && r.height > 1;
+    };
+    const opts = [];
+    for (const root of document.querySelectorAll(".fab-MenuVessel, .fab-Menu, [class*='fab-Menu']")) {
+      if (!isVisible(root)) continue;
+      opts.push(
+        ...root.querySelectorAll(
+          '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"]'
+        )
+      );
+    }
+    return opts.filter((o) => isVisible(o) && cleanedText(o));
+  }
+
+  function matchFabOptionText(options, desiredText) {
+    const target = String(desiredText || "")
+      .toLowerCase()
+      .trim();
+    if (!target || !options.length) return null;
+    return (
+      options.find((o) => cleanedText(o).toLowerCase() === target) ||
+      options.find((o) => cleanedText(o).toLowerCase().startsWith(target + " ")) ||
+      options.find((o) => cleanedText(o).toLowerCase().includes(target)) ||
+      null
+    );
+  }
+
+  function bambooFabricCommitted(toggle, desiredText) {
+    if (comboboxValueCommitted(toggle, desiredText)) return true;
+    const hidden = findBambooFabricHiddenSelect(toggle);
+    if (!hidden || hidden.selectedIndex < 0) return false;
+    const opt = hidden.options[hidden.selectedIndex];
+    const t = cleanedText(opt);
+    const want = String(desiredText || "").toLowerCase().trim();
+    return Boolean(t && opt.value && (t.toLowerCase() === want || t.toLowerCase().includes(want)));
+  }
+
+  // BambooHR Fabric fab-Select — assertive-bamboohr-com-20261016T165718Z: countryId.value + fab-SelectToggle.
+  async function fillBambooFabricSelect(toggle, desiredText) {
+    const want = String(desiredText || "").trim();
+    if (!want || !toggle) return false;
+    if (bambooFabricCommitted(toggle, want)) return true;
+
+    const aria = (toggle.getAttribute && toggle.getAttribute("aria-label")) || "";
+    if (aria && toggle.setAttribute) {
+      const lab = aria.replace(/\s*[\u2013\u2014-]\s*select\s*[\u2013\u2014-]?\s*$/i, "").trim();
+      if (lab) toggle.setAttribute("data-af-label", lab);
+    }
+
+    const openMenu = async () => {
+      if (toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen()) return true;
+      simulateClick(toggle);
+      await new Promise((r) => setTimeout(r, 220));
+      if (toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen()) return true;
+      if (await trustedClick(toggle)) {
+        await new Promise((r) => setTimeout(r, 280));
+      }
+      return toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen();
+    };
+
+    if (!(await openMenu())) {
+      console.info(`[Auto Fill][bamboo] fabric menu failed to open for "${want}"`);
+      return false;
+    }
+
+    const hidden = findBambooFabricHiddenSelect(toggle);
+    for (let wait = 0; wait < 15 && hidden && hidden.options.length <= 1; wait++) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
+
+    const filter =
+      document.querySelector(".fab-MenuVessel input[type='text'], .fab-MenuVessel input[type='search']") ||
+      document.querySelector(".fab-Menu input, [class*='fab-Menu'] input[type='text']");
+    if (filter) {
+      filter.focus();
+      nativeSet(filter, want);
+      filter.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want }));
+      await new Promise((r) => setTimeout(r, 350));
+    }
+
+    let options = collectFabMenuOptions();
+    let match = matchFabOptionText(options, want);
+    if (!match && hidden && hidden.options.length > 1 && setSelectValue(hidden, want)) {
+      hidden.dispatchEvent(new Event("input", { bubbles: true }));
+      hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 200));
+      if (bambooFabricCommitted(toggle, want)) {
+        await closeBambooFabricMenu();
+        return true;
+      }
+    }
+    if (!match) {
+      options = collectFabMenuOptions();
+      match = matchFabOptionText(options, want);
+    }
+    if (match) {
+      simulateClick(match);
+      await new Promise((r) => setTimeout(r, 150));
+      if (!bambooFabricCommitted(toggle, want) && (await trustedClick(match))) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+
+    const ok = bambooFabricCommitted(toggle, want);
+    console.info(
+      `[Auto Fill][bamboo] fabric pick "${want}" -> ${ok ? "ok" : "FAILED"} (display="${reactSelectDisplayValue(toggle)}")`
+    );
+    if (ok) await closeBambooFabricMenu();
+    return ok;
   }
 
   function relocateLiveSingle(element, host) {
@@ -10784,11 +10964,33 @@ async function fillGeneratedAnswersInPage(answers) {
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
-  // Auto Fill does not use chrome.debugger / CDP trusted clicks — avoids the "Chrome is being
-  // controlled" banner during apply. Call sites still invoke trustedClick as a last resort in
-  // combobox chains; this stub always declines so they fall through to unmatched / synthetic only.
-  function trustedClick(_el) {
-    return Promise.resolve(false);
+  // Kept in sync with runAutofillInPage trustedClick (Fabric/Bamboo CDP fallback).
+  function trustedClick(el) {
+    return new Promise((resolve) => {
+      if (!el || typeof el.getBoundingClientRect !== "function") {
+        resolve(false);
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) {
+        resolve(false);
+        return;
+      }
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      try {
+        if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+          resolve(false);
+          return;
+        }
+        chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y }, (resp) => {
+          if (chrome.runtime.lastError) resolve(false);
+          else resolve(Boolean(resp && resp.ok));
+        });
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   // Kept in sync with runAutofillInPage — must pierce open shadow roots for SmartRecruiters

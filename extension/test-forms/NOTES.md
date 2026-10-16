@@ -3947,11 +3947,10 @@ unverified outside a live browser).
     separators; prefer `.job-header h2` / `#job-description`; JazzHR Organization +
     subdomain company; strip `.welcome-message` from cleanedText.
 
-174. **Auto Fill: no chrome.debugger / trusted clicks.** `Author: Cursor`. User asked to
-    remove debugging during apply. `trustedClick` in `runAutofillInPage` and
-    `fillGeneratedAnswersInPage` is now a no-op (always false); removed `TRUSTED_CLICK` from
-    `background.js`. Combobox fallbacks use synthetic events only — BambooHR Fabric and similar
-    may need manual picks.
+174. **Auto Fill: no chrome.debugger / trusted clicks (superseded for Fabric by #178).** User
+    asked to remove debugging during apply; `trustedClick` was briefly a no-op. BambooHR Fabric
+    Country/State still requires brief CDP clicks on the **job tab** (#178); gpt-auto Send uses
+    CDP on the **ChatGPT tab** only (#177).
 
 175. **gpt-auto: no chrome.debugger either.** `Author: Cursor`. `runChatGptPrompt` no longer
     attaches CDP for `Page.setWebLifecycleState` / focus emulation — no "Chrome is being
@@ -3967,6 +3966,14 @@ unverified outside a live browser).
     leave `disabled`/`aria-disabled`, then tries pointer-aware `simulateClick`, `.click()`, Enter
     on the composer, and `form.requestSubmit`; fails phase1 with a clear error if streaming never
     starts (instead of polling for 3 minutes with an unsent prompt).
+
+178. **BambooHR Fabric Country not opening (assertive `20261016T165718Z`).** `Author: Cursor`.
+    Save Sample: `countryId.value` hidden select + `fab-SelectToggle` aria-label `Country –Select–`
+    (no `data-testid="send-button"` / `#prompt-textarea` on ChatGPT is unrelated). Generic
+    combobox path saw wrong display (`United States` from button textContent) and synthetic open/
+    type never committed Poland. Fixed: `fillBambooFabricSelect` (trusted open, menu filter type
+    Poland, option pick + hidden-select sync), `reactSelectDisplayValue` for `fab-SelectToggle`,
+    restore `trustedClick` via `TRUSTED_CLICK` for Fabric on the application tab only.
 
 177. **ChatGPT composer DOM change (Save Sample `chatgpt-com-20261016T162854Z`).** `Author: Cursor`.
     No `#prompt-textarea` / `data-testid="send-button"` — composer is `form[data-chatgpt-composer]
