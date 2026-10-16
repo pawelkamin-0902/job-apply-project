@@ -3682,6 +3682,7 @@ function deleteChatGptConversationInPage() {
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
 async function runAutofillInPage(profile, qaBank, options = {}) {
   const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
+  const autofillTabId = options && options.autofillTabId;
   const href = location.href || "";
   const unusableFrame =
     !href ||
@@ -5289,7 +5290,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
           resolve(false);
           return;
         }
-        chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y }, (resp) => {
+        const payload = { type: "TRUSTED_CLICK", x, y };
+        if (autofillTabId != null) payload.tabId = autofillTabId;
+        chrome.runtime.sendMessage(payload, (resp) => {
           if (chrome.runtime.lastError) resolve(false);
           else resolve(Boolean(resp && resp.ok));
         });
@@ -6654,16 +6657,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       comboboxTrace(element, `recruitcrm cmdk committed -> "${desiredText}"`, {});
       return true;
     }
-    if (
-      onBambooHr &&
-      element.classList &&
-      element.classList.contains("fab-SelectToggle") &&
-      (await fillBambooFabricSelect(element, desiredText))
-    ) {
-      comboboxTrace(element, `bamboo fabric committed -> "${desiredText}"`, {
+    if (onBambooHr && element.classList && element.classList.contains("fab-SelectToggle")) {
+      const fabOk = await fillBambooFabricSelect(element, desiredText);
+      comboboxTrace(element, fabOk ? `bamboo fabric committed -> "${desiredText}"` : `bamboo fabric FAILED -> "${desiredText}"`, {
         displayAfter: reactSelectDisplayValue(element),
       });
-      return true;
+      return fabOk;
     }
     const displayAtStart = reactSelectDisplayValue(element);
     if (isSuccessFactorsPicklist(element) && successFactorsPicklistAlreadySet(element, desiredText)) {
@@ -7962,8 +7961,33 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return Boolean(String(visibleInput.value || "").trim());
   }
 
+  async function fillBambooAddressAfterCountry() {
+    if (!onBambooHr || !profile || !profile.contact) return;
+    const specs = [
+      { re: /^address\b/i, val: profile.contact.address || profile.contact.address_line },
+      { re: /^city\b/i, val: profile.contact.city },
+      { re: /^province\b|^state\b/i, val: profile.contact.state },
+      { re: /^postal\s*code\b|^zip\b/i, val: profile.contact.zip || profile.contact.postal_code },
+    ];
+    for (const { re, val } of specs) {
+      if (!val) continue;
+      const hit = singles.find(({ element, host }) => re.test(normalizeLabel(resolveOwnLabel(element, host))));
+      if (!hit) continue;
+      const live = relocateLiveSingle(hit.element, hit.host);
+      if (!live) continue;
+      const lab = labelForElement(live.element, live.host);
+      if (await fillSingle(live.element, String(val))) {
+        filled.push({ label: lab, value: String(val), source: "profile" });
+        console.info(`[Auto Fill][bamboo] address block ${lab}=${val}`);
+      }
+    }
+  }
+
   async function fillSingle(element, value) {
     const tag = element.tagName.toLowerCase();
+    if (onBambooHr && element.classList && element.classList.contains("fab-SelectToggle")) {
+      return await fillBambooFabricSelect(element, value);
+    }
     if (tag === "select") return setSelectValue(element, value);
     if (element.type === "checkbox" || element.type === "radio") {
       nativeSetChecked(element, Boolean(value));
@@ -8206,6 +8230,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   const onBambooHr = /(^|\.)bamboohr\.com$/i.test(location.hostname || "");
 
+  function findBambooCountryToggle() {
+    if (!onBambooHr) return null;
+    const direct = document.querySelector('button.fab-SelectToggle[aria-label*="Country" i]');
+    if (direct) return direct;
+    const hidden = document.querySelector('select[name="countryId.value"], select[name="country.value"]');
+    const scope = hidden && hidden.closest('[data-fabric-component="Select"]');
+    return (scope && scope.querySelector("button.fab-SelectToggle")) || null;
+  }
+
   function isBambooCountryField(element, host) {
     if (!onBambooHr || !element) return false;
     if (element.classList && element.classList.contains("fab-SelectToggle")) {
@@ -8290,17 +8323,27 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     );
   }
 
-  function collectFabMenuOptions() {
+  function collectFabMenuOptions(toggle) {
     const isVisible = (node) => {
       const r = node.getBoundingClientRect();
       return r.width > 1 && r.height > 1;
     };
+    const roots = [];
+    const menuId = toggle && toggle.getAttribute && toggle.getAttribute("data-menu-id");
+    if (menuId) {
+      const byId = document.getElementById(menuId);
+      if (byId && isVisible(byId)) roots.push(byId);
+    }
+    if (!roots.length) {
+      for (const root of document.querySelectorAll(".fab-MenuVessel, .fab-Menu, [class*='fab-Menu']")) {
+        if (isVisible(root)) roots.push(root);
+      }
+    }
     const opts = [];
-    for (const root of document.querySelectorAll(".fab-MenuVessel, .fab-Menu, [class*='fab-Menu']")) {
-      if (!isVisible(root)) continue;
+    for (const root of roots) {
       opts.push(
         ...root.querySelectorAll(
-          '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"]'
+          '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"], [class*="fab-ListItem"]'
         )
       );
     }
@@ -8334,6 +8377,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   async function fillBambooFabricSelect(toggle, desiredText) {
     const want = String(desiredText || "").trim();
     if (!want || !toggle) return false;
+    console.info(`[Auto Fill][bamboo] fabric fill start -> "${want}" (tabId=${autofillTabId ?? "?"})`);
     if (bambooFabricCommitted(toggle, want)) return true;
 
     const aria = (toggle.getAttribute && toggle.getAttribute("aria-label")) || "";
@@ -8363,17 +8407,27 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       await new Promise((r) => setTimeout(r, 120));
     }
 
+    const menuRoot =
+      (toggle.getAttribute("data-menu-id") && document.getElementById(toggle.getAttribute("data-menu-id"))) ||
+      document.querySelector(".fab-MenuVessel, .fab-Menu");
     const filter =
+      (menuRoot &&
+        menuRoot.querySelector("input[type='text'], input[type='search'], input:not([type='hidden'])")) ||
       document.querySelector(".fab-MenuVessel input[type='text'], .fab-MenuVessel input[type='search']") ||
       document.querySelector(".fab-Menu input, [class*='fab-Menu'] input[type='text']");
     if (filter) {
       filter.focus();
-      nativeSet(filter, want);
+      try {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, want);
+      } catch {
+        nativeSet(filter, want);
+      }
       filter.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want }));
-      await new Promise((r) => setTimeout(r, 350));
+      await new Promise((r) => setTimeout(r, 450));
     }
 
-    let options = collectFabMenuOptions();
+    let options = collectFabMenuOptions(toggle);
     let match = matchFabOptionText(options, want);
     if (!match && hidden && hidden.options.length > 1 && setSelectValue(hidden, want)) {
       hidden.dispatchEvent(new Event("input", { bubbles: true }));
@@ -8385,7 +8439,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       }
     }
     if (!match) {
-      options = collectFabMenuOptions();
+      options = collectFabMenuOptions(toggle);
       match = matchFabOptionText(options, want);
     }
     if (match) {
@@ -9212,11 +9266,17 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // replaces Date Available / Desired Pay / LinkedIn. Filling those from the pre-swap node
   // list silently no-ops. Fill Country first, close the menu, re-collect, then continue.
   if (onBambooHr && !onlyPhoneCountry && profile && profile.contact && profile.contact.country) {
-    const countrySingle = singles.find(({ element, host }) => isBambooCountryField(element, host));
+    const toggle = findBambooCountryToggle();
+    const countrySingle =
+      (toggle && { element: toggle, host: toggle }) ||
+      singles.find(({ element, host }) => isBambooCountryField(element, host));
     if (countrySingle) {
-      const label = labelForElement(countrySingle.element, countrySingle.host);
+      const label =
+        labelForElement(countrySingle.element, countrySingle.host) ||
+        (countrySingle.element.getAttribute && countrySingle.element.getAttribute("aria-label")) ||
+        "Country";
       console.info(`[Auto Fill][bamboo] fill Country first → ${JSON.stringify(profile.contact.country)}`);
-      const ok = await fillSingle(countrySingle.element, profile.contact.country);
+      const ok = await fillBambooFabricSelect(countrySingle.element, profile.contact.country);
       await waitBambooHrAfterCountryChange();
       if (ok) {
         filled.push({ label, value: profile.contact.country, source: "profile" });
@@ -9230,6 +9290,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.info(
         `[Auto Fill][bamboo] after Country settle singles=${singles.length} menuOpen=${bambooFabricMenuOpen()} blocked=${bambooLowerFieldsBlocked()}`
       );
+      await fillBambooAddressAfterCountry();
     }
   }
 
@@ -9431,6 +9492,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.info(
         `[Auto Fill][country] writing profile country=${JSON.stringify(structuredValue)} (display before=${JSON.stringify(reactSelectDisplayValue(element))})`
       );
+      if (
+        onBambooHr &&
+        element.classList &&
+        element.classList.contains("fab-SelectToggle") &&
+        (await fillBambooFabricSelect(element, structuredValue))
+      ) {
+        filled.push({ label, value: String(structuredValue), source: "profile" });
+        continue;
+      }
       if (await forceResidenceCountryValue(element, structuredValue)) {
         filled.push({ label, value: String(structuredValue), source: "profile" });
         continue;
@@ -15097,7 +15167,7 @@ el("autofillBtn").addEventListener("click", async () => {
     await injectPageScripts(tab.id, { applicationOnly: true });
     const injections = await executeInTab(
       tab.id,
-      { func: runAutofillInPage, args: [profile, qaBank] },
+      { func: runAutofillInPage, args: [profile, qaBank, { autofillTabId: tab.id }] },
       { applicationOnly: true }
     );
     const valid = (injections || []).filter((i) => i.result);
@@ -15472,7 +15542,7 @@ el("autofillBtn").addEventListener("click", async () => {
         await injectPageScripts(tab.id, { applicationOnly: true });
         await executeInTab(
           tab.id,
-          { func: runAutofillInPage, args: [profile, qaBank, { onlyPhoneCountry: true }] },
+          { func: runAutofillInPage, args: [profile, qaBank, { onlyPhoneCountry: true, autofillTabId: tab.id }] },
           { applicationOnly: true }
         );
         const recheckResults = await executeInTab(
