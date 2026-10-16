@@ -3967,6 +3967,13 @@ unverified outside a live browser).
     on the composer, and `form.requestSubmit`; fails phase1 with a clear error if streaming never
     starts (instead of polling for 3 minutes with an unsent prompt).
 
+179. **BambooHR assertive retest `20261016T170806Z` — trusted click + order.** `Author: Cursor`.
+    Console still hit generic combobox (no `fabric pick` line) — `TRUSTED_CLICK` from injected
+    Auto Fill likely lacked `sender.tab`; pass `autofillTabId` from the side panel. Country via
+    `findBambooCountryToggle()` + direct `fillBambooFabricSelect` (not generic path); menu scoped
+    by `data-menu-id`; filter typed with insertText. After Country settles: Address → City →
+    Province → Postal before the rest of the singles loop.
+
 178. **BambooHR Fabric Country not opening (assertive `20261016T165718Z`).** `Author: Cursor`.
     Save Sample: `countryId.value` hidden select + `fab-SelectToggle` aria-label `Country –Select–`
     (no `data-testid="send-button"` / `#prompt-textarea` on ChatGPT is unrelated). Generic
