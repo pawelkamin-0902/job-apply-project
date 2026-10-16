@@ -3968,6 +3968,13 @@ unverified outside a live browser).
     on the composer, and `form.requestSubmit`; fails phase1 with a clear error if streaming never
     starts (instead of polling for 3 minutes with an unsent prompt).
 
+177. **ChatGPT composer DOM change (Save Sample `chatgpt-com-20261016T162854Z`).** `Author: Cursor`.
+    No `#prompt-textarea` / `data-testid="send-button"` — composer is `form[data-chatgpt-composer]
+    div.ProseMirror[contenteditable]`, Send is `button[type=submit][aria-label=Send]`. Synthetic
+    submit still ignored (prompt visible in capture). gpt-auto phase1 returns Send center coords;
+    `runChatGptPrompt` falls back to `TRUSTED_CLICK` on the ChatGPT tab only (brief debugger attach,
+    not used on job-application Auto Fill). Re-added `debugger` permission for that single click.
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

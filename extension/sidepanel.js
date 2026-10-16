@@ -292,6 +292,20 @@ function extractFirstJsonValue(text) {
 // Send / poll / delete are separate short injects: ChatGPT's SPA often navigates `/` → `/c/<uuid>`
 // right after Send, which kills a single long-lived executeScript (empty result, no delete).
 //
+// Brief CDP click on the ChatGPT tab only (gpt-auto Send). Not used during Auto Fill on job pages.
+function trustedClickTab(tabId, x, y) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", tabId, x, y }, (resp) => {
+        if (chrome.runtime.lastError) resolve(false);
+        else resolve(Boolean(resp && resp.ok));
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
 // expectKind: "resume" (Generate JSON) or "answers" (Auto Fill Q/A). Same open→send→poll→delete→close
 // lifecycle either way; only the accepted JSON shape differs so Q/A isn't stuck waiting for a resume.
 async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, expectKind = "resume") {
@@ -340,7 +354,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     notify("tab finished loading");
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    notify("phase1: sending prompt...");
+    notify("phase1: typing prompt...");
     let sendResult = null;
     try {
       const [sendInj] = await chrome.scripting.executeScript({
@@ -352,11 +366,35 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     } catch (err) {
       notify(`phase1 executeScript threw: ${err && err.message ? err.message : err}`);
     }
-    notify(`phase1 result: ${JSON.stringify(sendResult || null)}`);
+    notify(`phase1 prepare: ${JSON.stringify(sendResult || null)}`);
     if (!sendResult || !sendResult.ok) {
       throw new Error(
         (sendResult && sendResult.error) ||
           "Could not send the prompt to ChatGPT (tab may not be logged in, or the page layout changed)."
+      );
+    }
+    let submitted = Boolean(sendResult.submitted);
+    if (!submitted && sendResult.sendX != null && sendResult.sendY != null) {
+      notify("phase1: trusted Send click...");
+      const clicked = await trustedClickTab(tab.id, sendResult.sendX, sendResult.sendY);
+      notify(`phase1: trusted Send click -> ${clicked ? "ok" : "failed"}`);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      try {
+        const [verifyInj] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: checkChatGptSubmissionInPage,
+          args: [sendResult.hrefBefore || "", sendResult.userBubblesBefore || 0],
+        });
+        const verify = verifyInj && verifyInj.result;
+        notify(`phase1 verify: ${JSON.stringify(verify || null)}`);
+        submitted = Boolean(verify && verify.started);
+      } catch (err) {
+        notify(`phase1 verify threw: ${err && err.message ? err.message : err}`);
+      }
+    }
+    if (!submitted) {
+      throw new Error(
+        "Typed the prompt but ChatGPT did not start generating — Send may need a manual click (reload the extension after updating)."
       );
     }
 
@@ -2910,6 +2948,8 @@ function sendChatGptPromptInPage(prompt) {
 
   function findComposer() {
     return (
+      document.querySelector('form[data-chatgpt-composer] div.ProseMirror[contenteditable="true"]') ||
+      document.querySelector('div.ProseMirror[role="textbox"][contenteditable="true"]') ||
       document.querySelector("#prompt-textarea") ||
       document.querySelector('div#prompt-textarea[contenteditable="true"]') ||
       document.querySelector('form [contenteditable="true"]') ||
@@ -2920,11 +2960,14 @@ function sendChatGptPromptInPage(prompt) {
 
   function findSendButton() {
     const selectors = [
+      'form[data-chatgpt-composer] button[type="submit"][aria-label="Send"]',
       'button[data-testid="send-button"]',
       'button[data-testid="composer-submit-button"]',
+      'button[type="submit"][aria-label="Send"]',
       'button[aria-label*="Send prompt" i]',
       'button[aria-label*="Send message" i]',
       'button[aria-label*="Send" i]',
+      'form[data-chatgpt-composer] button[type="submit"]',
       'form button[type="submit"]',
     ];
     for (const sel of selectors) {
@@ -2932,6 +2975,12 @@ function sendChatGptPromptInPage(prompt) {
       if (el) return el;
     }
     return null;
+  }
+
+  function sendButtonCenter(btn) {
+    const r = btn.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
 
   function isSendDisabled(btn) {
@@ -2950,10 +2999,20 @@ function sendChatGptPromptInPage(prompt) {
     );
   }
 
-  function submissionStarted(beforeHref) {
+  function countUserBubbles() {
+    return document.querySelectorAll('[data-user-message-bubble="true"]').length;
+  }
+
+  function submissionStarted(beforeHref, beforeBubbles) {
     if (isGenerating()) return true;
     const href = location.href || "";
     if (beforeHref && href !== beforeHref && /\/c\//.test(href)) return true;
+    if (typeof beforeBubbles === "number" && countUserBubbles() > beforeBubbles) return true;
+    const pm =
+      (document.querySelector('form[data-chatgpt-composer] div.ProseMirror') ||
+        document.querySelector("div.ProseMirror[role='textbox']")) ??
+      null;
+    if (pm && !(pm.textContent || "").trim()) return true;
     return false;
   }
 
@@ -2974,6 +3033,7 @@ function sendChatGptPromptInPage(prompt) {
     }
 
     const hrefBefore = location.href;
+    const userBubblesBefore = countUserBubbles();
     setComposerText(composer, prompt);
     await sleep(400);
 
@@ -2986,22 +3046,26 @@ function sendChatGptPromptInPage(prompt) {
     if (!sendBtn) {
       return { ok: false, error: "Could not find (or enable) ChatGPT's send button.", href: location.href };
     }
+    const center = sendButtonCenter(sendBtn);
+    if (!center) {
+      return { ok: false, error: "ChatGPT Send button is not visible.", href: location.href };
+    }
 
     async function trySubmitOnce() {
       simulateClick(sendBtn);
       await sleep(120);
-      if (submissionStarted(hrefBefore)) return true;
+      if (submissionStarted(hrefBefore, userBubblesBefore)) return true;
       try {
         sendBtn.click();
       } catch {
         /* ignore */
       }
       await sleep(120);
-      if (submissionStarted(hrefBefore)) return true;
+      if (submissionStarted(hrefBefore, userBubblesBefore)) return true;
       composer.focus();
       dispatchKey(composer, "Enter", "Enter");
       await sleep(120);
-      if (submissionStarted(hrefBefore)) return true;
+      if (submissionStarted(hrefBefore, userBubblesBefore)) return true;
       const form = sendBtn.closest && sendBtn.closest("form");
       if (form) {
         try {
@@ -3012,36 +3076,46 @@ function sendChatGptPromptInPage(prompt) {
         }
         await sleep(150);
       }
-      return submissionStarted(hrefBefore);
+      return submissionStarted(hrefBefore, userBubblesBefore);
     }
 
-    let submitted = false;
-    for (let round = 0; round < 3 && !submitted; round++) {
-      submitted = await trySubmitOnce();
-      if (!submitted) {
-        setComposerText(composer, prompt);
-        await sleep(250);
-      }
-    }
+    let submitted = await trySubmitOnce();
     if (!submitted) {
-      return {
-        ok: false,
-        error:
-          "Typed the prompt but ChatGPT did not start generating — the Send click may have been ignored. Try clicking Send once manually, or reload the extension and retry.",
-        href: location.href,
-        generating: false,
-      };
+      submitted = await trySubmitOnce();
     }
 
-    // Return quickly after submit — SPA nav to /c/<uuid> can kill a long wait here.
-    await sleep(200);
+    // Return quickly — side panel may CDP-click Send at sendX/sendY if submitted is still false
+    // (confirmed live chatgpt-com-20261016T162854Z: ProseMirror + type=submit, synthetic ignored).
+    await sleep(150);
     return {
       ok: true,
-      sent: true,
+      submitted,
+      sent: submitted,
       generating: isGenerating(),
       href: location.href,
+      hrefBefore,
+      userBubblesBefore,
+      sendX: center.x,
+      sendY: center.y,
     };
   })();
+}
+
+function checkChatGptSubmissionInPage(beforeHref, beforeBubbles) {
+  function isGenerating() {
+    return Boolean(
+      document.querySelector(
+        'button[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Stop streaming" i], button[aria-label*="Stop generating" i]'
+      )
+    );
+  }
+  const bubbles = document.querySelectorAll('[data-user-message-bubble="true"]').length;
+  const href = location.href || "";
+  const started =
+    isGenerating() ||
+    (beforeHref && href !== beforeHref && /\/c\//.test(href)) ||
+    (typeof beforeBubbles === "number" && bubbles > beforeBubbles);
+  return { started, generating: isGenerating(), href, userBubbles: bubbles };
 }
 
 // Phase 2: one cheap DOM read. Called repeatedly from the side panel so each call is a fresh

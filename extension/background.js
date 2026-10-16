@@ -65,6 +65,44 @@ chrome.tabs.onCreated.addListener((tab) => {
 // next time it's actually switched to, instead of all of them being swept eagerly at once.
 chrome.tabs.onActivated.addListener(({ tabId }) => makeSidePanelPerTab(tabId));
 
+// CDP trusted click — used only for gpt-auto Send on chatgpt.com (see runChatGptPrompt). Auto
+// Fill comboboxes do not use this. Side panel passes tabId explicitly; page scripts may pass via sender.tab.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "TRUSTED_CLICK") return false;
+  const tabId = message.tabId !== undefined ? message.tabId : sender.tab && sender.tab.id;
+  if (tabId === undefined) {
+    sendResponse({ ok: false, error: "No tab id for TRUSTED_CLICK." });
+    return true;
+  }
+  (async () => {
+    let attached = false;
+    try {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("chrome.debugger.attach timed out (concurrent debugger-session limit?)")),
+          4000
+        )
+      );
+      await Promise.race([chrome.debugger.attach({ tabId }, "1.3"), timeout]);
+      attached = true;
+      try {
+        const clickArgs = { x: message.x, y: message.y, button: "left", clickCount: 1 };
+        await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type: "mousePressed", ...clickArgs });
+        await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type: "mouseReleased", ...clickArgs });
+      } finally {
+        await chrome.debugger.detach({ tabId });
+      }
+      sendResponse({ ok: true });
+    } catch (err) {
+      if (!attached) {
+        chrome.debugger.detach({ tabId }).catch(() => {});
+      }
+      sendResponse({ ok: false, error: err && err.message ? err.message : String(err) });
+    }
+  })();
+  return true;
+});
+
 // Global keyboard shortcuts (manifest.json's "commands") - fire from anywhere, including the
 // job page itself, not just while the side panel has focus. This service worker has no direct
 // handle on any specific tab's own side panel document, so it can't call a function in it
