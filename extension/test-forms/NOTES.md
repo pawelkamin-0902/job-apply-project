@@ -3951,8 +3951,14 @@ unverified outside a live browser).
     remove debugging during apply. `trustedClick` in `runAutofillInPage` and
     `fillGeneratedAnswersInPage` is now a no-op (always false); removed `TRUSTED_CLICK` from
     `background.js`. Combobox fallbacks use synthetic events only — BambooHR Fabric and similar
-    may need manual picks. **gpt-auto** ChatGPT tab generation still uses `chrome.debugger` for
-    background-tab anti-throttle (separate from Auto Fill).
+    may need manual picks.
+
+175. **gpt-auto: no chrome.debugger either.** `Author: Cursor`. `runChatGptPrompt` no longer
+    attaches CDP for `Page.setWebLifecycleState` / focus emulation — no "Chrome is being
+    controlled" banner during Generate JSON or batched Q/A. ChatGPT tab stays `active: false` with
+    `autoDiscardable: false` only. Trade-off (same as finding 75 without debugger): background
+    generation may stall or time out if Chrome throttles the tab while another app is foreground;
+    keep Chrome usable on-screen, use manual GPT, or try `gpt-auto-headless` (companion Playwright).
 
 ## Known gaps (not yet acted on)
 

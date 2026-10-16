@@ -306,33 +306,10 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
   notify(`creating tab (expect=${expectKind})...`);
   const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
   notify(`tab ${tab.id} created`);
-  let debuggerAttached = false;
   try {
-    // Same as before: keep a background tab from being throttled (shows Chrome's debugger banner).
-    notify("attaching debugger...");
-    let gaveUpWaitingForDebugger = false;
-    const debuggerAttachChain = chrome.debugger
-      .attach({ tabId: tab.id }, "1.3")
-      .then(async () => {
-        if (gaveUpWaitingForDebugger) {
-          await chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
-          return;
-        }
-        debuggerAttached = true;
-        await chrome.debugger
-          .sendCommand({ tabId: tab.id }, "Page.setWebLifecycleState", { state: "active" })
-          .catch(() => {});
-        await chrome.debugger
-          .sendCommand({ tabId: tab.id }, "Emulation.setFocusEmulationEnabled", { enabled: true })
-          .catch(() => {});
-      })
-      .catch(() => {});
-    const debuggerTimedOut = await Promise.race([
-      debuggerAttachChain.then(() => false),
-      new Promise((resolve) => setTimeout(() => resolve(true), 4000)),
-    ]);
-    if (debuggerTimedOut) gaveUpWaitingForDebugger = true;
-    notify(`debugger step done (timedOut=${debuggerTimedOut}, attached=${debuggerAttached})`);
+    // Background tab only — no chrome.debugger (avoids "Chrome is being controlled" banner).
+    // autoDiscardable:false reduces tab discard under memory pressure; if generation stalls
+    // while another app is foreground, keep Chrome visible or use gpt-auto-headless / manual GPT.
     try {
       await chrome.tabs.update(tab.id, { autoDiscardable: false });
     } catch {
@@ -462,13 +439,6 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
 
     return text;
   } finally {
-    if (debuggerAttached) {
-      try {
-        await chrome.debugger.detach({ tabId: tab.id });
-      } catch {
-        /* Tab may already be gone */
-      }
-    }
     try {
       await chrome.tabs.remove(tab.id);
     } catch {
