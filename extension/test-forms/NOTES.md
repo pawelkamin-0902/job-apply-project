@@ -3947,6 +3947,13 @@ unverified outside a live browser).
     separators; prefer `.job-header h2` / `#job-description`; JazzHR Organization +
     subdomain company; strip `.welcome-message` from cleanedText.
 
+174. **Auto Fill: no chrome.debugger / trusted clicks.** `Author: Cursor`. User asked to
+    remove debugging during apply. `trustedClick` in `runAutofillInPage` and
+    `fillGeneratedAnswersInPage` is now a no-op (always false); removed `TRUSTED_CLICK` from
+    `background.js`. Combobox fallbacks use synthetic events only — BambooHR Fabric and similar
+    may need manual picks. **gpt-auto** ChatGPT tab generation still uses `chrome.debugger` for
+    background-tab anti-throttle (separate from Auto Fill).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred

@@ -65,62 +65,6 @@ chrome.tabs.onCreated.addListener((tab) => {
 // next time it's actually switched to, instead of all of them being swept eagerly at once.
 chrome.tabs.onActivated.addListener(({ tabId }) => makeSidePanelPerTab(tabId));
 
-// Last-resort click mechanism for widgets whose own JS specifically checks event.isTrusted
-// before reacting - confirmed live on BambooHR's "Fabric" Select component: a real manual click
-// opens its dropdown normally, but no combination of synthetic dispatchEvent-constructed events
-// (mousedown/up, click, pointerdown/up, correctly set isPrimary/pointerType/etc.) ever does,
-// even though those same events work correctly on every other site tested. isTrusted can NEVER
-// be set to true by any script, by deliberate browser design - there is no way to fix this from
-// within the page's own JS at all, only by dispatching input at the browser-internals level via
-// the Chrome DevTools Protocol, which chrome.debugger exposes and Chrome treats as genuinely
-// trusted input. Attaches only for the instant it takes to send one press+release, then detaches
-// immediately - the visible "this extension started debugging this browser" banner is a real,
-// unavoidable cost of this API, kept as brief as possible and used only as an explicit fallback
-// (see trustedClick in sidepanel.js) when the normal, invisible synthetic-click path doesn't
-// produce any visible effect - not for every click on every page.
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "TRUSTED_CLICK") return false;
-  const tabId = sender.tab && sender.tab.id;
-  if (tabId === undefined) {
-    sendResponse({ ok: false, error: "No tab id on the sender - message didn't come from a real page." });
-    return true;
-  }
-  (async () => {
-    // chrome.debugger.attach() can HANG INDEFINITELY rather than reject when it hits Chrome's
-    // own concurrent-debugger-session limit (confirmed live: with several tabs' side panels
-    // each independently doing their own trustedClick work, attach() calls piled up and just
-    // never resolved at all - not an error, a genuine hang - reported as combobox fills taking
-    // multiple minutes each with no error surfaced anywhere). Racing it against a timeout turns
-    // that into a normal, fast failure (falls back to sidepanel.js's own non-trusted-click
-    // paths) instead of a silent multi-minute stall with nothing to show for it.
-    let attached = false;
-    try {
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("chrome.debugger.attach timed out (likely hit Chrome's concurrent debugger-session limit)")), 4000)
-      );
-      await Promise.race([chrome.debugger.attach({ tabId }, "1.3"), timeout]);
-      attached = true;
-      try {
-        const clickArgs = { x: message.x, y: message.y, button: "left", clickCount: 1 };
-        await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type: "mousePressed", ...clickArgs });
-        await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", { type: "mouseReleased", ...clickArgs });
-      } finally {
-        await chrome.debugger.detach({ tabId });
-      }
-      sendResponse({ ok: true });
-    } catch (err) {
-      // If attach() eventually resolves AFTER the timeout already gave up, it can leave a real,
-      // now-orphaned debugger session attached with nothing to ever detach it - best-effort
-      // cleanup attempt, not guaranteed (the late attach may not have landed yet at all).
-      if (!attached) {
-        chrome.debugger.detach({ tabId }).catch(() => {});
-      }
-      sendResponse({ ok: false, error: err.message });
-    }
-  })();
-  return true; // keeps sendResponse valid across the async work above
-});
-
 // Global keyboard shortcuts (manifest.json's "commands") - fire from anywhere, including the
 // job page itself, not just while the side panel has focus. This service worker has no direct
 // handle on any specific tab's own side panel document, so it can't call a function in it

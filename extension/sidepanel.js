@@ -5120,51 +5120,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
-  // Last-resort fallback for a widget whose own JS specifically checks event.isTrusted before
-  // reacting (confirmed live: BambooHR's "Fabric" Select component - a real manual click opens
-  // its dropdown, but no synthetic dispatchEvent sequence ever does, on this one widget
-  // specifically, despite the same simulateClick working correctly on every other site tested).
-  // isTrusted can never be set to true by any script, by deliberate browser design - the only
-  // way around it is dispatching input at the browser-internals level via the Chrome DevTools
-  // Protocol (background.js's TRUSTED_CLICK handler, using chrome.debugger), which Chrome treats
-  // as genuinely trusted. Shows a real, unavoidable "this extension started debugging this
-  // browser" banner for the brief moment it's attached - only used as an explicit fallback when
-  // simulateClick's own (invisible, no-banner) attempt produced no visible effect, never as the
-  // default path. Returns false (not throwing) on any failure, so callers can just fall through
-  // to reporting the field as unmatched exactly as if this fallback didn't exist.
-  function trustedClick(el) {
-    return new Promise((resolve) => {
-      try {
-        if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
-          resolve(false);
-          return;
-        }
-        const rect = el.getBoundingClientRect();
-        let x = rect.left + rect.width / 2;
-        let y = rect.top + rect.height / 2;
-        let win = el && el.ownerDocument && el.ownerDocument.defaultView;
-        while (win && win !== win.top) {
-          const frameEl = win.frameElement;
-          if (!frameEl) break;
-          const fr = frameEl.getBoundingClientRect();
-          x += fr.left;
-          y += fr.top;
-          win = win.parent;
-        }
-        let done = false;
-        const finish = (ok) => {
-          if (done) return;
-          done = true;
-          resolve(ok);
-        };
-        setTimeout(() => finish(false), 600);
-        chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y }, (response) => {
-          finish(Boolean(response && response.ok));
-        });
-      } catch {
-        resolve(false);
-      }
-    });
+  // Auto Fill does not use chrome.debugger / CDP trusted clicks — avoids the "Chrome is being
+  // controlled" banner during apply. Call sites still invoke trustedClick as a last resort in
+  // combobox chains; this stub always declines so they fall through to unmatched / synthetic only.
+  function trustedClick(_el) {
+    return Promise.resolve(false);
   }
 
   // Finds whatever rendered as the option list after opening a combobox, trying
@@ -10675,51 +10635,11 @@ async function fillGeneratedAnswersInPage(answers) {
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
-  // Last-resort fallback for a widget whose own JS specifically checks event.isTrusted before
-  // reacting (confirmed live: BambooHR's "Fabric" Select component - a real manual click opens
-  // its dropdown, but no synthetic dispatchEvent sequence ever does, on this one widget
-  // specifically, despite the same simulateClick working correctly on every other site tested).
-  // isTrusted can never be set to true by any script, by deliberate browser design - the only
-  // way around it is dispatching input at the browser-internals level via the Chrome DevTools
-  // Protocol (background.js's TRUSTED_CLICK handler, using chrome.debugger), which Chrome treats
-  // as genuinely trusted. Shows a real, unavoidable "this extension started debugging this
-  // browser" banner for the brief moment it's attached - only used as an explicit fallback when
-  // simulateClick's own (invisible, no-banner) attempt produced no visible effect, never as the
-  // default path. Returns false (not throwing) on any failure, so callers can just fall through
-  // to reporting the field as unmatched exactly as if this fallback didn't exist.
-  function trustedClick(el) {
-    return new Promise((resolve) => {
-      try {
-        if (!chrome || !chrome.runtime || typeof chrome.runtime.sendMessage !== "function") {
-          resolve(false);
-          return;
-        }
-        const rect = el.getBoundingClientRect();
-        let x = rect.left + rect.width / 2;
-        let y = rect.top + rect.height / 2;
-        let win = el && el.ownerDocument && el.ownerDocument.defaultView;
-        while (win && win !== win.top) {
-          const frameEl = win.frameElement;
-          if (!frameEl) break;
-          const fr = frameEl.getBoundingClientRect();
-          x += fr.left;
-          y += fr.top;
-          win = win.parent;
-        }
-        let done = false;
-        const finish = (ok) => {
-          if (done) return;
-          done = true;
-          resolve(ok);
-        };
-        setTimeout(() => finish(false), 600);
-        chrome.runtime.sendMessage({ type: "TRUSTED_CLICK", x, y }, (response) => {
-          finish(Boolean(response && response.ok));
-        });
-      } catch {
-        resolve(false);
-      }
-    });
+  // Auto Fill does not use chrome.debugger / CDP trusted clicks — avoids the "Chrome is being
+  // controlled" banner during apply. Call sites still invoke trustedClick as a last resort in
+  // combobox chains; this stub always declines so they fall through to unmatched / synthetic only.
+  function trustedClick(_el) {
+    return Promise.resolve(false);
   }
 
   // Kept in sync with runAutofillInPage — must pierce open shadow roots for SmartRecruiters
