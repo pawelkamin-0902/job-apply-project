@@ -2858,11 +2858,46 @@ function sendChatGptPromptInPage(prompt) {
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function simulateClick(el) {
+    if (!el) return;
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    const pointerOpts = { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true };
+    if (typeof PointerEvent === "function") el.dispatchEvent(new PointerEvent("pointerdown", pointerOpts));
+    el.dispatchEvent(new MouseEvent("mousedown", opts));
+    if (typeof PointerEvent === "function") el.dispatchEvent(new PointerEvent("pointerup", pointerOpts));
+    el.dispatchEvent(new MouseEvent("mouseup", opts));
+    el.dispatchEvent(new MouseEvent("click", opts));
+  }
+
+  function dispatchKey(el, key, code) {
+    const init = { key, code, keyCode: key === "Enter" ? 13 : 0, which: key === "Enter" ? 13 : 0, bubbles: true, cancelable: true };
+    el.dispatchEvent(new KeyboardEvent("keydown", init));
+    el.dispatchEvent(new KeyboardEvent("keyup", init));
+  }
+
   function setComposerText(el, text) {
     el.focus();
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
       nativeSet(el, text);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
       return;
+    }
+    // Contenteditable / ProseMirror — execCommand insertText updates React state more reliably
+    // than assigning textContent alone (reported live: prompt visible but Send stayed inert).
+    try {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.addRange(range);
+      }
+      if (document.execCommand("insertText", false, text)) {
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+        return;
+      }
+    } catch {
+      /* fall through */
     }
     el.textContent = "";
     for (const line of text.split("\n")) {
@@ -2870,12 +2905,13 @@ function sendChatGptPromptInPage(prompt) {
       p.textContent = line || "​";
       el.appendChild(p);
     }
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
   }
 
   function findComposer() {
     return (
       document.querySelector("#prompt-textarea") ||
+      document.querySelector('div#prompt-textarea[contenteditable="true"]') ||
       document.querySelector('form [contenteditable="true"]') ||
       document.querySelector('[contenteditable="true"]') ||
       document.querySelector("form textarea")
@@ -2883,11 +2919,27 @@ function sendChatGptPromptInPage(prompt) {
   }
 
   function findSendButton() {
-    return (
-      document.querySelector('button[data-testid="send-button"]') ||
-      document.querySelector('button[aria-label*="Send" i]') ||
-      document.querySelector('form button[type="submit"]')
-    );
+    const selectors = [
+      'button[data-testid="send-button"]',
+      'button[data-testid="composer-submit-button"]',
+      'button[aria-label*="Send prompt" i]',
+      'button[aria-label*="Send message" i]',
+      'button[aria-label*="Send" i]',
+      'form button[type="submit"]',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  function isSendDisabled(btn) {
+    if (!btn || !btn.isConnected) return true;
+    if (btn.disabled) return true;
+    if (btn.getAttribute("aria-disabled") === "true") return true;
+    const pe = window.getComputedStyle(btn).pointerEvents;
+    return pe === "none";
   }
 
   function isGenerating() {
@@ -2896,6 +2948,13 @@ function sendChatGptPromptInPage(prompt) {
         'button[data-testid="stop-button"], button[aria-label*="Stop" i], button[aria-label*="Stop streaming" i], button[aria-label*="Stop generating" i]'
       )
     );
+  }
+
+  function submissionStarted(beforeHref) {
+    if (isGenerating()) return true;
+    const href = location.href || "";
+    if (beforeHref && href !== beforeHref && /\/c\//.test(href)) return true;
+    return false;
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2914,22 +2973,68 @@ function sendChatGptPromptInPage(prompt) {
       };
     }
 
+    const hrefBefore = location.href;
     setComposerText(composer, prompt);
-    await sleep(300);
+    await sleep(400);
 
     let sendBtn = null;
-    for (let attempt = 0; attempt < 25 && !sendBtn; attempt++) {
+    for (let attempt = 0; attempt < 40 && !sendBtn; attempt++) {
       const candidate = findSendButton();
-      sendBtn = candidate && !candidate.disabled ? candidate : null;
+      if (candidate && !isSendDisabled(candidate)) sendBtn = candidate;
       if (!sendBtn) await sleep(200);
     }
     if (!sendBtn) {
       return { ok: false, error: "Could not find (or enable) ChatGPT's send button.", href: location.href };
     }
-    sendBtn.click();
 
-    // Return quickly after click — SPA nav to /c/<uuid> can kill a long wait here.
-    await sleep(250);
+    async function trySubmitOnce() {
+      simulateClick(sendBtn);
+      await sleep(120);
+      if (submissionStarted(hrefBefore)) return true;
+      try {
+        sendBtn.click();
+      } catch {
+        /* ignore */
+      }
+      await sleep(120);
+      if (submissionStarted(hrefBefore)) return true;
+      composer.focus();
+      dispatchKey(composer, "Enter", "Enter");
+      await sleep(120);
+      if (submissionStarted(hrefBefore)) return true;
+      const form = sendBtn.closest && sendBtn.closest("form");
+      if (form) {
+        try {
+          if (typeof form.requestSubmit === "function") form.requestSubmit(sendBtn);
+          else form.submit();
+        } catch {
+          /* ignore */
+        }
+        await sleep(150);
+      }
+      return submissionStarted(hrefBefore);
+    }
+
+    let submitted = false;
+    for (let round = 0; round < 3 && !submitted; round++) {
+      submitted = await trySubmitOnce();
+      if (!submitted) {
+        setComposerText(composer, prompt);
+        await sleep(250);
+      }
+    }
+    if (!submitted) {
+      return {
+        ok: false,
+        error:
+          "Typed the prompt but ChatGPT did not start generating — the Send click may have been ignored. Try clicking Send once manually, or reload the extension and retry.",
+        href: location.href,
+        generating: false,
+      };
+    }
+
+    // Return quickly after submit — SPA nav to /c/<uuid> can kill a long wait here.
+    await sleep(200);
     return {
       ok: true,
       sent: true,

@@ -3960,6 +3960,14 @@ unverified outside a live browser).
     generation may stall or time out if Chrome throttles the tab while another app is foreground;
     keep Chrome usable on-screen, use manual GPT, or try `gpt-auto-headless` (companion Playwright).
 
+176. **gpt-auto Send not firing (prompt typed, user had to click Send).** `Author: Cursor`.
+    Reported live during Auto Fill batched Q/A: composer showed the prompt but generation never
+    started until manual Send — poll/delete/close still worked afterward. `sendChatGptPromptInPage`
+    now uses `execCommand('insertText')` + `InputEvent` for React/ProseMirror, waits for Send to
+    leave `disabled`/`aria-disabled`, then tries pointer-aware `simulateClick`, `.click()`, Enter
+    on the composer, and `form.requestSubmit`; fails phase1 with a clear error if streaming never
+    starts (instead of polling for 3 minutes with an unsent prompt).
+
 ## Known gaps (not yet acted on)
 
 - `Profile` schema (`companion-service/app/schemas.py`) has no fields for: nickname/preferred
