@@ -4046,6 +4046,15 @@ unverified outside a live browser).
   not implemented since it requires the react-select listbox-driving gap above to actually
   fill it once derived.
 
+46. **BambooHR Fabric Country search/pick (assertive `20261018T040300Z`).** The open menu
+    filters via `input.fab-MenuSearch__input` and lists choices as
+    `.fab-MenuOption[role="menuitem"]` (label in `.fab-MenuOption__row`), not
+    `[role="option"]` / ListItem — typing "Poland" looked right but `fabric pick` always
+    FAILED. Auto Fill now targets those selectors, polls until the option appears, trusted-clicks
+    the row, and skips City/Province/Postal until Country is committed (avoids Masovian on the
+    US State fabric and stray text in Postal). Look for `build=20261018-v2` /
+    `build=bamboo-split-v2` in the console log after reload.
+
 ## Automated capture (`captured/` subfolder)
 
 As of the "Save Sample" button in the side panel, samples can also be captured directly

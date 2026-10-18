@@ -3684,7 +3684,9 @@ function deleteChatGptConversationInPage() {
 // Injected on its own on BambooHR (before runAutofillInPage) — must be self-contained. Nested
 // helpers inside runAutofillInPage are not always reachable when Chrome serializes that closure.
 function bambooCountryFillInPage(countryName, tabId) {
-  const BUILD = "20261018-v1";
+  const BUILD = "20261018-v2";
+  const FAB_MENU_OPTION_SEL =
+    '.fab-MenuOption[role="menuitem"], .fab-MenuOption, [role="menuitem"].fab-MenuOption';
   const textOf =
     typeof cleanedText === "function"
       ? cleanedText
@@ -3785,6 +3787,31 @@ function bambooCountryFillInPage(countryName, tabId) {
     document.dispatchEvent(new KeyboardEvent("keyup", esc));
   }
 
+  function fabOptionText(opt) {
+    const row = opt && opt.querySelector(".fab-MenuOption__row");
+    return textOf(row || opt);
+  }
+
+  function visibleMenuRoot(toggle) {
+    const isVisible = (node) => {
+      const r = node.getBoundingClientRect();
+      return r.width > 8 && r.height > 8;
+    };
+    const menuId = toggle && toggle.getAttribute("data-menu-id");
+    if (menuId) {
+      const byId = document.getElementById(menuId);
+      if (byId) {
+        const vessel = byId.closest(".fab-MenuVessel") || byId;
+        if (isVisible(vessel)) return vessel;
+      }
+    }
+    for (const v of document.querySelectorAll(".fab-MenuVessel")) {
+      if (!isVisible(v)) continue;
+      if (v.querySelector(`${FAB_MENU_OPTION_SEL}, input.fab-MenuSearch__input`)) return v;
+    }
+    return null;
+  }
+
   return (async () => {
     console.info(
       `[Auto Fill][bamboo-country] build=${BUILD} tabId=${tabId != null ? tabId : "?"} want=${JSON.stringify(countryName)}`
@@ -3820,49 +3847,55 @@ function bambooCountryFillInPage(countryName, tabId) {
     console.info(`[Auto Fill][bamboo-country] menu opened=${opened}`);
     if (!opened) return { ok: false, error: "Fabric Country menu did not open", display: fabricDisplay(toggle) };
 
-    const menuId = toggle.getAttribute("data-menu-id");
-    const menuRoot = (menuId && document.getElementById(menuId)) || document.querySelector(".fab-MenuVessel, .fab-Menu");
+    const menuRoot = visibleMenuRoot(toggle);
     const filter =
-      (menuRoot && menuRoot.querySelector("input[type='text'], input[type='search'], input:not([type='hidden'])")) ||
-      document.querySelector(".fab-MenuVessel input, .fab-Menu input");
+      (menuRoot && menuRoot.querySelector("input.fab-MenuSearch__input")) ||
+      (menuRoot && menuRoot.querySelector("input[type='search'], input[type='text']"));
     if (filter) {
       filter.focus();
       try {
         document.execCommand("selectAll", false, null);
-        document.execCommand("insertText", false, want);
+        document.execCommand("delete", false, null);
       } catch {
-        nativeSet(filter, want);
+        /* ignore */
       }
-      filter.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want }));
-      await new Promise((r) => setTimeout(r, 500));
+      nativeSet(filter, want);
+      filter.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want })
+      );
+      filter.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
     const pickFromOptions = () => {
       const roots = [];
       if (menuRoot) roots.push(menuRoot);
-      for (const m of document.querySelectorAll(".fab-MenuVessel, .fab-Menu")) {
+      for (const m of document.querySelectorAll(".fab-MenuVessel")) {
         const r = m.getBoundingClientRect();
-        if (r.width > 8 && r.height > 8) roots.push(m);
+        if (r.width > 8 && r.height > 8 && !roots.includes(m)) roots.push(m);
       }
       const wantLow = want.toLowerCase();
       for (const root of roots) {
-        for (const opt of root.querySelectorAll(
-          '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"]'
-        )) {
+        for (const opt of root.querySelectorAll(FAB_MENU_OPTION_SEL)) {
           const r = opt.getBoundingClientRect();
           if (r.width <= 1 || r.height <= 1) continue;
-          const t = textOf(opt).toLowerCase();
+          const t = fabOptionText(opt).toLowerCase();
           if (t === wantLow || t.startsWith(wantLow + " ") || t.includes(wantLow)) return opt;
         }
       }
       return null;
     };
 
-    let match = pickFromOptions();
+    let match = null;
+    const pickDeadline = Date.now() + 2400;
+    while (Date.now() < pickDeadline && !match) {
+      match = pickFromOptions();
+      if (!match) await new Promise((r) => setTimeout(r, 120));
+    }
     if (match) {
-      simulateClick(match);
+      const clickTarget = match.querySelector(".fab-MenuOption__row") || match;
+      simulateClick(clickTarget);
       await new Promise((r) => setTimeout(r, 180));
-      if (!committed(toggle, want) && (await trustedClick(match))) {
+      if (!committed(toggle, want) && (await trustedClick(clickTarget))) {
         await new Promise((r) => setTimeout(r, 220));
       }
     }
@@ -3897,7 +3930,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
   if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(
-    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v1 prefilled=${bambooCountryPrefilled}`
+    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v2 prefilled=${bambooCountryPrefilled}`
   );
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
@@ -8160,6 +8193,12 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   async function fillBambooAddressAfterCountry() {
     if (!onBambooHr || !profile || !profile.contact) return;
+    const countryWant = profile.contact.country;
+    const countryToggle = findBambooCountryToggle();
+    if (countryWant && countryToggle && !bambooFabricCommitted(countryToggle, countryWant)) {
+      console.info("[Auto Fill][bamboo] skip address block — Country not committed yet");
+      return;
+    }
     const specs = [
       { re: /^address\b/i, val: profile.contact.address || profile.contact.address_line },
       { re: /^city\b/i, val: profile.contact.city },
@@ -8520,16 +8559,78 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     );
   }
 
+  const FAB_MENU_OPTION_SEL =
+    '.fab-MenuOption[role="menuitem"], .fab-MenuOption, [role="menuitem"].fab-MenuOption';
+
+  function fabMenuOptionText(opt) {
+    if (!opt) return "";
+    const row = opt.querySelector(".fab-MenuOption__row");
+    return cleanedText(row || opt);
+  }
+
+  function findBambooFabricMenuRoot(toggle) {
+    const isVisible = (node) => {
+      const r = node.getBoundingClientRect();
+      return r.width > 8 && r.height > 8;
+    };
+    const menuId = toggle && toggle.getAttribute && toggle.getAttribute("data-menu-id");
+    if (menuId) {
+      const byId = document.getElementById(menuId);
+      if (byId) {
+        const vessel = byId.closest(".fab-MenuVessel") || byId;
+        if (isVisible(vessel)) return vessel;
+      }
+    }
+    const controls = toggle && toggle.getAttribute("aria-controls");
+    if (controls) {
+      const c = document.getElementById(controls);
+      if (c && isVisible(c)) return c.closest(".fab-MenuVessel") || c;
+    }
+    for (const v of document.querySelectorAll(".fab-MenuVessel")) {
+      if (!isVisible(v)) continue;
+      if (v.querySelector(`${FAB_MENU_OPTION_SEL}, input.fab-MenuSearch__input`)) return v;
+    }
+    return null;
+  }
+
+  function findFabMenuSearchInput(menuRoot) {
+    if (!menuRoot) return null;
+    return (
+      menuRoot.querySelector("input.fab-MenuSearch__input") ||
+      menuRoot.querySelector("input[type='search']") ||
+      menuRoot.querySelector("input[type='text']")
+    );
+  }
+
+  async function typeFabMenuFilter(filter, text) {
+    const want = String(text || "").trim();
+    if (!filter || !want) return;
+    filter.focus();
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+    } catch {
+      /* execCommand may be unavailable */
+    }
+    nativeSet(filter, want);
+    filter.dispatchEvent(
+      new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want })
+    );
+    filter.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
   function collectFabMenuOptions(toggle) {
     const isVisible = (node) => {
       const r = node.getBoundingClientRect();
       return r.width > 1 && r.height > 1;
     };
     const roots = [];
+    const scoped = findBambooFabricMenuRoot(toggle);
+    if (scoped) roots.push(scoped);
     const menuId = toggle && toggle.getAttribute && toggle.getAttribute("data-menu-id");
     if (menuId) {
       const byId = document.getElementById(menuId);
-      if (byId && isVisible(byId)) roots.push(byId);
+      if (byId && isVisible(byId) && !roots.includes(byId)) roots.push(byId.closest(".fab-MenuVessel") || byId);
     }
     if (!roots.length) {
       for (const root of document.querySelectorAll(".fab-MenuVessel, .fab-Menu, [class*='fab-Menu']")) {
@@ -8538,13 +8639,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     }
     const opts = [];
     for (const root of roots) {
+      opts.push(...root.querySelectorAll(FAB_MENU_OPTION_SEL));
       opts.push(
         ...root.querySelectorAll(
           '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"], [class*="fab-ListItem"]'
         )
       );
     }
-    return opts.filter((o) => isVisible(o) && cleanedText(o));
+    const seen = new Set();
+    return opts.filter((o) => {
+      if (!o || seen.has(o)) return false;
+      seen.add(o);
+      return isVisible(o) && fabMenuOptionText(o);
+    });
   }
 
   function matchFabOptionText(options, desiredText) {
@@ -8552,10 +8659,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       .toLowerCase()
       .trim();
     if (!target || !options.length) return null;
+    const label = (o) => fabMenuOptionText(o).toLowerCase();
     return (
-      options.find((o) => cleanedText(o).toLowerCase() === target) ||
-      options.find((o) => cleanedText(o).toLowerCase().startsWith(target + " ")) ||
-      options.find((o) => cleanedText(o).toLowerCase().includes(target)) ||
+      options.find((o) => label(o) === target) ||
+      options.find((o) => label(o).startsWith(target + " ")) ||
+      options.find((o) => label(o).includes(target)) ||
       null
     );
   }
@@ -8604,28 +8712,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       await new Promise((r) => setTimeout(r, 120));
     }
 
-    const menuRoot =
-      (toggle.getAttribute("data-menu-id") && document.getElementById(toggle.getAttribute("data-menu-id"))) ||
-      document.querySelector(".fab-MenuVessel, .fab-Menu");
-    const filter =
-      (menuRoot &&
-        menuRoot.querySelector("input[type='text'], input[type='search'], input:not([type='hidden'])")) ||
-      document.querySelector(".fab-MenuVessel input[type='text'], .fab-MenuVessel input[type='search']") ||
-      document.querySelector(".fab-Menu input, [class*='fab-Menu'] input[type='text']");
+    const menuRoot = findBambooFabricMenuRoot(toggle);
+    const filter = findFabMenuSearchInput(menuRoot);
     if (filter) {
-      filter.focus();
-      try {
-        document.execCommand("selectAll", false, null);
-        document.execCommand("insertText", false, want);
-      } catch {
-        nativeSet(filter, want);
-      }
-      filter.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want }));
-      await new Promise((r) => setTimeout(r, 450));
+      await typeFabMenuFilter(filter, want);
     }
 
-    let options = collectFabMenuOptions(toggle);
-    let match = matchFabOptionText(options, want);
+    let match = null;
+    const pickDeadline = Date.now() + 2400;
+    while (Date.now() < pickDeadline && !match) {
+      const options = collectFabMenuOptions(toggle);
+      match = matchFabOptionText(options, want);
+      if (!match) await new Promise((r) => setTimeout(r, 120));
+    }
     if (!match && hidden && hidden.options.length > 1 && setSelectValue(hidden, want)) {
       hidden.dispatchEvent(new Event("input", { bubbles: true }));
       hidden.dispatchEvent(new Event("change", { bubbles: true }));
@@ -8635,14 +8734,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         return true;
       }
     }
-    if (!match) {
-      options = collectFabMenuOptions(toggle);
-      match = matchFabOptionText(options, want);
-    }
     if (match) {
-      simulateClick(match);
+      const clickTarget = match.querySelector(".fab-MenuOption__row") || match;
+      simulateClick(clickTarget);
       await new Promise((r) => setTimeout(r, 150));
-      if (!bambooFabricCommitted(toggle, want) && (await trustedClick(match))) {
+      if (!bambooFabricCommitted(toggle, want) && (await trustedClick(clickTarget))) {
         await new Promise((r) => setTimeout(r, 200));
       }
     }
@@ -9494,7 +9590,8 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       console.info(
         `[Auto Fill][bamboo] after Country settle singles=${singles.length} menuOpen=${bambooFabricMenuOpen()} blocked=${bambooLowerFieldsBlocked()}`
       );
-      await fillBambooAddressAfterCountry();
+      if (ok) await fillBambooAddressAfterCountry();
+      else console.info("[Auto Fill][bamboo] skip address block — Country pick failed");
     }
   } else if (
     onBambooHr &&
@@ -9504,15 +9601,22 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     profile.contact &&
     profile.contact.country
   ) {
-    console.info("[Auto Fill][bamboo] Country pre-filled via bambooCountryFillInPage — settle + address block");
+    const preToggle = findBambooCountryToggle();
+    const preOk =
+      preToggle && bambooFabricCommitted(preToggle, profile.contact.country);
+    console.info(
+      `[Auto Fill][bamboo] Country pre-filled via bambooCountryFillInPage — settle committed=${preOk}`
+    );
     await waitBambooHrAfterCountryChange();
-    filled.push({ label: "Country", value: profile.contact.country, source: "profile" });
+    if (preOk) {
+      filled.push({ label: "Country", value: profile.contact.country, source: "profile" });
+    }
     const again = collectFormFields();
     singles = again.singles;
     groups = again.groups;
     loneCheckboxes = again.loneCheckboxes;
     singleKeys = new Map(singles.map(({ element }) => [element, nearestNamedControlKey(element)]));
-    await fillBambooAddressAfterCountry();
+    if (preOk) await fillBambooAddressAfterCountry();
   }
 
   for (let { element, host } of singles) {
