@@ -3680,9 +3680,204 @@ function deleteChatGptConversationInPage() {
 // `canGenerate: true`; the side panel calls /generate-answer for those (a network call the
 // page's own CSP might block, so it has to happen in the panel, not here), then runs
 // fillGeneratedAnswersInPage as a second pass to fill them back in by that same idx.
+
+// Injected on its own on BambooHR (before runAutofillInPage) — must be self-contained. Nested
+// helpers inside runAutofillInPage are not always reachable when Chrome serializes that closure.
+function bambooCountryFillInPage(countryName, tabId) {
+  const BUILD = "20261018-v1";
+  const textOf =
+    typeof cleanedText === "function"
+      ? cleanedText
+      : (el) => String((el && (el.textContent || el.innerText)) || "").replace(/\s+/g, " ").trim();
+
+  function simulateClick(el) {
+    if (!el) return;
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    const pointerOpts = { ...opts, pointerId: 1, pointerType: "mouse", isPrimary: true };
+    if (typeof PointerEvent === "function") el.dispatchEvent(new PointerEvent("pointerdown", pointerOpts));
+    el.dispatchEvent(new MouseEvent("mousedown", opts));
+    if (typeof PointerEvent === "function") el.dispatchEvent(new PointerEvent("pointerup", pointerOpts));
+    el.dispatchEvent(new MouseEvent("mouseup", opts));
+    el.dispatchEvent(new MouseEvent("click", opts));
+  }
+
+  function trustedClick(el) {
+    return new Promise((resolve) => {
+      if (!el || typeof el.getBoundingClientRect !== "function") {
+        resolve(false);
+        return;
+      }
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) {
+        resolve(false);
+        return;
+      }
+      const payload = {
+        type: "TRUSTED_CLICK",
+        x: r.left + r.width / 2,
+        y: r.top + r.height / 2,
+      };
+      if (tabId != null) payload.tabId = tabId;
+      try {
+        if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+          resolve(false);
+          return;
+        }
+        chrome.runtime.sendMessage(payload, (resp) => {
+          if (chrome.runtime.lastError) resolve(false);
+          else resolve(Boolean(resp && resp.ok));
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  function nativeSet(element, value) {
+    const proto =
+      element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
+    if (setter) setter.call(element, value);
+    else element.value = value;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function fabricDisplay(toggle) {
+    const valueNode = toggle.querySelector(".fab-SelectToggle__value, [class*='fab-SelectToggle__value']");
+    if (valueNode) {
+      const t = textOf(valueNode);
+      if (t && !/^[\u2013\u2014-]?\s*select\s*[\u2013\u2014-]?$/i.test(t)) return t;
+    }
+    return "";
+  }
+
+  function committed(toggle, want) {
+    const w = want.toLowerCase();
+    const d = fabricDisplay(toggle).toLowerCase();
+    if (d && (d === w || d.includes(w))) return true;
+    const scope =
+      toggle.closest('[data-fabric-component="Select"]') || toggle.closest(".fab-Select") || toggle.parentElement;
+    const sel =
+      scope &&
+      scope.querySelector('select[name="countryId.value"], select[name="country.value"], select.chzn-ignore');
+    if (sel && sel.selectedIndex >= 0) {
+      const t = textOf(sel.options[sel.selectedIndex]);
+      if (t && sel.options[sel.selectedIndex].value && (t.toLowerCase() === w || t.toLowerCase().includes(w))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function menuOpen() {
+    if (document.querySelector(".fab-SelectToggle[aria-expanded='true']")) return true;
+    for (const m of document.querySelectorAll(".fab-MenuVessel, .fab-Menu")) {
+      const r = m.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) return true;
+    }
+    return false;
+  }
+
+  function closeMenu() {
+    const esc = { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true };
+    document.dispatchEvent(new KeyboardEvent("keydown", esc));
+    document.dispatchEvent(new KeyboardEvent("keyup", esc));
+  }
+
+  return (async () => {
+    console.info(
+      `[Auto Fill][bamboo-country] build=${BUILD} tabId=${tabId != null ? tabId : "?"} want=${JSON.stringify(countryName)}`
+    );
+    if (!/(^|\.)bamboohr\.com$/i.test(location.hostname || "")) {
+      return { ok: false, skipped: true, reason: "not-bamboohr" };
+    }
+    const want = String(countryName || "").trim();
+    if (!want) return { ok: false, error: "empty country" };
+
+    const toggle =
+      document.querySelector('button.fab-SelectToggle[aria-label*="Country" i]') ||
+      (() => {
+        const h = document.querySelector('select[name="countryId.value"], select[name="country.value"]');
+        const scope = h && h.closest('[data-fabric-component="Select"]');
+        return scope && scope.querySelector("button.fab-SelectToggle");
+      })();
+    if (!toggle) return { ok: false, error: "Country fab-SelectToggle not found" };
+
+    if (committed(toggle, want)) {
+      console.info(`[Auto Fill][bamboo-country] already "${fabricDisplay(toggle) || want}"`);
+      return { ok: true, already: true, display: fabricDisplay(toggle) || want };
+    }
+
+    toggle.focus();
+    simulateClick(toggle);
+    await new Promise((r) => setTimeout(r, 250));
+    let opened = toggle.getAttribute("aria-expanded") === "true" || menuOpen();
+    if (!opened && (await trustedClick(toggle))) {
+      await new Promise((r) => setTimeout(r, 300));
+      opened = toggle.getAttribute("aria-expanded") === "true" || menuOpen();
+    }
+    console.info(`[Auto Fill][bamboo-country] menu opened=${opened}`);
+    if (!opened) return { ok: false, error: "Fabric Country menu did not open", display: fabricDisplay(toggle) };
+
+    const menuId = toggle.getAttribute("data-menu-id");
+    const menuRoot = (menuId && document.getElementById(menuId)) || document.querySelector(".fab-MenuVessel, .fab-Menu");
+    const filter =
+      (menuRoot && menuRoot.querySelector("input[type='text'], input[type='search'], input:not([type='hidden'])")) ||
+      document.querySelector(".fab-MenuVessel input, .fab-Menu input");
+    if (filter) {
+      filter.focus();
+      try {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, want);
+      } catch {
+        nativeSet(filter, want);
+      }
+      filter.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: want }));
+      await new Promise((r) => setTimeout(r, 500));
+    }
+
+    const pickFromOptions = () => {
+      const roots = [];
+      if (menuRoot) roots.push(menuRoot);
+      for (const m of document.querySelectorAll(".fab-MenuVessel, .fab-Menu")) {
+        const r = m.getBoundingClientRect();
+        if (r.width > 8 && r.height > 8) roots.push(m);
+      }
+      const wantLow = want.toLowerCase();
+      for (const root of roots) {
+        for (const opt of root.querySelectorAll(
+          '[role="option"], [data-fabric-component="ListItem"], .fab-ListItem, li[role="option"]'
+        )) {
+          const r = opt.getBoundingClientRect();
+          if (r.width <= 1 || r.height <= 1) continue;
+          const t = textOf(opt).toLowerCase();
+          if (t === wantLow || t.startsWith(wantLow + " ") || t.includes(wantLow)) return opt;
+        }
+      }
+      return null;
+    };
+
+    let match = pickFromOptions();
+    if (match) {
+      simulateClick(match);
+      await new Promise((r) => setTimeout(r, 180));
+      if (!committed(toggle, want) && (await trustedClick(match))) {
+        await new Promise((r) => setTimeout(r, 220));
+      }
+    }
+
+    const ok = committed(toggle, want);
+    console.info(`[Auto Fill][bamboo-country] pick -> ${ok ? "ok" : "FAILED"} display="${fabricDisplay(toggle)}"`);
+    if (menuOpen()) closeMenu();
+    return { ok, display: fabricDisplay(toggle) };
+  })();
+}
+
 async function runAutofillInPage(profile, qaBank, options = {}) {
   const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
   const autofillTabId = options && options.autofillTabId;
+  const bambooCountryPrefilled = Boolean(options && options.bambooCountryPrefilled);
   const href = location.href || "";
   const unusableFrame =
     !href ||
@@ -3701,7 +3896,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     isTop = true;
   }
   if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
-  console.info(`[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""}`);
+  console.info(
+    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v1 prefilled=${bambooCountryPrefilled}`
+  );
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
   );
@@ -9265,7 +9462,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // rest of the form, then Country (United States → Poland) remounts State as Province and
   // replaces Date Available / Desired Pay / LinkedIn. Filling those from the pre-swap node
   // list silently no-ops. Fill Country first, close the menu, re-collect, then continue.
-  if (onBambooHr && !onlyPhoneCountry && profile && profile.contact && profile.contact.country) {
+  if (
+    onBambooHr &&
+    !onlyPhoneCountry &&
+    !bambooCountryPrefilled &&
+    profile &&
+    profile.contact &&
+    profile.contact.country
+  ) {
     const toggle = findBambooCountryToggle();
     const countrySingle =
       (toggle && { element: toggle, host: toggle }) ||
@@ -9292,6 +9496,23 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       );
       await fillBambooAddressAfterCountry();
     }
+  } else if (
+    onBambooHr &&
+    !onlyPhoneCountry &&
+    bambooCountryPrefilled &&
+    profile &&
+    profile.contact &&
+    profile.contact.country
+  ) {
+    console.info("[Auto Fill][bamboo] Country pre-filled via bambooCountryFillInPage — settle + address block");
+    await waitBambooHrAfterCountryChange();
+    filled.push({ label: "Country", value: profile.contact.country, source: "profile" });
+    const again = collectFormFields();
+    singles = again.singles;
+    groups = again.groups;
+    loneCheckboxes = again.loneCheckboxes;
+    singleKeys = new Map(singles.map(({ element }) => [element, nearestNamedControlKey(element)]));
+    await fillBambooAddressAfterCountry();
   }
 
   for (let { element, host } of singles) {
@@ -15165,9 +15386,32 @@ el("autofillBtn").addEventListener("click", async () => {
     // call the same collectFormFields() from it rather than each carrying an independently-
     // drifting copy, so injected first here on every frame.
     await injectPageScripts(tab.id, { applicationOnly: true });
+    let bambooCountryPrefilled = false;
+    if (/bamboohr\.com/i.test(tab.url || tab.pendingUrl || "") && profile.contact && profile.contact.country) {
+      try {
+        const pre = await executeInTab(
+          tab.id,
+          { func: bambooCountryFillInPage, args: [profile.contact.country, tab.id] },
+          { applicationOnly: true }
+        );
+        const preResult = pre && pre.find((i) => i.result && i.result.ok);
+        bambooCountryPrefilled = Boolean(preResult);
+        if (pre && pre.length) {
+          console.info("[Auto Fill] bambooCountryFillInPage results:", pre.map((i) => i.result));
+        }
+      } catch (err) {
+        console.warn("[Auto Fill] bambooCountryFillInPage failed:", err && err.message ? err.message : err);
+      }
+      if (bambooCountryPrefilled) {
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    }
     const injections = await executeInTab(
       tab.id,
-      { func: runAutofillInPage, args: [profile, qaBank, { autofillTabId: tab.id }] },
+      {
+        func: runAutofillInPage,
+        args: [profile, qaBank, { autofillTabId: tab.id, bambooCountryPrefilled }],
+      },
       { applicationOnly: true }
     );
     const valid = (injections || []).filter((i) => i.result);

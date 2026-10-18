@@ -3967,6 +3967,13 @@ unverified outside a live browser).
     on the composer, and `form.requestSubmit`; fails phase1 with a clear error if streaming never
     starts (instead of polling for 3 minutes with an unsent prompt).
 
+180. **BambooHR assertive `20261018T035751Z` — split inject still on old combobox path.** Console
+    had no `fabric fill start` / `bamboo-country build=` — injected nested helpers were not running
+    the Fabric path on Windows. Added top-level `bambooCountryFillInPage` (separate executeScript
+    before `runAutofillInPage`) with `build=20261018-v1` logs; side panel passes `tabId` for
+    TRUSTED_CLICK. Reload extension from synced share. Desired Pay stays unmatched unless profile
+    salary / GPT Q&A provides it.
+
 179. **BambooHR assertive retest `20261016T170806Z` — trusted click + order.** `Author: Cursor`.
     Console still hit generic combobox (no `fabric pick` line) — `TRUSTED_CLICK` from injected
     Auto Fill likely lacked `sender.tab`; pass `autofillTabId` from the side panel. Country via
