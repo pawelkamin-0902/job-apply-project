@@ -3684,7 +3684,7 @@ function deleteChatGptConversationInPage() {
 // Injected on its own on BambooHR (before runAutofillInPage) — must be self-contained. Nested
 // helpers inside runAutofillInPage are not always reachable when Chrome serializes that closure.
 function bambooCountryFillInPage(countryName, tabId) {
-  const BUILD = "20261018-v2";
+  const BUILD = "20261018-v3";
   const FAB_MENU_OPTION_SEL =
     '.fab-MenuOption[role="menuitem"], .fab-MenuOption, [role="menuitem"].fab-MenuOption';
   const textOf =
@@ -3756,6 +3756,15 @@ function bambooCountryFillInPage(countryName, tabId) {
 
   function committed(toggle, want) {
     const w = want.toLowerCase();
+    const aria = String((toggle && toggle.getAttribute && toggle.getAttribute("aria-label")) || "").trim();
+    const ariaTail = aria.replace(/^country\s*[\u2013\u2014-]\s*/i, "").trim().toLowerCase();
+    if (
+      ariaTail &&
+      !/^[\u2013\u2014-]?\s*select\s*[\u2013\u2014-]?$/.test(ariaTail) &&
+      (ariaTail === w || ariaTail.includes(w))
+    ) {
+      return true;
+    }
     const d = fabricDisplay(toggle).toLowerCase();
     if (d && (d === w || d.includes(w))) return true;
     const scope =
@@ -3910,7 +3919,9 @@ function bambooCountryFillInPage(countryName, tabId) {
 async function runAutofillInPage(profile, qaBank, options = {}) {
   const onlyPhoneCountry = Boolean(options && options.onlyPhoneCountry);
   const autofillTabId = options && options.autofillTabId;
-  const bambooCountryPrefilled = Boolean(options && options.bambooCountryPrefilled);
+  let bambooCountryPrefilled = Boolean(options && options.bambooCountryPrefilled);
+  const bambooPrefillSummary =
+    options && options.bambooPrefillSummary != null ? String(options.bambooPrefillSummary) : "";
   const href = location.href || "";
   const unusableFrame =
     !href ||
@@ -3930,7 +3941,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
   if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(
-    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v2 prefilled=${bambooCountryPrefilled}`
+    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v3 prefilled=${bambooCountryPrefilled}${bambooPrefillSummary ? ` pre-inject=${bambooPrefillSummary}` : ""}`
   );
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
@@ -5906,6 +5917,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     const wantLow = want.toLowerCase();
     if (comboboxValueCommitted(element, want) || isReactSelectAlreadySet(element, want)) {
       return true;
+    }
+    if (
+      onBambooHr &&
+      element.classList &&
+      element.classList.contains("fab-SelectToggle") &&
+      typeof fillBambooFabricSelect === "function"
+    ) {
+      return fillBambooFabricSelect(element, want);
     }
     try {
       if (element.setAttribute) element.setAttribute("autocomplete", "off");
@@ -8670,11 +8689,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   function bambooFabricCommitted(toggle, desiredText) {
     if (comboboxValueCommitted(toggle, desiredText)) return true;
+    const want = String(desiredText || "").toLowerCase().trim();
+    if (want) {
+      const aria = String((toggle && toggle.getAttribute && toggle.getAttribute("aria-label")) || "").trim();
+      const ariaTail = aria.replace(/^country\s*[\u2013\u2014-]\s*/i, "").trim().toLowerCase();
+      if (
+        ariaTail &&
+        !/^[\u2013\u2014-]?\s*select\s*[\u2013\u2014-]?$/.test(ariaTail) &&
+        (ariaTail === want || ariaTail.includes(want))
+      ) {
+        return true;
+      }
+      const shown = reactSelectDisplayValue(toggle).toLowerCase();
+      if (shown && (shown === want || shown.includes(want))) return true;
+    }
     const hidden = findBambooFabricHiddenSelect(toggle);
     if (!hidden || hidden.selectedIndex < 0) return false;
     const opt = hidden.options[hidden.selectedIndex];
     const t = cleanedText(opt);
-    const want = String(desiredText || "").toLowerCase().trim();
     return Boolean(t && opt.value && (t.toLowerCase() === want || t.toLowerCase().includes(want)));
   }
 
@@ -8693,16 +8725,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
     const openMenu = async () => {
       if (toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen()) return true;
+      if (await trustedClick(toggle)) {
+        await new Promise((r) => setTimeout(r, 320));
+      }
+      if (toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen()) return true;
       simulateClick(toggle);
-      await new Promise((r) => setTimeout(r, 220));
+      await new Promise((r) => setTimeout(r, 280));
       if (toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen()) return true;
       if (await trustedClick(toggle)) {
-        await new Promise((r) => setTimeout(r, 280));
+        await new Promise((r) => setTimeout(r, 320));
       }
       return toggle.getAttribute("aria-expanded") === "true" || bambooFabricMenuOpen();
     };
 
     if (!(await openMenu())) {
+      if (bambooFabricCommitted(toggle, want)) {
+        console.info(`[Auto Fill][bamboo] fabric menu closed but Country already "${want}"`);
+        return true;
+      }
       console.info(`[Auto Fill][bamboo] fabric menu failed to open for "${want}"`);
       return false;
     }
@@ -9223,19 +9263,35 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     return hit ? "Yes" : "No";
   }
 
+  function profileCountryLooksEu() {
+    const country = String((profile && profile.contact && profile.contact.country) || "").toLowerCase();
+    if (!country) return false;
+    return /\b(poland|polska|romania|românia|germany|deutschland|france|spain|italy|italia|netherlands|belgium|sweden|portugal|austria|greece|ireland|denmark|finland|hungary|czech|slovakia|croatia|bulgaria|lithuania|latvia|estonia|slovenia|luxembourg|malta|cyprus)\b/i.test(
+      country
+    );
+  }
+
+  // assertive-bamboohr-com-20261018T040942Z: "Are you located in Europe?" is not an
+  // eligible-to-work question — inferEligibleToWorkYesNo never ran.
+  function inferLocatedInEuropeYesNo(label) {
+    const raw = String(label || "");
+    if (!/\b(located|based|residing|reside|live)\s+in\s+(the\s+)?europe\b|\bin\s+europe\b/i.test(raw)) {
+      return null;
+    }
+    if (!profileCountryLooksEu()) return "No";
+    return "Yes";
+  }
+
   function inferEligibleToWorkYesNo(label) {
     const raw = String(label || "");
-    if (!/eligible to work|authori[sz]ed to work|entitled to work/i.test(raw)) return null;
     const country = String((profile && profile.contact && profile.contact.country) || "").toLowerCase();
     if (!country) return null;
+    const inEu = /\b(the\s+)?(eu|e\.u\.|europe|european union)\b/i.test(raw);
+    if (inEu && profileCountryLooksEu()) return "Yes";
+    if (!/eligible to work|authori[sz]ed to work|entitled to work/i.test(raw)) return null;
     // EU member residence → Yes for "eligible to work in the EU?" — not Poland-only
     // (Stefan Iacob / Bucharest, Romania on jobs-smartrecruiters-com-20260813T180741Z).
-    const euCountry =
-      /\b(poland|polska|romania|românia|germany|deutschland|france|spain|italy|italia|netherlands|belgium|sweden|portugal|austria|greece|ireland|denmark|finland|hungary|czech|slovakia|croatia|bulgaria|lithuania|latvia|estonia|slovenia|luxembourg|malta|cyprus)\b/i.test(
-        country
-      );
-    const inEu = /\b(the\s+)?(eu|e\.u\.|europe|european union)\b/i.test(raw);
-    if (inEu && euCountry) return "Yes";
+    if (inEu && profileCountryLooksEu()) return "Yes";
     const place = (raw.match(/\b(?:in|for)\s+(?:the\s+)?([A-Za-z][A-Za-z\s.-]{1,40}?)(?:\s*\(|\s*\?|$)/i) || [])[1];
     if (place) {
       const asked = place.trim().toLowerCase();
@@ -9250,6 +9306,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   // ---- RUN ----
   const filled = [];
   const unmatched = [];
+  let bambooCountrySettled = false;
   let nextIdx = 0;
   const stampIdx = (el, label) => {
     const idx = nextIdx++;
@@ -9481,6 +9538,11 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         filled.push({ label: group.label, value: residePick, source: "profile" });
         continue;
       }
+      const europePick = inferLocatedInEuropeYesNo(group.label);
+      if (europePick && clickGroupOption(group.options, europePick)) {
+        filled.push({ label: group.label, value: europePick, source: "profile" });
+        continue;
+      }
       const eligiblePick = inferEligibleToWorkYesNo(group.label);
       if (eligiblePick && clickGroupOption(group.options, eligiblePick)) {
         filled.push({ label: group.label, value: eligiblePick, source: "profile" });
@@ -9561,6 +9623,24 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   if (
     onBambooHr &&
     !onlyPhoneCountry &&
+    profile &&
+    profile.contact &&
+    profile.contact.country
+  ) {
+    const preToggle = findBambooCountryToggle();
+    if (
+      preToggle &&
+      bambooFabricCommitted(preToggle, profile.contact.country) &&
+      !bambooCountryPrefilled
+    ) {
+      bambooCountryPrefilled = true;
+      console.info("[Auto Fill][bamboo] Country already committed before first-pass fill");
+    }
+  }
+
+  if (
+    onBambooHr &&
+    !onlyPhoneCountry &&
     !bambooCountryPrefilled &&
     profile &&
     profile.contact &&
@@ -9575,12 +9655,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         labelForElement(countrySingle.element, countrySingle.host) ||
         (countrySingle.element.getAttribute && countrySingle.element.getAttribute("aria-label")) ||
         "Country";
-      console.info(`[Auto Fill][bamboo] fill Country first → ${JSON.stringify(profile.contact.country)}`);
-      const ok = await fillBambooFabricSelect(countrySingle.element, profile.contact.country);
+      const wantCountry = profile.contact.country;
+      let ok = bambooFabricCommitted(countrySingle.element, wantCountry);
+      if (ok) {
+        console.info(`[Auto Fill][bamboo] Country already "${wantCountry}" — skip fabric open`);
+      } else {
+        console.info(`[Auto Fill][bamboo] fill Country first → ${JSON.stringify(wantCountry)}`);
+        ok = await fillBambooFabricSelect(countrySingle.element, wantCountry);
+      }
+      bambooCountrySettled = ok;
       await waitBambooHrAfterCountryChange();
       if (ok) {
-        filled.push({ label, value: profile.contact.country, source: "profile" });
-        console.info(`[Auto Fill][filled] profile ${label}=${profile.contact.country}`);
+        filled.push({ label, value: wantCountry, source: "profile" });
+        console.info(`[Auto Fill][filled] profile ${label}=${wantCountry}`);
       }
       const again = collectFormFields();
       singles = again.singles;
@@ -9608,6 +9695,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       `[Auto Fill][bamboo] Country pre-filled via bambooCountryFillInPage — settle committed=${preOk}`
     );
     await waitBambooHrAfterCountryChange();
+    bambooCountrySettled = preOk;
     if (preOk) {
       filled.push({ label: "Country", value: profile.contact.country, source: "profile" });
     }
@@ -9635,12 +9723,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     // of pattern order, filling City/Neighborhood/Municipality/... with the street address
     // instead of their own real values.
     const ownLabel = normalizeLabel(resolveOwnLabel(element, host));
-    if (
-      onBambooHr &&
-      isBambooCountryField(element, host) &&
-      filled.some((f) => /^country\b/i.test(f.label))
-    ) {
-      continue;
+    if (onBambooHr && isBambooCountryField(element, host)) {
+      const wantC = profile && profile.contact && profile.contact.country;
+      const liveToggle =
+        element.classList && element.classList.contains("fab-SelectToggle")
+          ? element
+          : findBambooCountryToggle();
+      if (
+        bambooCountrySettled ||
+        (wantC && liveToggle && bambooFabricCommitted(liveToggle, wantC)) ||
+        filled.some((f) => /^country\b/i.test(f.label))
+      ) {
+        continue;
+      }
     }
     // SmartRecruiters screening: when definition says required:false (GitHub, reside in
     // Germany, …), leave the field blank — do not profile/QA/GPT fill. Radios already skip
@@ -9814,6 +9909,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       isResidenceCountryField &&
       looksLikeComboboxPick(element)
     ) {
+      if (
+        onBambooHr &&
+        (bambooCountrySettled ||
+          (element.classList &&
+            element.classList.contains("fab-SelectToggle") &&
+            bambooFabricCommitted(element, structuredValue)))
+      ) {
+        if (!filled.some((f) => /^country\b/i.test(f.label))) {
+          filled.push({ label, value: String(structuredValue), source: "profile" });
+        }
+        continue;
+      }
       console.info(
         `[Auto Fill][country] writing profile country=${JSON.stringify(structuredValue)} (display before=${JSON.stringify(reactSelectDisplayValue(element))})`
       );
@@ -9823,6 +9930,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         element.classList.contains("fab-SelectToggle") &&
         (await fillBambooFabricSelect(element, structuredValue))
       ) {
+        bambooCountrySettled = true;
         filled.push({ label, value: String(structuredValue), source: "profile" });
         continue;
       }
@@ -10785,8 +10893,19 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
       ) {
         continue;
       }
+      if (
+        onBambooHr &&
+        element.classList &&
+        element.classList.contains("fab-SelectToggle") &&
+        (bambooCountrySettled || bambooFabricCommitted(element, wantCountry))
+      ) {
+        continue;
+      }
       if (comboboxValueCommitted(element, wantCountry) || isReactSelectAlreadySet(element, wantCountry)) {
         continue;
+      }
+      if (onBambooHr && element.classList && element.classList.contains("fab-SelectToggle")) {
+        if (bambooFabricCommitted(element, wantCountry)) continue;
       }
       const prev = reactSelectDisplayValue(element);
       if (await forceResidenceCountryValue(element, wantCountry)) {
@@ -15491,6 +15610,7 @@ el("autofillBtn").addEventListener("click", async () => {
     // drifting copy, so injected first here on every frame.
     await injectPageScripts(tab.id, { applicationOnly: true });
     let bambooCountryPrefilled = false;
+    let bambooPrefillSummary = "";
     if (/bamboohr\.com/i.test(tab.url || tab.pendingUrl || "") && profile.contact && profile.contact.country) {
       try {
         const pre = await executeInTab(
@@ -15498,8 +15618,11 @@ el("autofillBtn").addEventListener("click", async () => {
           { func: bambooCountryFillInPage, args: [profile.contact.country, tab.id] },
           { applicationOnly: true }
         );
-        const preResult = pre && pre.find((i) => i.result && i.result.ok);
+        const preResult =
+          pre &&
+          pre.find((i) => i.result && (i.result.ok || i.result.already));
         bambooCountryPrefilled = Boolean(preResult);
+        bambooPrefillSummary = pre && pre.length ? JSON.stringify(pre.map((i) => i.result)) : "";
         if (pre && pre.length) {
           console.info("[Auto Fill] bambooCountryFillInPage results:", pre.map((i) => i.result));
         }
@@ -15514,7 +15637,15 @@ el("autofillBtn").addEventListener("click", async () => {
       tab.id,
       {
         func: runAutofillInPage,
-        args: [profile, qaBank, { autofillTabId: tab.id, bambooCountryPrefilled }],
+        args: [
+          profile,
+          qaBank,
+          {
+            autofillTabId: tab.id,
+            bambooCountryPrefilled,
+            bambooPrefillSummary,
+          },
+        ],
       },
       { applicationOnly: true }
     );

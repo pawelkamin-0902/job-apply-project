@@ -4046,6 +4046,14 @@ unverified outside a live browser).
   not implemented since it requires the react-select listbox-driving gap above to actually
   fill it once derived.
 
+47. **BambooHR Country double-fill + Europe Yes (assertive `20261018T040942Z`).** Prefill could
+    set Poland, then `runAutofillInPage` cleared the console buffer and ran Country again
+    (`fabric menu failed` / second `fabric pick FAILED`), and the generic residence
+    `final-pass` called `clearReactSelectSelection` on the Fabric toggle — Country back to
+    –Select– while LinkedIn never ran (log stopped mid-loop). Fixes: `bambooCountrySettled`
+    skips repeat Country fills, Bamboo final-pass never clears Fabric, `inferLocatedInEuropeYesNo`
+    for "located in Europe?", pre-inject summary in log (`build=bamboo-split-v3`).
+
 46. **BambooHR Fabric Country search/pick (assertive `20261018T040300Z`).** The open menu
     filters via `input.fab-MenuSearch__input` and lists choices as
     `.fab-MenuOption[role="menuitem"]` (label in `.fab-MenuOption__row`), not
