@@ -2262,8 +2262,7 @@ function resolveAvailabilityFillValue(label, element, profile, prefs) {
     return weeks === 1 ? "1 week" : "2 weeks";
   }
   if (asksNoticePhrase) {
-    const w = Math.max(1, Number(weeks) || 1);
-    return w === 1 ? "1 week" : `${w} weeks`;
+    return weeks === 1 ? "1 week" : "2 weeks";
   }
   return formatCalendarDate(startDate, order);
 }
