@@ -3922,6 +3922,10 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   let bambooCountryPrefilled = Boolean(options && options.bambooCountryPrefilled);
   const bambooPrefillSummary =
     options && options.bambooPrefillSummary != null ? String(options.bambooPrefillSummary) : "";
+  const autofillNoticeWeeks =
+    options && options.noticeWeeks != null ? Math.max(1, Math.min(12, Number(options.noticeWeeks) || 1)) : 1;
+  const autofillSnapMonday = !(options && options.availabilitySnapMonday === false);
+  const availabilityPrefs = { noticeWeeks: autofillNoticeWeeks, availabilitySnapMonday: autofillSnapMonday };
   const href = location.href || "";
   const unusableFrame =
     !href ||
@@ -3941,7 +3945,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   }
   if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
   console.info(
-    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v3 prefilled=${bambooCountryPrefilled}${bambooPrefillSummary ? ` pre-inject=${bambooPrefillSummary}` : ""}`
+    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v4 noticeWeeks=${autofillNoticeWeeks} monday=${autofillSnapMonday} prefilled=${bambooCountryPrefilled}${bambooPrefillSummary ? ` pre-inject=${bambooPrefillSummary}` : ""}`
   );
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
@@ -4674,7 +4678,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
+      re: /\bnotice period\b|how much notice|notice would you need|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$|\bdate available\b/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -9799,6 +9803,18 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         }
       }
     }
+    if (
+      !onlyPhoneCountry &&
+      typeof resolveAvailabilityFillValue === "function" &&
+      (isAvailabilityOrNoticeLabel(ownLabel) || isAvailabilityOrNoticeLabel(label))
+    ) {
+      const availVal = resolveAvailabilityFillValue(label, element, profile, availabilityPrefs);
+      if (availVal && (await fillSingle(element, availVal))) {
+        filled.push({ label, value: availVal, source: "profile" });
+        console.info(`[Auto Fill][availability] ${label}=${availVal}`);
+        continue;
+      }
+    }
     let structured = matchStructuredField(ownLabel, element);
     if (structured.value == null && label !== ownLabel) structured = matchStructuredField(label, element);
     let structuredValue = structured.value;
@@ -10861,6 +10877,15 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         element.value || (typeof reactSelectDisplayValue === "function" ? reactSelectDisplayValue(element) : "") || ""
       ).trim();
       if (shown && !/^(–|-|—)?\s*select\s*(–|-|—)?$/i.test(shown)) continue;
+      if (typeof resolveAvailabilityFillValue === "function" && isAvailabilityOrNoticeLabel(ownLabel)) {
+        const availVal = resolveAvailabilityFillValue(label, element, profile, availabilityPrefs);
+        if (availVal && (await fillSingle(element, availVal))) {
+          filled.push({ label, value: availVal, source: "profile" });
+          filledLabels.add(normalizeLabel(label));
+          console.info(`[Auto Fill][bamboo] second-pass availability ${label}=${availVal}`);
+          continue;
+        }
+      }
       const structured = matchStructuredField(ownLabel, element);
       if (structured.value && (await fillSingle(element, structured.value))) {
         filled.push({ label, value: String(structured.value), source: "profile" });
@@ -14331,7 +14356,7 @@ function captureSampleInPage(profile, qaBank) {
     { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
     {
       key: "notice_period",
-      re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
+      re: /\bnotice period\b|how much notice|notice would you need|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$|\bdate available\b/i,
     },
     { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
     { key: "nationality", re: /\bnationality\b/i },
@@ -14834,7 +14859,7 @@ const MATCH_CATEGORY_PATTERNS = [
   { key: "lived_abroad", re: /have you (ever )?lived in\b|lived in .{0,40}for more than/i },
   {
     key: "notice_period",
-    re: /\bnotice period\b|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$/i,
+    re: /\bnotice period\b|how much notice|notice would you need|when can you start|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$|\bdate available\b/i,
   },
   { key: "b2b_contract", re: /\bb2b\b.*\b(model|contract|arrangement)\b|\bb2b\s+or\s+b2c\b|\bcontract\s*type\b/i },
   { key: "nationality", re: /\bnationality\b/i },
@@ -15644,6 +15669,9 @@ el("autofillBtn").addEventListener("click", async () => {
             autofillTabId: tab.id,
             bambooCountryPrefilled,
             bambooPrefillSummary,
+            noticeWeeks: settings && settings.notice_weeks != null ? settings.notice_weeks : 1,
+            availabilitySnapMonday:
+              settings && settings.availability_snap_monday != null ? settings.availability_snap_monday : true,
           },
         ],
       },

@@ -95,6 +95,22 @@
         left to the Q&amp;A tab instead, which captures the correct answer per form.
       </p>
 
+      <h2>Availability</h2>
+      <p class="hint">
+        Used for "Date Available", "When can you start?", and "Notice period" fields. Date
+        pickers follow the field placeholder (e.g. mm/dd/yyyy on BambooHR) or your profile
+        country (DD/MM/YYYY in the EU). Notice questions get plain text like "1 week".
+      </p>
+      <div class="contact-grid">
+        <div>
+          <label for="noticeWeeks">Notice period (weeks)</label>
+          <input id="noticeWeeks" type="number" min="1" max="8" step="1" value="1" />
+        </div>
+        <div class="checkbox-row">
+          <label><input id="availabilitySnapMonday" type="checkbox" checked /> Start date on a Monday</label>
+        </div>
+      </div>
+
       <label for="summary">Summary</label>
       <textarea id="summary" rows="3"></textarea>
 

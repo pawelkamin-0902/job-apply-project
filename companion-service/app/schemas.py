@@ -130,6 +130,10 @@ class Settings(BaseModel):
     # see what's actually going wrong, the same way portal_automation.HEADLESS was manually
     # flipped during development. True (headless) is the normal, unattended default.
     portal_headless: bool = True
+    # Auto Fill: text notice fields get "1 week" / "2 weeks"; date fields get today + N weeks,
+    # optionally snapped to the next Monday (BambooHR Date Available, etc.).
+    notice_weeks: int = 1
+    availability_snap_monday: bool = True
 
 
 class GenerateRequest(BaseModel):

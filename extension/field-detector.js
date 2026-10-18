@@ -2146,6 +2146,105 @@ function parseSalaryBlob(text) {
   return { min: Math.min(...nums), max: Math.max(...nums), currency, period };
 }
 
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+/** Today + noticeWeeks×7 days; optionally advance to the next Monday (or stay if already Monday). */
+function computeEarliestStartDate(noticeWeeks, snapToMonday) {
+  const weeks = Math.max(1, Math.min(12, Number(noticeWeeks) || 1));
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + weeks * 7);
+  if (snapToMonday !== false) {
+    const day = d.getDay();
+    if (day !== 1) {
+      const add = day === 0 ? 1 : 8 - day;
+      d.setDate(d.getDate() + add);
+    }
+  }
+  return d;
+}
+
+function isAvailabilityOrNoticeLabel(label) {
+  const t = String(label || "").toLowerCase();
+  return (
+    /\bnotice period\b|how much notice|weeks?\s+of\s+notice|notice would you need/i.test(t) ||
+    /\bwhen can you start\b|earliest (start|availability)|\bavailable from\b|\bavailable to start\b|\bstart date\b|^date available$|\bdate available\b/i.test(
+      t
+    )
+  );
+}
+
+function guessDateFormatOrder(element, profileCountry) {
+  const ph = String((element && (element.placeholder || element.getAttribute("aria-label"))) || "").toLowerCase();
+  if (element && element.type === "date") return "iso";
+  if (/yyyy-mm-dd|yyyy\/mm\/dd/.test(ph)) return "iso";
+  if (/mm\/dd\/yyyy|mm-dd-yyyy|mm\.dd\.yyyy/.test(ph)) return "mdy";
+  if (/dd\/mm\/yyyy|dd-mm-yyyy|dd\.mm\.yyyy/.test(ph)) return "dmy";
+  const c = String(profileCountry || "").toLowerCase();
+  if (/\b(united states|usa|u\.s\.)\b/.test(c)) return "mdy";
+  if (
+    /\b(poland|germany|france|spain|italy|netherlands|belgium|sweden|portugal|austria|greece|ireland|denmark|finland|hungary|czech|slovakia|romania|uk|united kingdom|britain)\b/i.test(
+      c
+    )
+  ) {
+    return "dmy";
+  }
+  return "mdy";
+}
+
+function formatCalendarDate(date, order) {
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const day = pad2(date.getDate());
+  if (order === "iso") return `${y}-${m}-${day}`;
+  if (order === "dmy") return `${day}/${m}/${y}`;
+  return `${m}/${day}/${y}`;
+}
+
+/**
+ * Profile-driven notice / availability answer: "1 week" for notice questions, formatted date for pickers.
+ * prefs: { noticeWeeks, availabilitySnapMonday }
+ */
+function resolveAvailabilityFillValue(label, element, profile, prefs) {
+  if (!isAvailabilityOrNoticeLabel(label)) return null;
+  const weeks = (prefs && prefs.noticeWeeks) ?? 1;
+  const snapMonday = prefs && prefs.availabilitySnapMonday !== false;
+  const blob = String(label || "").toLowerCase();
+  const type = ((element && element.type) || "").toLowerCase();
+  const numeric = isNumericInputField(element);
+  const country = profile && profile.contact && profile.contact.country;
+  const startDate = computeEarliestStartDate(weeks, snapMonday);
+  const order = guessDateFormatOrder(element, country);
+
+  const asksNoticePhrase =
+    /\bnotice period\b|how much notice|weeks?\s+of\s+notice|notice would you need/i.test(blob);
+  const asksDate =
+    type === "date" ||
+    /^date available$/i.test(String(label || "").trim()) ||
+    /\bdate available\b|\bavailable from\b|\bstart date\b|\bearliest (start|availability)\b/i.test(blob);
+
+  if (asksNoticePhrase && !asksDate) {
+    if (numeric) return String(Math.max(1, Number(weeks) || 1) * 7);
+    const w = Math.max(1, Number(weeks) || 1);
+    return w === 1 ? "1 week" : `${w} weeks`;
+  }
+  if (asksDate || (/when can you start/i.test(blob) && !asksNoticePhrase)) {
+    return formatCalendarDate(startDate, order);
+  }
+  if (/when can you start|available to start/i.test(blob)) {
+    if (numeric) return String(Math.max(1, Number(weeks) || 1) * 7);
+    const w = Math.max(1, Number(weeks) || 1);
+    return w === 1 ? "1 week" : `${w} weeks`;
+  }
+  if (asksNoticePhrase) {
+    const w = Math.max(1, Number(weeks) || 1);
+    return w === 1 ? "1 week" : `${w} weeks`;
+  }
+  return formatCalendarDate(startDate, order);
+}
+
 function parseNoticePeriodDays(text) {
   const s = String(text || "").trim();
   if (!s) return null;
