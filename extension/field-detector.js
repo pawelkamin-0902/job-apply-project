@@ -2150,20 +2150,45 @@ function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
-/** Today + noticeWeeks×7 days; optionally advance to the next Monday (or stay if already Monday). */
-function computeEarliestStartDate(noticeWeeks, snapToMonday) {
-  const weeks = Math.max(1, Math.min(12, Number(noticeWeeks) || 1));
-  const d = new Date();
+function mondayOnOrAfter(date) {
+  const d = new Date(date);
   d.setHours(12, 0, 0, 0);
-  d.setDate(d.getDate() + weeks * 7);
-  if (snapToMonday !== false) {
-    const day = d.getDay();
-    if (day !== 1) {
-      const add = day === 0 ? 1 : 8 - day;
-      d.setDate(d.getDate() + add);
-    }
-  }
+  const day = d.getDay();
+  if (day === 1) return d;
+  d.setDate(d.getDate() + (day === 0 ? 1 : 8 - day));
   return d;
+}
+
+/** Notice is 1 or 2 weeks only. With Monday snap: 1w → first Monday after a full week; 2w → the next Monday after that (≥ 2 weeks out). */
+function normalizeNoticeWeeks(noticeWeeks) {
+  return Number(noticeWeeks) === 2 ? 2 : 1;
+}
+
+function computeEarliestStartDate(noticeWeeks, snapToMonday) {
+  const weeks = normalizeNoticeWeeks(noticeWeeks);
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const minNotice = new Date(today);
+  minNotice.setDate(minNotice.getDate() + weeks * 7);
+
+  if (snapToMonday === false) {
+    return minNotice;
+  }
+
+  const minOneWeek = new Date(today);
+  minOneWeek.setDate(minOneWeek.getDate() + 7);
+  let firstMonday = mondayOnOrAfter(minOneWeek);
+
+  if (weeks === 1) {
+    return firstMonday;
+  }
+
+  let secondMonday = new Date(firstMonday);
+  secondMonday.setDate(secondMonday.getDate() + 7);
+  if (secondMonday < minNotice) {
+    secondMonday = mondayOnOrAfter(minNotice);
+  }
+  return secondMonday;
 }
 
 function isAvailabilityOrNoticeLabel(label) {
@@ -2209,7 +2234,7 @@ function formatCalendarDate(date, order) {
  */
 function resolveAvailabilityFillValue(label, element, profile, prefs) {
   if (!isAvailabilityOrNoticeLabel(label)) return null;
-  const weeks = (prefs && prefs.noticeWeeks) ?? 1;
+  const weeks = normalizeNoticeWeeks((prefs && prefs.noticeWeeks) ?? 1);
   const snapMonday = prefs && prefs.availabilitySnapMonday !== false;
   const blob = String(label || "").toLowerCase();
   const type = ((element && element.type) || "").toLowerCase();
@@ -2226,17 +2251,15 @@ function resolveAvailabilityFillValue(label, element, profile, prefs) {
     /\bdate available\b|\bavailable from\b|\bstart date\b|\bearliest (start|availability)\b/i.test(blob);
 
   if (asksNoticePhrase && !asksDate) {
-    if (numeric) return String(Math.max(1, Number(weeks) || 1) * 7);
-    const w = Math.max(1, Number(weeks) || 1);
-    return w === 1 ? "1 week" : `${w} weeks`;
+    if (numeric) return String(weeks * 7);
+    return weeks === 1 ? "1 week" : "2 weeks";
   }
   if (asksDate || (/when can you start/i.test(blob) && !asksNoticePhrase)) {
     return formatCalendarDate(startDate, order);
   }
   if (/when can you start|available to start/i.test(blob)) {
-    if (numeric) return String(Math.max(1, Number(weeks) || 1) * 7);
-    const w = Math.max(1, Number(weeks) || 1);
-    return w === 1 ? "1 week" : `${w} weeks`;
+    if (numeric) return String(weeks * 7);
+    return weeks === 1 ? "1 week" : "2 weeks";
   }
   if (asksNoticePhrase) {
     const w = Math.max(1, Number(weeks) || 1);

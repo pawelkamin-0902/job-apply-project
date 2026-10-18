@@ -97,17 +97,24 @@
 
       <h2>Availability</h2>
       <p class="hint">
-        Used for "Date Available", "When can you start?", and "Notice period" fields. Date
-        pickers follow the field placeholder (e.g. mm/dd/yyyy on BambooHR) or your profile
-        country (DD/MM/YYYY in the EU). Notice questions get plain text like "1 week".
+        Used for "Date Available", "When can you start?", and "Notice period" fields. Choose
+        <strong>1 week</strong> or <strong>2 weeks</strong> notice only. Notice text fields
+        get "1 week" / "2 weeks". Date fields use the placeholder format (BambooHR
+        mm/dd/yyyy) or your country (EU → DD/MM/YYYY).
       </p>
       <div class="contact-grid">
         <div>
-          <label for="noticeWeeks">Notice period (weeks)</label>
-          <input id="noticeWeeks" type="number" min="1" max="8" step="1" value="1" />
+          <label for="noticeWeeks">Notice period</label>
+          <select id="noticeWeeks">
+            <option value="1">1 week</option>
+            <option value="2">2 weeks</option>
+          </select>
         </div>
         <div class="checkbox-row">
-          <label><input id="availabilitySnapMonday" type="checkbox" checked /> Start date on a Monday</label>
+          <label
+            ><input id="availabilitySnapMonday" type="checkbox" checked /> Start on a Monday (1w → first
+            Monday after a full week; 2w → the following Monday)</label
+          >
         </div>
       </div>
 

@@ -3923,7 +3923,7 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
   const bambooPrefillSummary =
     options && options.bambooPrefillSummary != null ? String(options.bambooPrefillSummary) : "";
   const autofillNoticeWeeks =
-    options && options.noticeWeeks != null ? Math.max(1, Math.min(12, Number(options.noticeWeeks) || 1)) : 1;
+    options && Number(options.noticeWeeks) === 2 ? 2 : 1;
   const autofillSnapMonday = !(options && options.availabilitySnapMonday === false);
   const availabilityPrefs = { noticeWeeks: autofillNoticeWeeks, availabilitySnapMonday: autofillSnapMonday };
   const href = location.href || "";

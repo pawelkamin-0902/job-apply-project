@@ -4046,11 +4046,10 @@ unverified outside a live browser).
   not implemented since it requires the react-select listbox-driving gap above to actually
   fill it once derived.
 
-48. **Notice / Date Available auto-fill.** Settings → Profile → Availability: `notice_weeks`
-    (default 1) and optional Monday snap. Text notice → "1 week" / "2 weeks"; date fields →
-    today + N×7 days (next Monday if checked), formatted from placeholder (`mm/dd/yyyy` on
-    BambooHR) or profile country (EU → DD/MM/YYYY). Typed into plain inputs via `nativeSet`;
-    log `build=bamboo-split-v4 noticeWeeks=…`.
+48. **Notice / Date Available auto-fill.** Settings → Profile → Availability: **1 or 2 weeks**
+    only. Text notice → "1 week" / "2 weeks". With **Start on a Monday**: 1w = first Monday
+    after a full calendar week; 2w = the **next** Monday after that (still ≥ 2 weeks out).
+    Without Monday: exact today+N×7. Date format from placeholder or EU/US country.
 
 47. **BambooHR Country double-fill + Europe Yes (assertive `20261018T040942Z`).** Prefill could
     set Poland, then `runAutofillInPage` cleared the console buffer and ran Country again

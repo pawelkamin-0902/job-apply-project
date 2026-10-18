@@ -132,7 +132,7 @@ class Settings(BaseModel):
     portal_headless: bool = True
     # Auto Fill: text notice fields get "1 week" / "2 weeks"; date fields get today + N weeks,
     # optionally snapped to the next Monday (BambooHR Date Available, etc.).
-    notice_weeks: int = 1
+    notice_weeks: int = 1  # only 1 or 2 — validated on save in options UI
     availability_snap_monday: bool = True
 
 

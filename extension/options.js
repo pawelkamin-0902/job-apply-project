@@ -473,7 +473,9 @@ async function loadSettings() {
     el("portalUsername").value = settings.portal_username || "";
     el("portalPassword").value = settings.portal_password || "";
     el("timeoutSeconds").value = settings.timeout_seconds ?? 120;
-    if (el("noticeWeeks")) el("noticeWeeks").value = settings.notice_weeks ?? 1;
+    if (el("noticeWeeks")) {
+      el("noticeWeeks").value = Number(settings.notice_weeks) === 2 ? "2" : "1";
+    }
     if (el("availabilitySnapMonday")) {
       el("availabilitySnapMonday").checked = settings.availability_snap_monday !== false;
     }
@@ -521,8 +523,12 @@ function buildSettingsPayload() {
     portal_headless: loadedSettings?.portal_headless ?? true,
     timeout_seconds: parseFloat(el("timeoutSeconds").value) || 120.0,
     notice_weeks: el("noticeWeeks")
-      ? Math.max(1, Math.min(8, parseInt(el("noticeWeeks").value, 10) || 1))
-      : loadedSettings?.notice_weeks ?? 1,
+      ? Number(el("noticeWeeks").value) === 2
+        ? 2
+        : 1
+      : loadedSettings?.notice_weeks === 2
+        ? 2
+        : 1,
     availability_snap_monday: el("availabilitySnapMonday")
       ? el("availabilitySnapMonday").checked
       : loadedSettings?.availability_snap_monday !== false,
