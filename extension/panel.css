@@ -880,12 +880,12 @@ body.options {
   padding: 0;
   display: flex;
   min-height: 100vh;
-  --bg: #cfd8e3;
-  --surface: #eef2f7;
-  --surface-2: #e2e9f2;
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
   --surface-row: #ffffff;
-  --border: #a8b8c9;
-  --border-strong: #8fa3b8;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
   --text-muted: #475569;
   --text-soft: #64748b;
   background: var(--bg);
@@ -897,19 +897,19 @@ body.options {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #c5d0de 0%, var(--bg) 240px);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
 }
 
 .app-nav {
   width: 240px;
   flex-shrink: 0;
-  background: #e8eef5;
-  border-right: 1px solid var(--border-strong);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
   padding: 20px 0 28px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 2px 0 8px rgba(15, 23, 42, 0.06);
 }
 
 .app-nav-brand {
@@ -985,10 +985,10 @@ body.options {
 
 .app-content {
   flex: 1;
-  padding: 32px 40px 80px;
+  padding: 36px 48px 96px;
   max-width: 820px;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
   overflow-y: auto;
 }
 
@@ -1002,27 +1002,54 @@ body.options:has(#section-profile.active) .app-content {
   max-width: min(920px, calc(100vw - 260px));
 }
 
+/* ─── Settings form sections (flat — no card stacks) ─── */
+body.options .panel-header {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+body.options .card.settings-block {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 28px 0;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+body.options .panel > .card.settings-block:last-of-type,
+body.options .panel > .profile-section:last-of-type {
+  border-bottom: none;
+}
+
 /* ─── Profile tab (settings) ─── */
 #section-profile .profile-section {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  padding: 20px 22px 22px;
-  margin-bottom: 16px;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 28px 0 24px;
+  margin: 0;
+  box-shadow: none;
+  border-bottom: 1px solid var(--border);
+}
+
+#section-profile .profile-section:last-of-type {
+  border-bottom: none;
 }
 
 #section-profile .profile-section-compact {
-  padding-bottom: 18px;
+  padding-bottom: 24px;
 }
 
 #section-profile .profile-section-title {
-  margin: 0 0 4px;
-  font-size: 16px;
+  margin: 0 0 6px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--text);
-  text-transform: none;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #334155;
 }
 
 #section-profile .profile-section-desc {
@@ -1075,13 +1102,13 @@ body.options:has(#section-profile.active) .app-content {
   font-size: 14px;
   line-height: 1.4;
   color: var(--text);
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
   padding: 10px 12px;
   min-height: 42px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+  box-shadow: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
 #section-profile select.field-control {
@@ -1106,8 +1133,7 @@ body.options:has(#section-profile.active) .app-content {
 }
 
 #section-profile .field-control:hover:not(:focus):not(:disabled) {
-  border-color: #cbd5e1;
-  background: #eef2f6;
+  border-color: #94a3b8;
 }
 
 #section-profile .field-control:focus {
@@ -1150,13 +1176,12 @@ body.options:has(#section-profile.active) .app-content {
 
 #section-profile .check-card {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  margin: 0;
-  padding: 12px 14px;
-  background: #f8fafc;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  background: transparent;
+  border: none;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
@@ -1164,7 +1189,7 @@ body.options:has(#section-profile.active) .app-content {
 }
 
 #section-profile .check-card input {
-  margin-top: 2px;
+  margin: 0;
   accent-color: var(--accent);
 }
 
@@ -1200,21 +1225,28 @@ body.options:has(#section-profile.active) .app-content {
 }
 
 #section-profile .entry-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #fafbfc;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
   box-shadow: none;
+  margin-bottom: 0;
+}
+
+#section-profile .entry-card:last-child {
+  border-bottom: none;
 }
 
 #section-profile .entry-summary {
-  padding: 12px 16px;
-  background: #fff;
-  border-bottom: 1px solid transparent;
+  padding: 14px 0;
+  background: transparent;
+  border-bottom: none;
 }
 
 #section-profile .entry-card:has(.entry-body:not([style*="display: none"])) .entry-summary {
-  border-bottom-color: var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
 }
 
 #section-profile .entry-summary-text {
@@ -1223,9 +1255,9 @@ body.options:has(#section-profile.active) .app-content {
 }
 
 #section-profile .entry-body {
-  padding: 16px 16px 12px;
+  padding: 16px 0 20px;
   border-top: none;
-  background: #fff;
+  background: transparent;
 }
 
 #section-profile .profile-entry-grid {
@@ -1335,7 +1367,7 @@ button.btn-danger-ghost:hover:not(:disabled) {
   border-radius: 4px;
 }
 
-.panel-footer {
+body.options .panel-footer {
   position: sticky;
   bottom: 0;
   z-index: 5;
@@ -1343,13 +1375,14 @@ button.btn-danger-ghost:hover:not(:disabled) {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 16px;
-  margin-top: 8px;
-  padding: 14px 18px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  margin-top: 24px;
+  padding: 16px 0 0;
+  background: var(--surface);
+  backdrop-filter: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .panel-footer .status-line {
@@ -1461,9 +1494,9 @@ body.options label:not(.checkbox-label):not(.search-field):not(.file-picker-trig
 .table-card {
   padding: 0;
   overflow: hidden;
-  border-radius: 12px;
-  box-shadow: var(--shadow-md);
-  border-color: #dbe3ee;
+  border-radius: 8px;
+  box-shadow: none;
+  border-color: var(--border);
 }
 
 .table-card .table-toolbar,
@@ -1483,11 +1516,11 @@ body.options label:not(.checkbox-label):not(.search-field):not(.file-picker-trig
 
 /* Q&A panel — list on tinted surface, pagination at bottom */
 .qa-panel {
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
 }
 
 .qa-search-bar {
@@ -1944,16 +1977,17 @@ body.options .settings-block:not(.table-card) input[type="text"],
 body.options .settings-block:not(.table-card) input[type="password"],
 body.options .settings-block:not(.table-card) select,
 body.options .settings-block:not(.table-card) textarea {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  background: #fff;
+  border-color: var(--border-strong);
+  border-radius: 6px;
+  box-shadow: none;
 }
 
 body.options .settings-block:not(.table-card) input:focus,
 body.options .settings-block:not(.table-card) select:focus,
 body.options .settings-block:not(.table-card) textarea:focus {
-  background: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
 }
 
 @media (max-width: 900px) {
@@ -2111,25 +2145,26 @@ body.options:has(#section-templates.active) .app-content {
 
 .template-card {
   display: block;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   padding: 14px;
   cursor: pointer;
   position: relative;
   background: var(--surface);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
+  box-shadow: none;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .template-card:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  transform: none;
 }
 
 .template-card:has(input:checked) {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(13, 148, 136, 0.12);
-  background: linear-gradient(180deg, #f0fdfa 0%, #fff 120px);
+  box-shadow: none;
+  background: #f0fdfa;
 }
 
 .template-card:has(input:checked)::after {
