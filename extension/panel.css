@@ -158,9 +158,9 @@ body.sidepanel {
   background: var(--surface-2);
 }
 
-#tab-apply:checked ~ .tab-bar label[for="tab-apply"],
+#tab-job:checked ~ .tab-bar label[for="tab-job"],
 #tab-resume:checked ~ .tab-bar label[for="tab-resume"],
-#tab-more:checked ~ .tab-bar label[for="tab-more"] {
+#tab-apply:checked ~ .tab-bar label[for="tab-apply"] {
   color: var(--accent-hover);
   border-bottom-color: var(--accent);
   background: var(--accent-soft);
@@ -173,10 +173,45 @@ body.sidepanel {
   animation: fadeIn 0.18s ease;
 }
 
-#tab-apply:checked ~ .app-main .tab-apply,
+#tab-job:checked ~ .app-main .tab-job,
 #tab-resume:checked ~ .app-main .tab-resume,
-#tab-more:checked ~ .app-main .tab-more {
+#tab-apply:checked ~ .app-main .tab-apply {
   display: flex;
+}
+
+.workflow-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.wf-arrow {
+  opacity: 0.45;
+  font-size: 10px;
+}
+
+#tab-job:checked ~ .workflow-strip .wf-step:nth-child(1) {
+  color: var(--accent-hover);
+}
+
+#tab-resume:checked ~ .workflow-strip .wf-step:nth-child(3) {
+  color: var(--accent-hover);
+}
+
+#tab-apply:checked ~ .workflow-strip .wf-step:nth-child(5) {
+  color: var(--accent-hover);
+}
+
+.quick-bar {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .tab-lead {

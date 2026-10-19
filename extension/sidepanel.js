@@ -11,7 +11,7 @@ function updateJobContextPreview() {
     preview.textContent = [company, title].filter(Boolean).join(" · ");
     preview.classList.remove("empty");
   } else {
-    preview.textContent = "Add company & title — or Extract from page";
+    preview.textContent = "Company · title — use Extract or type below";
     preview.classList.add("empty");
   }
 }
@@ -560,28 +560,6 @@ async function applyTailorMode() {
     // function sets is now skipped while it's the currently focused element (the standard "don't
     // overwrite what the user is actively interacting with" guard) - same class of bug, and same
     // reasoning, as loadResumesForPicker's own preserved-selection fix elsewhere in this file.
-    const activeEl = document.activeElement;
-    if (activeEl !== el("tailorModeSelect")) el("tailorModeSelect").value = String(tailorMode);
-    if (activeEl !== el("providerSelect")) el("providerSelect").value = settings.provider || "claude";
-    if (activeEl !== el("answerProviderSelect")) el("answerProviderSelect").value = settings.answer_provider || "ollama";
-
-    // Same reasoning as the three above - only relevant once either provider is actually
-    // "gpt-auto", and worth toggling mid-session without a trip to Settings, since that's
-    // exactly when you'd want to temporarily uncheck it (a result looked wrong and you need to
-    // go back and inspect the real ChatGPT conversation instead of it auto-deleting).
-    const usesGptAuto =
-      settings.provider === "gpt-auto" ||
-      settings.answer_provider === "gpt-auto" ||
-      settings.provider === "gpt-auto-headless" ||
-      settings.answer_provider === "gpt-auto-headless";
-    el("gptAutoOptions").style.display = usesGptAuto ? "" : "none";
-    if (activeEl !== el("deleteGptConversationsToggle")) {
-      el("deleteGptConversationsToggle").checked = settings.delete_gpt_conversations !== false;
-    }
-    // Checkbox is phrased as "show the window" (headful), the more intuitive way round for a
-    // user to think about it - inverse of the actual portal_headless setting underneath.
-    if (activeEl !== el("portalHeadful")) el("portalHeadful").checked = settings.portal_headless === false;
-
     await syncTemplateSelect();
   } catch {
     // Backend not reachable yet (e.g. not configured) — default to showing tailor mode.
@@ -594,9 +572,10 @@ async function applyTailorMode() {
 let templateOptionsLoaded = false;
 
 async function syncTemplateSelect() {
+  const select = el("templateSelect");
+  if (!select) return;
   if (!templateOptionsLoaded) {
     const templates = await apiFetch("/resume-templates");
-    const select = el("templateSelect");
     select.innerHTML = "";
     templates.forEach((t) => {
       const opt = document.createElement("option");
@@ -607,7 +586,7 @@ async function syncTemplateSelect() {
     templateOptionsLoaded = true;
   }
   const { template } = await apiFetch("/resume-template");
-  el("templateSelect").value = template;
+  select.value = template;
 }
 
 function suggestResumeIndex(resumes, jobDescription) {
@@ -15366,7 +15345,7 @@ el("generateBtn").addEventListener("click", async () => {
   }
   el("generateBtn").disabled = true;
   try {
-    const providerValue = el("providerSelect").value;
+    const { provider: providerValue } = await apiFetch("/settings");
     if (providerValue === "gpt-auto" || providerValue === "gpt-auto-headless") {
       // Same prompt-building the manual "Copy prompt for GPT" flow uses - the only difference
       // from here is WHO submits it (a real ChatGPT tab, automatically, instead of you pasting
@@ -16276,47 +16255,6 @@ async function patchSetting(key, value, label) {
     statusEl.textContent = `Could not save: ${err.message}`;
   }
 }
-
-// Separate endpoint from /settings (per-person, not global - see applyTailorMode's own
-// comment), so this can't go through patchSetting like the three selects below.
-el("tailorModeSelect").addEventListener("change", async () => {
-  const statusEl = el("providerStatus");
-  const tailorMode = el("tailorModeSelect").value === "true";
-  statusEl.textContent = "Saving...";
-  try {
-    await apiFetch("/tailor-mode", { method: "PUT", body: JSON.stringify({ tailor_mode: tailorMode }) });
-    await applyTailorMode();
-    statusEl.textContent = `Mode: ${tailorMode}.`;
-  } catch (err) {
-    statusEl.textContent = `Could not save: ${err.message}`;
-  }
-});
-el("providerSelect").addEventListener("change", () =>
-  patchSetting("provider", el("providerSelect").value, "Resume provider")
-);
-el("answerProviderSelect").addEventListener("change", () =>
-  patchSetting("answer_provider", el("answerProviderSelect").value, "Answer provider")
-);
-el("deleteGptConversationsToggle").addEventListener("change", () =>
-  patchSetting("delete_gpt_conversations", el("deleteGptConversationsToggle").checked, "Delete ChatGPT conversation")
-);
-// Inverted (checkbox means "show the window") - patchSetting itself just stores the raw value,
-// so the actual portal_headless field being saved is the opposite of what's checked.
-el("portalHeadful").addEventListener("change", () => patchSetting("portal_headless", !el("portalHeadful").checked, "Portal sync headless"));
-
-// Separate endpoint from /settings (resume templates are per-person, not global - see
-// resume_templates.py), so this can't go through patchSetting like the three selects above.
-el("templateSelect").addEventListener("change", async () => {
-  const statusEl = el("providerStatus");
-  const template = el("templateSelect").value;
-  statusEl.textContent = "Saving...";
-  try {
-    await apiFetch("/resume-template", { method: "PUT", body: JSON.stringify({ template }) });
-    statusEl.textContent = `Resume template: ${el("templateSelect").selectedOptions[0].textContent}.`;
-  } catch (err) {
-    statusEl.textContent = `Could not save: ${err.message}`;
-  }
-});
 
 // Sticky across the whole side panel session (and browser restarts) rather than per-job -
 // confirmed live, applications are worked through in batches from one source at a time

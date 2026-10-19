@@ -226,12 +226,41 @@
         <span id="generationBadge" class="badge saved">Saved</span>
       </div>
 
+      <label for="tailorModeSelect">Resume mode</label>
+      <select id="tailorModeSelect">
+        <option value="true">Tailor a resume per job</option>
+        <option value="false">Use an uploaded resume</option>
+      </select>
+      <div id="tailorModeStatus" class="status-line"></div>
+
+      <label for="providerSelect">Resume generation provider</label>
+      <select id="providerSelect">
+        <option value="claude">Claude (CLI)</option>
+        <option value="ollama">Ollama</option>
+        <option value="gpt">GPT (manual)</option>
+        <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
+        <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
+      </select>
+
+      <label for="answerProviderSelect">Auto Fill answer provider</label>
+      <select id="answerProviderSelect">
+        <option value="claude">Claude (CLI)</option>
+        <option value="ollama">Ollama</option>
+        <option value="gpt">GPT (manual)</option>
+        <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
+        <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
+      </select>
+
+      <div id="gptAutoOptions" style="display: none">
+        <label class="checkbox-label">
+          <input id="deleteGptConversationsToggle" type="checkbox" />
+          Delete ChatGPT conversation after generating
+        </label>
+      </div>
+
       <p class="hint">
-        Mode (tailor per job or use an uploaded resume) and both provider choices (resume
-        generation, Auto Fill answers) now live in the side panel, right where you'd actually
-        change them mid-session. This page is just the deeper, rarely-touched config below:
-        model names, connection details, and prompt instructions - plus a way to test each
-        provider without leaving Settings.
+        Resume template is on the <strong>Templates</strong> tab. Side panel workflow is
+        <strong>1 Job → 2 Resume → 3 Apply</strong> only.
       </p>
 
       <p class="hint">
@@ -267,11 +296,6 @@
         ChatGPT's JSON reply back into the Resume JSON box.
       </div>
 
-      <div id="gptAutoHint" class="hint" style="display: none">
-        "Delete ChatGPT conversation after generating" now lives in the job-apply panel, right
-        next to the provider dropdowns - same reasoning as Mode and both providers above.
-      </div>
-
       <div id="gptAutoHeadlessHint" class="hint" style="display: none">
         Experimental: runs via a headless, out-of-band browser (companion-service) instead of a
         visible tab - requires a one-time manual login first (run login_chatgpt.py once), since
@@ -303,12 +327,13 @@
         <span id="portalBadge" class="badge saved">Saved</span>
       </div>
       <p class="hint">
-        Your company-internal bid-tracking system - used by "Save &amp; Sync to Portal" in the
-        job-apply panel to push logged applications into it directly (it has no API and no CSV
-        import). Pushed via an out-of-band browser (companion-service), never touching any tab
-        you can see - the "show the browser window" checkbox right next to that button in the
-        job-apply panel lets you watch it directly if a sync ever fails.
+        Used by <strong>Save &amp; Sync to Portal</strong> on the side panel (Apply tab). Sync
+        runs in an out-of-band browser — not your visible tabs.
       </p>
+      <label class="checkbox-label">
+        <input id="portalHeadful" type="checkbox" />
+        Show the browser window while syncing (debug failed syncs)
+      </label>
       <label for="portalBaseUrl">Portal IP/host (just the host - "/mgr/..." paths are added automatically)</label>
       <input id="portalBaseUrl" type="text" placeholder="e.g. http://172.20.1.135" />
       <label for="portalUsername">Portal username (used to log the automation's own browser session in)</label>

@@ -17,64 +17,97 @@
     <div id="status" class="status">checking…</div>
   </header>
 
-  <!-- JobRight-style: one glance = job + fill. Advanced stuff lives in other tabs. -->
-  <input type="radio" name="main-tab" id="tab-apply" class="tab-input" checked />
+  <input type="radio" name="main-tab" id="tab-job" class="tab-input" checked />
   <input type="radio" name="main-tab" id="tab-resume" class="tab-input" />
-  <input type="radio" name="main-tab" id="tab-more" class="tab-input" />
+  <input type="radio" name="main-tab" id="tab-apply" class="tab-input" />
 
-  <nav class="tab-bar" aria-label="Panel sections">
-    <label for="tab-apply" class="tab-label">Apply</label>
-    <label for="tab-resume" class="tab-label">Resume</label>
-    <label for="tab-more" class="tab-label">More</label>
+  <p class="workflow-strip" aria-hidden="true">
+    <span class="wf-step">1 Job</span>
+    <span class="wf-arrow">→</span>
+    <span class="wf-step">2 Resume</span>
+    <span class="wf-arrow">→</span>
+    <span class="wf-step">3 Apply</span>
+  </p>
+
+  <nav class="tab-bar" aria-label="Workflow">
+    <label for="tab-job" class="tab-label">1 · Job</label>
+    <label for="tab-resume" class="tab-label">2 · Resume</label>
+    <label for="tab-apply" class="tab-label">3 · Apply</label>
   </nav>
 
   <main class="app-main tab-panels">
-    <!-- ─── APPLY (default) ─── -->
-    <section class="tab-panel tab-apply" aria-labelledby="tab-apply">
+    <!-- 1 · JOB -->
+    <section class="tab-panel tab-job" aria-labelledby="tab-job">
       <div id="jobContextPreview" class="job-preview empty" aria-live="polite">
-        Add company &amp; title — or Extract from page
+        Company · title — use Extract or type below
       </div>
+      <button id="scrapeBtn" type="button" class="primary btn-block">Extract from page (Alt+E)</button>
+      <div class="field-stack">
+        <div class="field-row-2">
+          <div>
+            <label for="company">Company</label>
+            <input id="company" type="text" placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label for="jobTitle">Job title</label>
+            <input id="jobTitle" type="text" placeholder="Senior Engineer" />
+          </div>
+        </div>
+        <div>
+          <label for="jobUrl">Job URL</label>
+          <input id="jobUrl" type="text" />
+        </div>
+        <div>
+          <label for="jobDescription">Job description</label>
+          <textarea id="jobDescription" rows="8" placeholder="Filled by Extract or paste here"></textarea>
+        </div>
+        <div id="jobFacts" class="job-facts"></div>
+      </div>
+      <p class="tab-lead">Next: open <strong>2 · Resume</strong> to generate your PDF.</p>
+    </section>
 
+    <!-- 2 · RESUME -->
+    <section class="tab-panel tab-resume" aria-labelledby="tab-resume">
+      <p class="tab-lead">Uses the job from step 1. Template &amp; providers are in <strong>Settings → Generation</strong>.</p>
+      <div id="tailorSection">
+        <div class="field-stack">
+          <button id="generateBtn" type="button" class="primary btn-block">Generate JSON (Alt+G)</button>
+          <button id="copyPromptBtn" type="button" class="primary btn-block" style="display: none">Copy prompt for GPT (Alt+G)</button>
+          <div id="generateResult" class="result-card"></div>
+          <div>
+            <label for="resumeJson">Resume JSON</label>
+            <textarea id="resumeJson" rows="8" placeholder="From Generate or paste ChatGPT JSON"></textarea>
+          </div>
+          <button id="renderBtn" type="button" class="primary btn-block" disabled>Generate PDF (Alt+P)</button>
+          <div id="result" class="status-line"></div>
+        </div>
+      </div>
+      <div id="nonTailorSection" style="display: none">
+        <div class="field-stack">
+          <div>
+            <label for="resumeSelect">Resume to use</label>
+            <select id="resumeSelect"></select>
+          </div>
+          <div id="resumeSuggestHint" class="hint"></div>
+        </div>
+      </div>
+      <p class="tab-lead">Next: <strong>3 · Apply</strong> — Auto Fill, then attach PDF if needed.</p>
+    </section>
+
+    <!-- 3 · APPLY -->
+    <section class="tab-panel tab-apply" aria-labelledby="tab-apply">
       <button id="autofillBtn" type="button" class="hero-cta primary">
         <span class="hero-cta-title">Auto Fill</span>
         <span class="hero-cta-sub">Fill this application · Alt+F</span>
       </button>
-
-      <div class="quick-bar" role="toolbar" aria-label="Quick actions">
-        <button id="scrapeBtn" type="button" class="quick-btn" title="Alt+E">Extract</button>
+      <div class="quick-bar" role="toolbar" aria-label="Apply actions">
         <button id="attachResumeBtn" type="button" class="quick-btn" title="Alt+R">Attach PDF</button>
         <button id="learnBtn" type="button" class="quick-btn" title="Alt+L">Learn</button>
         <button id="saveSampleBtn" type="button" class="quick-btn" title="Alt+S">Sample</button>
       </div>
-
       <div id="autofillResult" class="result-card" aria-live="polite"></div>
       <div id="attachResumeResult" class="status-line"></div>
       <div id="saveSampleResult" class="status-line"></div>
-
-      <details class="fold">
-        <summary>Job details</summary>
-        <div class="field-stack fold-body">
-          <div class="field-row-2">
-            <div>
-              <label for="company">Company</label>
-              <input id="company" type="text" placeholder="Acme Corp" />
-            </div>
-            <div>
-              <label for="jobTitle">Job title</label>
-              <input id="jobTitle" type="text" placeholder="Senior Engineer" />
-            </div>
-          </div>
-          <div>
-            <label for="jobUrl">Job URL</label>
-            <input id="jobUrl" type="text" />
-          </div>
-          <div>
-            <label for="jobDescription">Job description</label>
-            <textarea id="jobDescription" rows="5" placeholder="Filled by Extract or paste here"></textarea>
-          </div>
-          <div id="jobFacts" class="job-facts"></div>
-        </div>
-      </details>
 
       <details class="fold">
         <summary>Log to portal</summary>
@@ -103,95 +136,10 @@
               <option value="linkedin.com" selected>linkedin.com</option>
             </select>
           </div>
-          <label class="checkbox-label">
-            <input id="portalHeadful" type="checkbox" />
-            Show browser while syncing
-          </label>
           <button id="portalLogBtn" type="button" class="secondary btn-block">Save &amp; sync to portal (Alt+Y)</button>
           <div id="portalLogResult" class="status-line"></div>
         </div>
       </details>
-    </section>
-
-    <!-- ─── RESUME ─── -->
-    <section class="tab-panel tab-resume" aria-labelledby="tab-resume">
-      <p class="tab-lead">Tailor or pick a PDF, then generate before you attach on the Apply tab.</p>
-      <div class="workflow-mini">
-        <span>Generate JSON</span>
-        <span aria-hidden="true">→</span>
-        <span>PDF</span>
-        <span aria-hidden="true">→</span>
-        <span>Attach</span>
-      </div>
-
-      <div id="tailorSection">
-        <div class="field-stack">
-          <button id="generateBtn" type="button" class="primary btn-block">Generate JSON (Alt+G)</button>
-          <button id="copyPromptBtn" type="button" class="primary btn-block" style="display: none">Copy prompt for GPT (Alt+G)</button>
-          <div id="generateResult" class="result-card"></div>
-          <div>
-            <label for="resumeJson">Resume JSON</label>
-            <textarea id="resumeJson" rows="8" placeholder="From Generate or paste ChatGPT JSON"></textarea>
-          </div>
-          <button id="renderBtn" type="button" class="primary btn-block" disabled>Generate PDF (Alt+P)</button>
-          <div id="result" class="status-line"></div>
-        </div>
-      </div>
-
-      <div id="nonTailorSection" style="display: none">
-        <div class="field-stack">
-          <div>
-            <label for="resumeSelect">Resume to use</label>
-            <select id="resumeSelect"></select>
-          </div>
-          <div id="resumeSuggestHint" class="hint"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ─── MORE ─── -->
-    <section class="tab-panel tab-more" aria-labelledby="tab-more">
-      <p class="tab-lead">Providers and template — change rarely; Apply tab is for daily use.</p>
-      <div class="field-stack card card-flat">
-        <div>
-          <label for="tailorModeSelect">Mode</label>
-          <select id="tailorModeSelect">
-            <option value="true">Tailor a resume per job</option>
-            <option value="false">Use an uploaded resume</option>
-          </select>
-        </div>
-        <div>
-          <label for="providerSelect">Resume provider</label>
-          <select id="providerSelect">
-            <option value="claude">Claude (CLI)</option>
-            <option value="ollama">Ollama</option>
-            <option value="gpt">GPT (manual)</option>
-            <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
-            <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
-          </select>
-        </div>
-        <div>
-          <label for="answerProviderSelect">Auto Fill answer provider</label>
-          <select id="answerProviderSelect">
-            <option value="claude">Claude (CLI)</option>
-            <option value="ollama">Ollama</option>
-            <option value="gpt">GPT (manual)</option>
-            <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
-            <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
-          </select>
-        </div>
-        <div id="gptAutoOptions" style="display: none">
-          <label class="checkbox-label">
-            <input id="deleteGptConversationsToggle" type="checkbox" />
-            Delete ChatGPT conversation after generating
-          </label>
-        </div>
-        <div>
-          <label for="templateSelect">Resume template</label>
-          <select id="templateSelect"></select>
-        </div>
-        <div id="providerStatus" class="status-line"></div>
-      </div>
     </section>
   </main>
 

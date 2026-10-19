@@ -325,16 +325,30 @@ el("saveProfile").addEventListener("click", async () => {
   }
 });
 
-// Mode and both provider choices are edited in the side panel now (see sidepanel.js/html) -
-// this page only shows/tests whatever's currently saved. The claude/ollama/gpt config fields
-// below need to show whenever EITHER provider needs them, not just one.
 function applyProviderFieldVisibility() {
-  const providers = [loadedSettings?.provider, loadedSettings?.answer_provider];
+  const resumeProv = el("providerSelect") ? el("providerSelect").value : loadedSettings?.provider;
+  const answerProv = el("answerProviderSelect") ? el("answerProviderSelect").value : loadedSettings?.answer_provider;
+  const providers = [resumeProv, answerProv];
   el("claudeFields").style.display = providers.includes("claude") ? "" : "none";
   el("ollamaFields").style.display = providers.includes("ollama") ? "" : "none";
   el("gptHint").style.display = providers.includes("gpt") ? "" : "none";
-  el("gptAutoHint").style.display = providers.includes("gpt-auto") || providers.includes("gpt-auto-headless") ? "" : "none";
+  const gptAuto = el("gptAutoOptions");
+  if (gptAuto) {
+    gptAuto.style.display = providers.includes("gpt-auto") || providers.includes("gpt-auto-headless") ? "" : "none";
+  }
   el("gptAutoHeadlessHint").style.display = providers.includes("gpt-auto-headless") ? "" : "none";
+}
+
+async function loadTailorModeSelect() {
+  const select = el("tailorModeSelect");
+  if (!select) return;
+  try {
+    const { tailor_mode: tailorMode } = await apiFetch("/tailor-mode");
+    select.value = tailorMode === false ? "false" : "true";
+    if (el("tailorModeStatus")) el("tailorModeStatus").textContent = "";
+  } catch (err) {
+    if (el("tailorModeStatus")) el("tailorModeStatus").textContent = `Could not load mode: ${err.message}`;
+  }
 }
 
 async function testProvider(provider, statusEl) {
@@ -364,6 +378,39 @@ el("testProviderBtn").addEventListener("click", () =>
 el("testAnswerProviderBtn").addEventListener("click", () =>
   testProvider(loadedSettings?.answer_provider || "ollama", el("answerProviderTestStatus"))
 );
+
+if (el("providerSelect")) {
+  el("providerSelect").addEventListener("change", () => {
+    applyProviderFieldVisibility();
+    generationDirty.markDirty();
+  });
+}
+if (el("answerProviderSelect")) {
+  el("answerProviderSelect").addEventListener("change", () => {
+    applyProviderFieldVisibility();
+    generationDirty.markDirty();
+  });
+}
+if (el("deleteGptConversationsToggle")) {
+  el("deleteGptConversationsToggle").addEventListener("change", () => generationDirty.markDirty());
+}
+if (el("portalHeadful")) {
+  el("portalHeadful").addEventListener("change", () => portalDirty.markDirty());
+}
+
+if (el("tailorModeSelect")) {
+  el("tailorModeSelect").addEventListener("change", async () => {
+    const statusEl = el("tailorModeStatus");
+    const tailorMode = el("tailorModeSelect").value === "true";
+    if (statusEl) statusEl.textContent = "Saving...";
+    try {
+      await apiFetch("/tailor-mode", { method: "PUT", body: JSON.stringify({ tailor_mode: tailorMode }) });
+      if (statusEl) statusEl.textContent = tailorMode ? "Mode: tailor per job." : "Mode: uploaded resume.";
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Could not save: ${err.message}`;
+    }
+  });
+}
 
 let loadedSettings = null;
 
@@ -479,7 +526,14 @@ async function loadSettings() {
     if (el("availabilitySnapMonday")) {
       el("availabilitySnapMonday").checked = settings.availability_snap_monday !== false;
     }
+    if (el("providerSelect")) el("providerSelect").value = settings.provider || "claude";
+    if (el("answerProviderSelect")) el("answerProviderSelect").value = settings.answer_provider || "ollama";
+    if (el("deleteGptConversationsToggle")) {
+      el("deleteGptConversationsToggle").checked = settings.delete_gpt_conversations !== false;
+    }
+    if (el("portalHeadful")) el("portalHeadful").checked = settings.portal_headless === false;
     applyProviderFieldVisibility();
+    await loadTailorModeSelect();
     el("settingsStatus").textContent = "";
     el("portalSettingsStatus").textContent = "";
     generationDirty.markSaved();
@@ -493,14 +547,13 @@ async function loadSettings() {
 
 function buildSettingsPayload() {
   return {
-    // Both providers are edited in the side panel, not here (see sidepanel.js) - same
-    // reasoning as `person` below: carry forward whatever's currently saved rather than
-    // reading a control that no longer exists on this page. Mode (tailor_mode) isn't part of
-    // this payload at all anymore - it's per-person now, saved via its own /tailor-mode
-    // endpoint (see applyTailorMode/store.get_tailor_mode), not bundled into Settings.
-    provider: loadedSettings?.provider || "claude",
-    answer_provider: loadedSettings?.answer_provider || "ollama",
-    delete_gpt_conversations: loadedSettings?.delete_gpt_conversations ?? true,
+    provider: el("providerSelect") ? el("providerSelect").value : loadedSettings?.provider || "claude",
+    answer_provider: el("answerProviderSelect")
+      ? el("answerProviderSelect").value
+      : loadedSettings?.answer_provider || "ollama",
+    delete_gpt_conversations: el("deleteGptConversationsToggle")
+      ? el("deleteGptConversationsToggle").checked
+      : loadedSettings?.delete_gpt_conversations ?? true,
     apply_root_dir: el("applyRoot").value.trim(),
     // `person` here is only the server-wide fallback used for direct API/curl calls
     // with no X-Person header - this browser's own active person lives in its local
@@ -517,10 +570,7 @@ function buildSettingsPayload() {
     // even right after typing them in and clicking "Save Portal settings" itself.
     portal_username: el("portalUsername").value.trim(),
     portal_password: el("portalPassword").value,
-    // Edited in the side panel now (right next to "Save & Sync to Portal"), not here - same
-    // carry-forward reasoning as `person`/both providers above, so a save from this page can't
-    // silently reset it back to the schema default.
-    portal_headless: loadedSettings?.portal_headless ?? true,
+    portal_headless: el("portalHeadful") ? !el("portalHeadful").checked : loadedSettings?.portal_headless ?? true,
     timeout_seconds: parseFloat(el("timeoutSeconds").value) || 120.0,
     notice_weeks: el("noticeWeeks")
       ? Number(el("noticeWeeks").value) === 2
