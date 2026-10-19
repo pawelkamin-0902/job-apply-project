@@ -826,32 +826,32 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function qaAnswerUsesTextarea(entry) {
+  const a = entry.answer || "";
+  return a.includes("\n") || a.length > 120;
+}
+
 function qaRow(entry, index) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td>
-      <input
-        class="form-control qa-question"
-        type="text"
-        placeholder="e.g. Do you require visa sponsorship?"
-        value="${escapeHtml(entry.question)}"
-        aria-label="Question"
-      />
-    </td>
-    <td>
-      <textarea
-        class="form-control qa-answer"
-        rows="2"
-        placeholder="e.g. No"
-        aria-label="Answer"
-      >${escapeHtml(entry.answer)}</textarea>
-    </td>
-    <td class="col-actions">
-      <button type="button" class="btn-icon btn-danger remove-row" title="Remove" aria-label="Remove">×</button>
-    </td>
+  const row = document.createElement("div");
+  row.className = "qa-row";
+  row.setAttribute("role", "listitem");
+  const answerLong = qaAnswerUsesTextarea(entry);
+  const answerField = answerLong
+    ? `<textarea class="cell-input qa-answer qa-answer-long" rows="2" placeholder="Answer" aria-label="Answer">${escapeHtml(entry.answer)}</textarea>`
+    : `<input class="cell-input qa-answer" type="text" placeholder="Answer" value="${escapeHtml(entry.answer)}" aria-label="Answer" />`;
+  row.innerHTML = `
+    <input
+      class="cell-input qa-question"
+      type="text"
+      placeholder="Question as shown on the application form"
+      value="${escapeHtml(entry.question)}"
+      aria-label="Question"
+    />
+    ${answerField}
+    <button type="button" class="btn-remove remove-row" title="Remove" aria-label="Remove"></button>
   `;
-  const questionInput = tr.querySelector(".qa-question");
-  const answerInput = tr.querySelector(".qa-answer");
+  const questionInput = row.querySelector(".qa-question");
+  const answerInput = row.querySelector(".qa-answer");
 
   questionInput.addEventListener("input", () => {
     qaEntries[index].question = questionInput.value;
@@ -861,12 +861,12 @@ function qaRow(entry, index) {
     qaEntries[index].answer = answerInput.value;
     qaDirty.markDirty();
   });
-  tr.querySelector(".remove-row").addEventListener("click", () => {
+  row.querySelector(".remove-row").addEventListener("click", () => {
     qaEntries.splice(index, 1);
     qaDirty.markDirty();
     renderQaList();
   });
-  return tr;
+  return row;
 }
 
 // Search filters against the full set before pagination slices it, and carries each match's
@@ -889,19 +889,16 @@ function renderQaList() {
   const start = qaPage * QA_PAGE_SIZE;
   const pageItems = filtered.slice(start, start + QA_PAGE_SIZE);
 
-  const tbody = el("qaList");
-  tbody.innerHTML = "";
+  const list = el("qaList");
+  list.innerHTML = "";
   if (!pageItems.length) {
-    const tr = document.createElement("tr");
-    tr.className = "data-table-empty";
-    tr.innerHTML = `<td colspan="3">${
+    list.innerHTML = `<div class="qa-empty">${
       qaEntries.length
         ? "No answers match your search."
-        : 'No saved answers yet. Use “Add answer” or “Common defaults” below.'
-    }</td>`;
-    tbody.appendChild(tr);
+        : "No saved answers yet. Use Add answer or Common defaults below."
+    }</div>`;
   } else {
-    pageItems.forEach(({ entry, originalIndex }) => tbody.appendChild(qaRow(entry, originalIndex)));
+    pageItems.forEach(({ entry, originalIndex }) => list.appendChild(qaRow(entry, originalIndex)));
   }
 
   if (filtered.length) {

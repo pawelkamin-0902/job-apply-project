@@ -215,7 +215,7 @@
       <div id="templateStatus" class="status-line"></div>
     </section>
 
-    <section id="section-qa" class="panel">
+    <section id="section-qa" class="panel panel-wide">
       <header class="panel-header">
         <div>
           <h1>Q&amp;A</h1>
@@ -243,16 +243,14 @@
           </nav>
         </div>
         <div class="table-scroll">
-          <table class="data-table data-table-qa">
-            <thead>
-              <tr>
-                <th>Question</th>
-                <th>Answer</th>
-                <th class="col-actions"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody id="qaList"></tbody>
-          </table>
+          <div class="qa-sheet">
+            <div class="qa-list-head" aria-hidden="true">
+              <span>Question</span>
+              <span>Answer</span>
+              <span class="qa-head-actions"></span>
+            </div>
+            <div id="qaList" class="qa-list" role="list"></div>
+          </div>
         </div>
         <div class="table-footer">
           <button id="addQaBtn" type="button" class="btn-secondary-soft">+ Add answer</button>
