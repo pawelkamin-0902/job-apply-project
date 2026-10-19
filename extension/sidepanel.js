@@ -2,6 +2,20 @@ import { apiFetch, checkHealth, fetchResumeFileBase64 } from "./api.js";
 
 const el = (id) => document.getElementById(id);
 
+function updateJobContextPreview() {
+  const preview = el("jobContextPreview");
+  if (!preview) return;
+  const company = (el("company") && el("company").value.trim()) || "";
+  const title = (el("jobTitle") && el("jobTitle").value.trim()) || "";
+  if (company || title) {
+    preview.textContent = [company, title].filter(Boolean).join(" · ");
+    preview.classList.remove("empty");
+  } else {
+    preview.textContent = "Add company & title — or Extract from page";
+    preview.classList.add("empty");
+  }
+}
+
 let lastSavedDir = null;
 let lastSavedDirCompany = null;
 // The most recently rendered tailored resume PDF, so Auto Fill can attach it on Workday
@@ -504,9 +518,10 @@ async function runChatGptPromptHeadless(prompt, deleteConversation = true) {
 
 async function refreshStatus() {
   const ok = await checkHealth();
-  el("status").textContent = ok
-    ? "● Backend connected"
-    : "○ Backend not running — start it (start.bat) and reopen this panel";
+  el("status").textContent = ok ? "● Online" : "○ Offline";
+  el("status").title = ok
+    ? "Companion service connected"
+    : "Start companion (start.bat) and refresh this panel";
   el("status").className = ok ? "status ok" : "status bad";
   return ok;
 }
@@ -15133,6 +15148,7 @@ async function scrapeCurrentTab() {
     // Not awaited - the job description is already populated and useful on its own; the facts
     // fill in a moment later rather than delaying "Extract from page" on a second network call.
     loadJobFacts(bestContent.result.jobDescription || "", bestContent.result.structuredLocation || "");
+    updateJobContextPreview();
   } catch (err) {
     // Some pages (chrome://, the Web Store, etc.) block script injection entirely.
     el("generateResult").textContent = `Extract failed: ${err.message}`;
@@ -15332,6 +15348,7 @@ el("scrapeBtn").addEventListener("click", scrapeCurrentTab);
 el("settingsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
 el("refreshBtn").addEventListener("click", () => {
   refreshStatus();
+  updateJobContextPreview();
   applyTailorMode();
 });
 el("resumeJson").addEventListener("input", updateRenderButtonState);
@@ -16406,7 +16423,10 @@ el("portalLogBtn").addEventListener("click", async () => {
   }
 });
 
+if (el("company")) el("company").addEventListener("input", updateJobContextPreview);
+if (el("jobTitle")) el("jobTitle").addEventListener("input", updateJobContextPreview);
 refreshStatus();
+updateJobContextPreview();
 applyTailorMode();
 scrapeCurrentTab();
 
@@ -16415,11 +16435,13 @@ scrapeCurrentTab();
 // panel) regains focus instead of requiring an explicit refresh every time.
 window.addEventListener("focus", () => {
   refreshStatus();
+  updateJobContextPreview();
   applyTailorMode();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
     refreshStatus();
+    updateJobContextPreview();
     applyTailorMode();
   }
 });

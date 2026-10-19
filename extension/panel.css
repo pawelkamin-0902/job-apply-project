@@ -119,12 +119,244 @@ body.sidepanel {
   white-space: nowrap;
 }
 
+/* ─── Tabs (Apply / Resume / More) ─── */
+.tab-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tab-bar {
+  display: flex;
+  position: sticky;
+  top: var(--header-h);
+  z-index: 9;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+  padding: 0;
+}
+
+.tab-label {
+  flex: 1;
+  margin: 0;
+  padding: 11px 8px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.tab-label:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+#tab-apply:checked ~ .tab-bar label[for="tab-apply"],
+#tab-resume:checked ~ .tab-bar label[for="tab-resume"],
+#tab-more:checked ~ .tab-bar label[for="tab-more"] {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tab-panel {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  animation: fadeIn 0.18s ease;
+}
+
+#tab-apply:checked ~ .app-main .tab-apply,
+#tab-resume:checked ~ .app-main .tab-resume,
+#tab-more:checked ~ .app-main .tab-more {
+  display: flex;
+}
+
+.tab-lead {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.workflow-mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+}
+
 .app-main {
   flex: 1;
   padding: 12px 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
+  min-height: 0;
+}
+
+.app-main.tab-panels > .tab-panel {
+  padding-top: 4px;
+}
+
+/* Job context — one line, JobRight-style */
+.job-preview {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+  color: var(--text);
+  padding: 12px 14px;
+  background: linear-gradient(135deg, var(--accent-soft) 0%, var(--surface) 100%);
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius);
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+.job-preview.empty {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* Primary action — dominates the panel */
+.hero-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--accent) 0%, #0891b2 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+  margin-top: 4px;
+}
+
+.hero-cta:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--accent-hover) 0%, #0e7490 100%);
+  box-shadow: 0 6px 18px rgba(13, 148, 136, 0.4);
+}
+
+.hero-cta-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.hero-cta-sub {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.92;
+}
+
+.quick-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.quick-btn {
+  margin: 0;
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.quick-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.result-card {
+  min-height: 2.5em;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+}
+
+.result-card:empty {
+  display: none;
+}
+
+.fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.fold summary {
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.fold summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold summary::after {
+  content: "+";
+  float: right;
+  font-weight: 400;
+  color: var(--text-soft);
+}
+
+.fold[open] summary::after {
+  content: "−";
+}
+
+.fold-body {
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.card-flat {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: none;
 }
 
 .app-footer {
