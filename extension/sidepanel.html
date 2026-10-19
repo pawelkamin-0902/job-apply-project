@@ -1,130 +1,181 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Auto Job Apply</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Apply</title>
   <link rel="stylesheet" href="panel.css" />
 </head>
-<body>
-  <div id="status" class="status">checking backend...</div>
-
-  <label for="tailorModeSelect">Mode</label>
-  <select id="tailorModeSelect">
-    <option value="true">Tailor a resume per job</option>
-    <option value="false">Use an uploaded resume</option>
-  </select>
-
-  <label for="providerSelect">Resume provider</label>
-  <select id="providerSelect">
-    <option value="claude">Claude (CLI)</option>
-    <option value="ollama">Ollama</option>
-    <option value="gpt">GPT (manual)</option>
-    <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
-    <option value="gpt-auto-headless">GPT (auto, headless - experimental)</option>
-  </select>
-
-  <label for="answerProviderSelect">Auto Fill answer provider</label>
-  <select id="answerProviderSelect">
-    <option value="claude">Claude (CLI)</option>
-    <option value="ollama">Ollama</option>
-    <option value="gpt">GPT (manual)</option>
-    <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
-    <option value="gpt-auto-headless">GPT (auto, headless - experimental)</option>
-  </select>
-
-  <div id="gptAutoOptions" style="display: none">
-    <label class="checkbox-label">
-      <input id="deleteGptConversationsToggle" type="checkbox" />
-      Delete ChatGPT conversation after generating
-    </label>
-  </div>
-
-  <label for="templateSelect">Resume template</label>
-  <select id="templateSelect"></select>
-  <div id="providerStatus" class="status-line"></div>
-
-  <label for="company">Company</label>
-  <input id="company" type="text" placeholder="e.g. Acme Corp" />
-
-  <label for="jobTitle">Job Title</label>
-  <input id="jobTitle" type="text" placeholder="e.g. Senior Backend Engineer" />
-
-  <label for="jobUrl">Job URL</label>
-  <input id="jobUrl" type="text" />
-
-  <label for="jobDescription">Job Description</label>
-  <textarea id="jobDescription" rows="8" placeholder="Click &quot;Extract from page&quot; or paste it yourself"></textarea>
-  <button id="scrapeBtn" type="button">Extract from page (Alt+E)</button>
-
-  <div id="jobFacts" class="job-facts"></div>
-
-  <div id="tailorSection">
-    <button id="generateBtn" type="button" class="primary">Generate JSON (Alt+G)</button>
-    <button id="copyPromptBtn" type="button" class="primary" style="display: none">Copy prompt for GPT (Alt+G)</button>
-    <div id="generateResult" class="status-line"></div>
-
-    <label for="resumeJson">Resume JSON (from Generate JSON above, or paste your own — e.g. from manual ChatGPT)</label>
-    <textarea id="resumeJson" rows="10" placeholder='{"name": "...", "contact_line": "...", ...}'></textarea>
-
-    <div class="button-row">
-      <button id="renderBtn" type="button" class="primary" disabled>Generate PDF (Alt+P)</button>
+<body class="sidepanel">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">JA</span>
+      <div>
+        <div class="brand-name">Job Apply</div>
+        <div class="brand-tag">Tailor · fill · track</div>
+      </div>
     </div>
-  </div>
+    <div id="status" class="status">checking…</div>
+  </header>
 
-  <div id="nonTailorSection" style="display: none">
-    <label for="resumeSelect">Resume to use</label>
-    <select id="resumeSelect"></select>
-    <div id="resumeSuggestHint" class="hint"></div>
-  </div>
+  <main class="app-main">
+    <section class="card" aria-labelledby="sec-setup">
+      <h2 class="card-title" id="sec-setup">Setup</h2>
+      <p class="card-desc">How resumes and answers are generated for this browser.</p>
+      <div class="field-stack">
+        <div>
+          <label for="tailorModeSelect">Mode</label>
+          <select id="tailorModeSelect">
+            <option value="true">Tailor a resume per job</option>
+            <option value="false">Use an uploaded resume</option>
+          </select>
+        </div>
+        <div>
+          <label for="providerSelect">Resume provider</label>
+          <select id="providerSelect">
+            <option value="claude">Claude (CLI)</option>
+            <option value="ollama">Ollama</option>
+            <option value="gpt">GPT (manual)</option>
+            <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
+            <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
+          </select>
+        </div>
+        <div>
+          <label for="answerProviderSelect">Auto Fill answer provider</label>
+          <select id="answerProviderSelect">
+            <option value="claude">Claude (CLI)</option>
+            <option value="ollama">Ollama</option>
+            <option value="gpt">GPT (manual)</option>
+            <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
+            <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
+          </select>
+        </div>
+        <div id="gptAutoOptions" style="display: none">
+          <label class="checkbox-label">
+            <input id="deleteGptConversationsToggle" type="checkbox" />
+            Delete ChatGPT conversation after generating
+          </label>
+        </div>
+        <div>
+          <label for="templateSelect">Resume template</label>
+          <select id="templateSelect"></select>
+        </div>
+        <div id="providerStatus" class="status-line"></div>
+      </div>
+    </section>
 
-  <div class="button-row">
-    <button id="autofillBtn" type="button">Auto Fill (Alt+F)</button>
-    <button id="learnBtn" type="button">Learn this page (Alt+L)</button>
-    <button id="saveSampleBtn" type="button" title="Save HTML + field match report + console log ([Auto Fill] lines). Run Auto Fill first for best logs.">Save Sample (Alt+S)</button>
-  </div>
-  <div id="autofillResult" class="status-line"></div>
-  <div id="saveSampleResult" class="status-line"></div>
+    <section class="card" aria-labelledby="sec-job">
+      <h2 class="card-title" id="sec-job">Job</h2>
+      <p class="card-desc">Extract from the open tab or paste details manually.</p>
+      <div class="field-stack">
+        <div class="field-row-2">
+          <div>
+            <label for="company">Company</label>
+            <input id="company" type="text" placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label for="jobTitle">Job title</label>
+            <input id="jobTitle" type="text" placeholder="Senior Engineer" />
+          </div>
+        </div>
+        <div>
+          <label for="jobUrl">Job URL</label>
+          <input id="jobUrl" type="text" />
+        </div>
+        <div>
+          <label for="jobDescription">Job description</label>
+          <textarea id="jobDescription" rows="6" placeholder="Extract from page (Alt+E) or paste here"></textarea>
+        </div>
+        <button id="scrapeBtn" type="button" class="secondary btn-block">Extract from page (Alt+E)</button>
+        <div id="jobFacts" class="job-facts"></div>
+      </div>
+    </section>
 
-  <div class="button-row">
-    <button id="attachResumeBtn" type="button" title="Attaches the generated/selected resume PDF to the page's Resume/CV upload field — a separate, explicit step, not run automatically by Auto Fill">Attach Resume to Form (Alt+R)</button>
-  </div>
-  <div id="attachResumeResult" class="status-line"></div>
+    <section class="card" aria-labelledby="sec-resume">
+      <h2 class="card-title" id="sec-resume">Resume</h2>
+      <div id="tailorSection">
+        <div class="field-stack">
+          <div class="action-grid">
+            <button id="generateBtn" type="button" class="primary btn-block">Generate JSON (Alt+G)</button>
+            <button id="copyPromptBtn" type="button" class="primary btn-block" style="display: none">Copy prompt for GPT (Alt+G)</button>
+          </div>
+          <div id="generateResult" class="status-line"></div>
+          <div>
+            <label for="resumeJson">Resume JSON</label>
+            <textarea id="resumeJson" rows="8" placeholder='From Generate above, or paste ChatGPT JSON'></textarea>
+          </div>
+          <button id="renderBtn" type="button" class="primary btn-block" disabled>Generate PDF (Alt+P)</button>
+        </div>
+      </div>
+      <div id="nonTailorSection" style="display: none">
+        <div class="field-stack">
+          <div>
+            <label for="resumeSelect">Resume to use</label>
+            <select id="resumeSelect"></select>
+          </div>
+          <div id="resumeSuggestHint" class="hint"></div>
+        </div>
+      </div>
+    </section>
 
-  <div id="portalLogSection">
-    <label for="platformSelect">Platform (sticky - stays set until you change it, for batches of jobs from the same source)</label>
-    <select id="platformSelect">
-      <option value="hiring.cafe">hiring.cafe</option>
-      <option value="Greenhouse">Greenhouse</option>
-      <option value="Jungle">Jungle</option>
-      <option value="remoteyeah.com">remoteyeah.com</option>
-      <option value="jobright">jobright</option>
-      <option value="Builtin">Builtin</option>
-      <option value="ZipRecruiter">ZipRecruiter</option>
-      <option value="Indeed">Indeed</option>
-      <option value="welcomethejungle.com">welcomethejungle.com</option>
-      <option value="pracuj.pl">pracuj.pl</option>
-      <option value="weworkremotely.com">weworkremotely.com</option>
-      <option value="jobs.workable.com">jobs.workable.com</option>
-      <option value="jobgether.com">jobgether.com</option>
-      <option value="remoterocketship">remoterocketship</option>
-      <option value="justjoin.it">justjoin.it</option>
-      <option value="theprotocol.it">theprotocol.it</option>
-      <option value="nofluffjob.com">nofluffjob.com</option>
-      <option value="glassdoor.com">glassdoor.com</option>
-      <option value="linkedin.com" selected>linkedin.com</option>
-    </select>
-    <label class="checkbox-label">
-      <input id="portalHeadful" type="checkbox" />
-      Show the browser window while syncing (uncheck "headless") - watch what's happening directly if a sync fails
-    </label>
-    <button id="portalLogBtn" type="button" title="Saves today's log entry and pushes it into the Portal via a headless, out-of-band browser - never opens or touches any tab you can see">Save &amp; Sync to Portal (Alt+Y)</button>
-    <div id="portalLogResult" class="status-line"></div>
-  </div>
+    <section class="card" aria-labelledby="sec-apply">
+      <h2 class="card-title" id="sec-apply">Apply</h2>
+      <p class="card-desc">Fill the form on the active tab, learn answers, capture samples.</p>
+      <div class="action-grid">
+        <button id="autofillBtn" type="button" class="primary">Auto Fill (Alt+F)</button>
+        <button id="learnBtn" type="button" class="secondary">Learn (Alt+L)</button>
+        <button id="saveSampleBtn" type="button" class="secondary btn-block" title="Save HTML + field report + console log. Run Auto Fill first for best logs.">Save sample (Alt+S)</button>
+      </div>
+      <div id="autofillResult" class="status-line"></div>
+      <div id="saveSampleResult" class="status-line"></div>
+      <button id="attachResumeBtn" type="button" class="secondary btn-block" title="Attach generated/selected PDF to the page upload field — explicit step, not part of Auto Fill">Attach resume to form (Alt+R)</button>
+      <div id="attachResumeResult" class="status-line"></div>
+    </section>
 
-  <div id="result"></div>
+    <section class="card" aria-labelledby="sec-portal">
+      <h2 class="card-title" id="sec-portal">Portal log</h2>
+      <p class="card-desc">Push today’s entry to your internal bid-tracking portal.</p>
+      <div class="field-stack">
+        <div>
+          <label for="platformSelect">Platform</label>
+          <select id="platformSelect">
+            <option value="hiring.cafe">hiring.cafe</option>
+            <option value="Greenhouse">Greenhouse</option>
+            <option value="Jungle">Jungle</option>
+            <option value="remoteyeah.com">remoteyeah.com</option>
+            <option value="jobright">jobright</option>
+            <option value="Builtin">Builtin</option>
+            <option value="ZipRecruiter">ZipRecruiter</option>
+            <option value="Indeed">Indeed</option>
+            <option value="welcomethejungle.com">welcomethejungle.com</option>
+            <option value="pracuj.pl">pracuj.pl</option>
+            <option value="weworkremotely.com">weworkremotely.com</option>
+            <option value="jobs.workable.com">jobs.workable.com</option>
+            <option value="jobgether.com">jobgether.com</option>
+            <option value="remoterocketship">remoterocketship</option>
+            <option value="justjoin.it">justjoin.it</option>
+            <option value="theprotocol.it">theprotocol.it</option>
+            <option value="nofluffjob.com">nofluffjob.com</option>
+            <option value="glassdoor.com">glassdoor.com</option>
+            <option value="linkedin.com" selected>linkedin.com</option>
+          </select>
+        </div>
+        <label class="checkbox-label">
+          <input id="portalHeadful" type="checkbox" />
+          Show browser while syncing (debug failed syncs)
+        </label>
+        <button id="portalLogBtn" type="button" class="primary btn-block">Save &amp; sync to portal (Alt+Y)</button>
+        <div id="portalLogResult" class="status-line"></div>
+      </div>
+    </section>
 
-  <button id="settingsBtn" type="button" class="link">Settings (Alt+O)</button>
-  <button id="refreshBtn" type="button" class="link" title="Reload settings (e.g. after changing them in another tab)">↻ Refresh (Alt+U)</button>
+    <div id="result"></div>
+  </main>
+
+  <footer class="app-footer">
+    <button id="settingsBtn" type="button" class="link">Settings (Alt+O)</button>
+    <button id="refreshBtn" type="button" class="link" title="Reload settings after editing elsewhere">↻ Refresh (Alt+U)</button>
+  </footer>
 
   <script type="module" src="sidepanel.js"></script>
 </body>
