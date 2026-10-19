@@ -109,37 +109,32 @@
       <div id="attachResumeResult" class="status-line"></div>
       <div id="saveSampleResult" class="status-line"></div>
 
-      <details class="fold">
-        <summary>Log to portal</summary>
-        <div class="field-stack fold-body">
-          <div>
-            <label for="platformSelect">Platform</label>
-            <select id="platformSelect">
-              <option value="hiring.cafe">hiring.cafe</option>
-              <option value="Greenhouse">Greenhouse</option>
-              <option value="Jungle">Jungle</option>
-              <option value="remoteyeah.com">remoteyeah.com</option>
-              <option value="jobright">jobright</option>
-              <option value="Builtin">Builtin</option>
-              <option value="ZipRecruiter">ZipRecruiter</option>
-              <option value="Indeed">Indeed</option>
-              <option value="welcomethejungle.com">welcomethejungle.com</option>
-              <option value="pracuj.pl">pracuj.pl</option>
-              <option value="weworkremotely.com">weworkremotely.com</option>
-              <option value="jobs.workable.com">jobs.workable.com</option>
-              <option value="jobgether.com">jobgether.com</option>
-              <option value="remoterocketship">remoterocketship</option>
-              <option value="justjoin.it">justjoin.it</option>
-              <option value="theprotocol.it">theprotocol.it</option>
-              <option value="nofluffjob.com">nofluffjob.com</option>
-              <option value="glassdoor.com">glassdoor.com</option>
-              <option value="linkedin.com" selected>linkedin.com</option>
-            </select>
-          </div>
-          <button id="portalLogBtn" type="button" class="secondary btn-block">Save &amp; sync to portal (Alt+Y)</button>
-          <div id="portalLogResult" class="status-line"></div>
-        </div>
-      </details>
+      <div class="portal-block">
+        <label for="platformSelect">Platform (portal log)</label>
+        <select id="platformSelect">
+          <option value="hiring.cafe">hiring.cafe</option>
+          <option value="Greenhouse">Greenhouse</option>
+          <option value="Jungle">Jungle</option>
+          <option value="remoteyeah.com">remoteyeah.com</option>
+          <option value="jobright">jobright</option>
+          <option value="Builtin">Builtin</option>
+          <option value="ZipRecruiter">ZipRecruiter</option>
+          <option value="Indeed">Indeed</option>
+          <option value="welcomethejungle.com">welcomethejungle.com</option>
+          <option value="pracuj.pl">pracuj.pl</option>
+          <option value="weworkremotely.com">weworkremotely.com</option>
+          <option value="jobs.workable.com">jobs.workable.com</option>
+          <option value="jobgether.com">jobgether.com</option>
+          <option value="remoterocketship">remoterocketship</option>
+          <option value="justjoin.it">justjoin.it</option>
+          <option value="theprotocol.it">theprotocol.it</option>
+          <option value="nofluffjob.com">nofluffjob.com</option>
+          <option value="glassdoor.com">glassdoor.com</option>
+          <option value="linkedin.com" selected>linkedin.com</option>
+        </select>
+        <button id="portalLogBtn" type="button" class="secondary btn-block">Save &amp; sync to portal (Alt+Y)</button>
+        <div id="portalLogResult" class="status-line"></div>
+      </div>
     </section>
   </main>
 

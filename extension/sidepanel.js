@@ -2,6 +2,11 @@ import { apiFetch, checkHealth, fetchResumeFileBase64 } from "./api.js";
 
 const el = (id) => document.getElementById(id);
 
+function switchPanelTab(tabRadioId) {
+  const radio = el(tabRadioId);
+  if (radio) radio.checked = true;
+}
+
 function updateJobContextPreview() {
   const preview = el("jobContextPreview");
   if (!preview) return;
