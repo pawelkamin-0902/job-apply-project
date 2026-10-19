@@ -395,3 +395,21 @@ def build_match_answer_user_message(questions: list[str], qa_bank: list[dict]) -
         f"NEW QUESTIONS FROM THE FORM:\n{questions_text}\n\n"
         "For each new question above, which saved entry (if any) means the same thing? Respond now."
     )
+
+
+def build_cover_letter_system_prompt() -> str:
+    return (
+        "You write job application cover letters as plain text only. "
+        "No markdown, no bold, no asterisks, no headings, no JSON. "
+        "Output only the letter body (greeting through sign-off)."
+    )
+
+
+def build_cover_letter_user_message(job_description: str, resume: dict) -> str:
+    return (
+        "This is job description.\n\n"
+        f"{job_description.strip()}\n\n"
+        "This is resume.\n\n"
+        f"{json.dumps(resume, indent=2)}\n\n"
+        "Give me cover letter with no bold, plain text."
+    )

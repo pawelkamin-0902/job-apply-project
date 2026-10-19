@@ -336,6 +336,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     }
   };
   const wantAnswers = expectKind === "answers";
+  const wantCover = expectKind === "cover";
   notify(`creating tab (expect=${expectKind})...`);
   const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
   notify(`tab ${tab.id} created`);
@@ -417,7 +418,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
       );
     }
 
-    notify(`phase2: polling for ${wantAnswers ? "answers" : "resume"} JSON...`);
+    notify(`phase2: polling for ${wantAnswers ? "answers" : wantCover ? "cover letter" : "resume"}...`);
     let text = "";
     let lastPollSummary = "";
     let seenGenerating = Boolean(sendResult && sendResult.generating);
@@ -450,12 +451,18 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
       // Accept only the shape this call asked for — never the schema example from our own prompt.
       const matched = wantAnswers
         ? pollResult.kind === "answers" && pollResult.isRealAnswers
-        : pollResult.kind === "resume" && pollResult.isRealResume;
+        : wantCover
+          ? pollResult.text &&
+            !pollResult.generating &&
+            !pollResult.isRealResume &&
+            !pollResult.isRealAnswers &&
+            pollResult.text.length > 80
+          : pollResult.kind === "resume" && pollResult.isRealResume;
       if (matched && pollResult.text) {
         if (!seenGenerating && pollIndex < 8) continue;
         if (pollResult.generating) continue;
         text = pollResult.text;
-        notify(`phase2: ${expectKind} JSON captured (${text.length} chars, via=${pollResult.via})`);
+        notify(`phase2: ${expectKind} captured (${text.length} chars, via=${pollResult.via})`);
         break;
       }
     }
@@ -15337,6 +15344,103 @@ el("refreshBtn").addEventListener("click", () => {
 });
 el("resumeJson").addEventListener("input", updateRenderButtonState);
 
+function parseResumeJsonFromPanel() {
+  try {
+    return JSON.parse(el("resumeJson").value);
+  } catch {
+    return null;
+  }
+}
+
+function stripCoverLetterMarkdown(text) {
+  return (text || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/^```[a-zA-Z]*\n?/gm, "")
+    .replace(/\n?```$/gm, "")
+    .trim();
+}
+
+async function generateCoverLetterText({ statusEl = el("generateResult"), quiet = false } = {}) {
+  const company = el("company").value.trim();
+  const job_description = el("jobDescription").value.trim();
+  const job_url = el("jobUrl").value.trim() || null;
+  const resume = parseResumeJsonFromPanel();
+  if (!company || !job_description) {
+    throw new Error("Fill in company and job description first.");
+  }
+  if (!resume) {
+    throw new Error("Resume JSON must be valid before generating a cover letter.");
+  }
+  const missing = validateResumeShape(resume);
+  if (missing.length) {
+    throw new Error(`Resume JSON is incomplete: ${missing.join(", ")}`);
+  }
+
+  const body = { company, job_description, job_url, resume };
+  const { provider: providerValue } = await apiFetch("/settings");
+
+  if (providerValue === "gpt") {
+    if (!quiet) statusEl.textContent = "Building cover letter prompt...";
+    const promptData = await apiFetch("/cover-letter-prompt-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    lastSavedDir = promptData.saved_dir;
+    lastSavedDirCompany = company;
+    const combined = `${promptData.system_prompt}\n\n${promptData.user_message}`;
+    await navigator.clipboard.writeText(combined);
+    throw new Error(
+      'Provider is GPT (manual): cover letter prompt copied to clipboard. Paste into ChatGPT, then paste the plain-text reply into Cover letter.'
+    );
+  }
+
+  if (providerValue === "gpt-auto" || providerValue === "gpt-auto-headless") {
+    const isHeadless = providerValue === "gpt-auto-headless";
+    if (!quiet) {
+      statusEl.textContent = isHeadless
+        ? "Generating cover letter (headless ChatGPT)..."
+        : "Generating cover letter via ChatGPT tab...";
+    }
+    const promptData = await apiFetch("/cover-letter-prompt-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    lastSavedDir = promptData.saved_dir;
+    lastSavedDirCompany = company;
+    const combined = `${promptData.system_prompt}\n\n${promptData.user_message}`;
+    const { delete_gpt_conversations: deleteConversation = true } = await apiFetch("/settings");
+    const rawResponse = isHeadless
+      ? await runChatGptPromptHeadless(combined, deleteConversation)
+      : await runChatGptPrompt(combined, deleteConversation, undefined, "cover");
+    const text = stripCoverLetterMarkdown(rawResponse);
+    if (text.length < 40) {
+      throw new Error("ChatGPT cover letter reply was too short.");
+    }
+    el("coverLetter").value = text;
+    if (!quiet) statusEl.textContent = "Cover letter generated. Review below, then Generate PDF.";
+    return text;
+  }
+
+  if (!quiet) statusEl.textContent = "Generating cover letter...";
+  const data = await apiFetch("/generate-cover-letter", { method: "POST", body: JSON.stringify(body) });
+  lastSavedDir = data.saved_dir;
+  lastSavedDirCompany = company;
+  el("coverLetter").value = data.text;
+  if (!quiet) statusEl.textContent = "Cover letter generated. Review below, then Generate PDF.";
+  return data.text;
+}
+
+el("generateCoverLetterBtn").addEventListener("click", async () => {
+  el("generateCoverLetterBtn").disabled = true;
+  try {
+    await generateCoverLetterText();
+  } catch (err) {
+    el("generateResult").textContent = err.message;
+  } finally {
+    el("generateCoverLetterBtn").disabled = false;
+  }
+});
+
 el("generateBtn").addEventListener("click", async () => {
   const genResultEl = el("generateResult");
   const body = {
@@ -15467,19 +15571,37 @@ el("renderBtn").addEventListener("click", async () => {
     resultEl.textContent = "Fill in company first.";
     return;
   }
-  resultEl.textContent = "Rendering PDF...";
+  resultEl.textContent = "Preparing files...";
   el("renderBtn").disabled = true;
   const reuseDir = company === lastSavedDirCompany ? lastSavedDir : null;
   try {
+    let coverText = el("coverLetter").value.trim();
+    if (!coverText) {
+      resultEl.textContent = "No cover letter yet — generating from job + resume...";
+      try {
+        coverText = await generateCoverLetterText({ statusEl: resultEl, quiet: true });
+      } catch (err) {
+        resultEl.textContent = `Cover letter: ${err.message}`;
+        return;
+      }
+    }
+    resultEl.textContent = "Rendering resume PDF and plain cover letter files...";
     const data = await apiFetch("/render", {
       method: "POST",
-      body: JSON.stringify({ resume, company, saved_dir: reuseDir }),
+      body: JSON.stringify({
+        resume,
+        company,
+        saved_dir: reuseDir,
+        cover_letter_text: coverText || null,
+      }),
     });
     lastSavedDir = data.saved_dir;
     lastSavedDirCompany = company;
-    // docx_path and pdf_path are the same folder, just a different filename extension -
-    // showing both in full was redundant noise; the folder alone is what's actually useful.
-    resultEl.innerHTML = `Saved to:<br><code>${data.saved_dir}</code>`;
+    let html = `Saved to:<br><code>${data.saved_dir}</code>`;
+    if (data.cover_letter_pdf_path) {
+      html += `<br>Cover letter: <code>${data.cover_letter_pdf_path.split(/[\\/]/).pop()}</code>`;
+    }
+    resultEl.innerHTML = html;
     if (data.pdf_base64) {
       const filename = (data.pdf_path || "").split(/[\\/]/).pop() || "resume.pdf";
       lastGeneratedPdf = { base64: data.pdf_base64, filename };
@@ -16404,6 +16526,17 @@ const SHORTCUT_BUTTON_IDS = {
   "open-settings": "settingsBtn",
   "refresh-panel": "refreshBtn",
 };
+
+const SHORTCUT_PANEL_TAB = {
+  "extract-from-page": "tab-job",
+  "generate-json": "tab-resume",
+  "generate-pdf": "tab-resume",
+  "auto-fill": "tab-apply",
+  "learn-page": "tab-apply",
+  "save-sample": "tab-apply",
+  "attach-resume": "tab-apply",
+  "portal-sync": "tab-apply",
+};
 // TEMPORARY diagnostic logging - see background.js's own note on the same investigation.
 chrome.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== "SHORTCUT") return;
@@ -16415,6 +16548,9 @@ chrome.runtime.onMessage.addListener((message) => {
   // "Generate JSON" and "Copy prompt for GPT" share one shortcut - only one of the two is ever
   // visible at a time (see applyTailorMode's isManualGpt toggle), so this fires whichever one
   // currently is, rather than needing a separate shortcut for each.
+  const panelTab = SHORTCUT_PANEL_TAB[message.command];
+  if (panelTab) switchPanelTab(panelTab);
+
   const targetId =
     message.command === "generate-json"
       ? el("copyPromptBtn").style.display !== "none"
@@ -16423,5 +16559,6 @@ chrome.runtime.onMessage.addListener((message) => {
       : SHORTCUT_BUTTON_IDS[message.command];
   const btn = targetId && el(targetId);
   console.log("[shortcut-debug] target button:", targetId, "found:", !!btn, "disabled:", btn && btn.disabled, "hidden:", btn && btn.style.display === "none");
+  // Run even when the button sits on a hidden tab panel (only inline display:none blocks GPT copy path).
   if (btn && !btn.disabled && btn.style.display !== "none") btn.click();
 });

@@ -174,10 +174,26 @@ class GenerateResponse(BaseModel):
     saved_dir: str
 
 
+class CoverLetterGenerateRequest(BaseModel):
+    company: str
+    job_description: str
+    job_url: str | None = None
+    resume: dict
+
+
+class CoverLetterGenerateResponse(BaseModel):
+    text: str
+    saved_dir: str
+    session_id: str | None = None
+    total_cost_usd: float | None = None
+    usage: dict[str, int] | None = None
+
+
 class RenderRequest(BaseModel):
     resume: dict
     company: str
     saved_dir: str | None = None
+    cover_letter_text: str | None = None
 
 
 class RenderResponse(BaseModel):
@@ -185,6 +201,8 @@ class RenderResponse(BaseModel):
     pdf_path: str
     saved_dir: str
     pdf_base64: str | None = None
+    cover_letter_docx_path: str | None = None
+    cover_letter_pdf_path: str | None = None
 
 
 class PromptPreview(BaseModel):

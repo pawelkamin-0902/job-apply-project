@@ -78,7 +78,12 @@
             <label for="resumeJson">Resume JSON</label>
             <textarea id="resumeJson" rows="8" placeholder="From Generate or paste ChatGPT JSON"></textarea>
           </div>
-          <button id="renderBtn" type="button" class="primary btn-block" disabled>Generate PDF (Alt+P)</button>
+          <button id="generateCoverLetterBtn" type="button" class="secondary btn-block">Generate cover letter</button>
+          <div>
+            <label for="coverLetter">Cover letter (plain text)</label>
+            <textarea id="coverLetter" rows="8" placeholder="From Generate cover letter, or paste your own"></textarea>
+          </div>
+          <button id="renderBtn" type="button" class="primary btn-block" disabled>Generate PDF + cover letter files (Alt+P)</button>
           <div id="result" class="status-line"></div>
         </div>
       </div>

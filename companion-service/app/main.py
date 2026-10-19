@@ -15,11 +15,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.claude_cli import ClaudeCodeCliError, check_claude_cli, run_claude_code_print, usage_from_cli_payload
 from app.ollama_cli import OllamaCliError, check_ollama, run_ollama_chat
+from app.cover_letter_render import build_plain_docx, build_plain_pdf, normalize_cover_letter_text
 from app.prompt import (
     build_answer_system_prompt,
     build_answer_user_message,
     build_batch_answer_system_prompt,
     build_batch_answer_user_message,
+    build_cover_letter_system_prompt,
+    build_cover_letter_user_message,
     build_match_answer_system_prompt,
     build_match_answer_user_message,
     build_select_pick_system_prompt,
@@ -38,6 +41,8 @@ from app.schemas import (
     BatchAnswerPromptResponse,
     ChatGptPromptRequest,
     ChatGptPromptResponse,
+    CoverLetterGenerateRequest,
+    CoverLetterGenerateResponse,
     CreatePersonRequest,
     GenerateRequest,
     GenerateResponse,
@@ -664,6 +669,95 @@ async def generate(body: GenerateRequest, active_person: str = Depends(get_activ
     )
 
 
+async def _generate_cover_letter_text(settings, system_prompt: str, user_message: str) -> dict:
+    if settings.provider == "gpt":
+        raise HTTPException(
+            status_code=400,
+            detail='Provider is set to "gpt" (manual) — use "Cover letter prompt" or switch provider.',
+        )
+    if settings.provider == "gpt-auto":
+        raise HTTPException(
+            status_code=400,
+            detail='Provider is set to "gpt-auto" — cover letter generation runs in the extension.',
+        )
+    if settings.provider == "ollama":
+        try:
+            return await run_ollama_chat(
+                user_message,
+                system_prompt=system_prompt,
+                model=settings.ollama_model,
+                timeout_seconds=settings.timeout_seconds,
+                base_url=settings.ollama_base_url,
+            )
+        except OllamaCliError as exc:
+            raise HTTPException(status_code=502, detail=f"Cover letter generation failed: {exc}") from exc
+    try:
+        return await run_claude_code_print(
+            user_message,
+            cwd=Path.home(),
+            timeout_seconds=settings.timeout_seconds,
+            append_system_prompt=system_prompt,
+            model=settings.claude_model,
+        )
+    except ClaudeCodeCliError as exc:
+        raise HTTPException(status_code=502, detail=f"Cover letter generation failed: {exc}") from exc
+
+
+@app.post("/cover-letter-prompt-preview", response_model=PromptPreview, dependencies=[Depends(verify_token)])
+async def cover_letter_prompt_preview(
+    body: CoverLetterGenerateRequest, active_person: str = Depends(get_active_person)
+) -> PromptPreview:
+    settings = store.get_settings()
+    system_prompt = build_cover_letter_system_prompt()
+    user_message = build_cover_letter_user_message(body.job_description, body.resume)
+
+    save_dir = compute_save_dir(settings.apply_root_dir, active_person, body.company)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    (save_dir / "JD.txt").write_text(body.job_description, encoding="utf-8")
+    (save_dir / "link.txt").write_text(body.job_url or "", encoding="utf-8")
+    (save_dir / "CoverLetterPrompt(used).txt").write_text(
+        f"--- SYSTEM PROMPT ---\n{system_prompt}\n\n--- USER MESSAGE ---\n{user_message}\n", encoding="utf-8"
+    )
+
+    return PromptPreview(system_prompt=system_prompt, user_message=user_message, saved_dir=str(save_dir))
+
+
+@app.post("/generate-cover-letter", response_model=CoverLetterGenerateResponse, dependencies=[Depends(verify_token)])
+async def generate_cover_letter(
+    body: CoverLetterGenerateRequest, active_person: str = Depends(get_active_person)
+) -> CoverLetterGenerateResponse:
+    settings = store.get_settings()
+    system_prompt = build_cover_letter_system_prompt()
+    user_message = build_cover_letter_user_message(body.job_description, body.resume)
+
+    payload = await _generate_cover_letter_text(settings, system_prompt, user_message)
+    result_text = payload.get("result")
+    if not isinstance(result_text, str):
+        raise HTTPException(status_code=502, detail="Cover letter generation failed: no result text returned")
+
+    text = normalize_cover_letter_text(strip_json_fences(result_text))
+    if len(text) < 40:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cover letter generation failed: response too short. Raw: {result_text[:500]!r}",
+        )
+
+    save_dir = compute_save_dir(settings.apply_root_dir, active_person, body.company)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    (save_dir / "cover_letter.txt").write_text(text, encoding="utf-8")
+    (save_dir / "CoverLetterPrompt(used).txt").write_text(
+        f"--- SYSTEM PROMPT ---\n{system_prompt}\n\n--- USER MESSAGE ---\n{user_message}\n", encoding="utf-8"
+    )
+
+    return CoverLetterGenerateResponse(
+        text=text,
+        saved_dir=str(save_dir),
+        session_id=payload.get("session_id"),
+        total_cost_usd=payload.get("total_cost_usd"),
+        usage=usage_from_cli_payload(payload),
+    )
+
+
 @app.post("/save-sample", response_model=SaveSampleResponse, dependencies=[Depends(verify_token)])
 async def save_sample(body: SaveSampleRequest) -> SaveSampleResponse:
     """Save the current page's HTML plus what Auto Fill's detector matched/would generate
@@ -865,9 +959,29 @@ async def render(body: RenderRequest, active_person: str = Depends(get_active_pe
 
     pdf_base64 = base64.b64encode(pdf_path.read_bytes()).decode() if pdf_path else None
 
+    cover_docx_path = None
+    cover_pdf_path = None
+    if body.cover_letter_text and body.cover_letter_text.strip():
+        letter_text = normalize_cover_letter_text(body.cover_letter_text)
+        (save_dir / "cover_letter.txt").write_text(letter_text, encoding="utf-8")
+        cover_docx_path = save_dir / "cover_letter.docx"
+        cover_pdf_path = save_dir / "cover_letter.pdf"
+        try:
+            build_plain_docx(letter_text, cover_docx_path)
+        except PermissionError as exc:
+            cover_docx_path = None
+            errors.append(f"cover docx: could not write {exc.filename}")
+        try:
+            build_plain_pdf(letter_text, cover_pdf_path)
+        except PermissionError as exc:
+            cover_pdf_path = None
+            errors.append(f"cover pdf: could not write {exc.filename}")
+
     return RenderResponse(
         docx_path=str(docx_path) if docx_path else f"FAILED: {errors[0] if errors else ''}",
         pdf_path=str(pdf_path) if pdf_path else f"FAILED: {errors[-1] if errors else ''}",
         saved_dir=str(save_dir),
         pdf_base64=pdf_base64,
+        cover_letter_docx_path=str(cover_docx_path) if cover_docx_path else None,
+        cover_letter_pdf_path=str(cover_pdf_path) if cover_pdf_path else None,
     )
