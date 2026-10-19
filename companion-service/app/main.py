@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.claude_cli import ClaudeCodeCliError, check_claude_cli, run_claude_code_print, usage_from_cli_payload
 from app.ollama_cli import OllamaCliError, check_ollama, run_ollama_chat
-from app.cover_letter_render import build_plain_docx, build_plain_pdf, normalize_cover_letter_text
+from app.cover_letter_render import build_plain_pdf, normalize_cover_letter_text
 from app.prompt import (
     build_answer_system_prompt,
     build_answer_user_message,
@@ -959,18 +959,11 @@ async def render(body: RenderRequest, active_person: str = Depends(get_active_pe
 
     pdf_base64 = base64.b64encode(pdf_path.read_bytes()).decode() if pdf_path else None
 
-    cover_docx_path = None
     cover_pdf_path = None
     if body.cover_letter_text and body.cover_letter_text.strip():
         letter_text = normalize_cover_letter_text(body.cover_letter_text)
         (save_dir / "cover_letter.txt").write_text(letter_text, encoding="utf-8")
-        cover_docx_path = save_dir / "cover_letter.docx"
         cover_pdf_path = save_dir / "cover_letter.pdf"
-        try:
-            build_plain_docx(letter_text, cover_docx_path)
-        except PermissionError as exc:
-            cover_docx_path = None
-            errors.append(f"cover docx: could not write {exc.filename}")
         try:
             build_plain_pdf(letter_text, cover_pdf_path)
         except PermissionError as exc:
@@ -982,6 +975,5 @@ async def render(body: RenderRequest, active_person: str = Depends(get_active_pe
         pdf_path=str(pdf_path) if pdf_path else f"FAILED: {errors[-1] if errors else ''}",
         saved_dir=str(save_dir),
         pdf_base64=pdf_base64,
-        cover_letter_docx_path=str(cover_docx_path) if cover_docx_path else None,
         cover_letter_pdf_path=str(cover_pdf_path) if cover_pdf_path else None,
     )

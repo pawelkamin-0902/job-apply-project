@@ -201,7 +201,6 @@ class RenderResponse(BaseModel):
     pdf_path: str
     saved_dir: str
     pdf_base64: str | None = None
-    cover_letter_docx_path: str | None = None
     cover_letter_pdf_path: str | None = None
 
 
