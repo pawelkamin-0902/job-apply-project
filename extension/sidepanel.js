@@ -15585,7 +15585,7 @@ el("renderBtn").addEventListener("click", async () => {
         return;
       }
     }
-    resultEl.textContent = "Rendering resume PDF and cover letter PDF...";
+    resultEl.textContent = "Rendering resume PDF and cover letter (Word + PDF)...";
     const data = await apiFetch("/render", {
       method: "POST",
       body: JSON.stringify({

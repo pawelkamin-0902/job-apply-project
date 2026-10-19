@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.claude_cli import ClaudeCodeCliError, check_claude_cli, run_claude_code_print, usage_from_cli_payload
 from app.ollama_cli import OllamaCliError, check_ollama, run_ollama_chat
-from app.cover_letter_render import build_plain_pdf, normalize_cover_letter_text
+from app.cover_letter_render import build_plain_docx, build_plain_pdf, normalize_cover_letter_text
 from app.prompt import (
     build_answer_system_prompt,
     build_answer_user_message,
