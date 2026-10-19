@@ -35,125 +35,132 @@
   <div class="options-main">
     <main class="app-content">
 
-    <section id="section-profile" class="panel active">
+    <section id="section-profile" class="panel panel-profile active">
       <header class="panel-header">
         <div>
           <h1>Profile</h1>
-          <p class="section-lead">Contact, experience, and availability for the person selected below. Stored per browser profile.</p>
+          <p class="section-lead">Who this browser applies as — contact, address, experience, and availability.</p>
         </div>
         <span id="profileBadge" class="badge saved">Saved</span>
       </header>
 
-      <div class="card settings-block">
-        <h2 class="card-title">This browser's profile</h2>
-        <p class="card-desc">
-          Each named profile has its own contact info, work history, Q&amp;A, and resumes. Pick who this browser applies as — independent of other browsers using the same companion service.
-        </p>
-        <label for="personSelect">Active profile</label>
-        <select id="personSelect"></select>
-        <div class="button-row">
-          <button id="newPersonBtn" type="button">+ New profile</button>
-          <button id="deletePersonBtn" type="button" class="btn-danger">Delete this profile</button>
+      <div class="profile-section profile-switcher">
+        <h2 class="profile-section-title">Active profile</h2>
+        <p class="profile-section-desc">Separate data per person; other browsers can use the same companion with a different profile.</p>
+        <div class="profile-switcher-row">
+          <select id="personSelect" class="field-control profile-select" aria-label="Active profile"></select>
+          <div class="profile-switcher-actions">
+            <button id="newPersonBtn" type="button" class="btn-secondary-soft">New profile</button>
+            <button id="deletePersonBtn" type="button" class="btn-danger-ghost">Delete</button>
+          </div>
         </div>
-        <div id="personStatus" class="status-line"></div>
+        <div id="personStatus" class="status-line status-compact"></div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Contact</h2>
-        <div class="contact-grid">
-          <div>
+      <div class="profile-section">
+        <h2 class="profile-section-title">Contact</h2>
+        <div class="form-grid">
+          <div class="field">
             <label for="name">Name</label>
-            <input id="name" type="text" />
+            <input id="name" type="text" class="field-control" autocomplete="name" />
           </div>
-          <div>
+          <div class="field">
             <label for="email">Email</label>
-            <input id="email" type="text" />
+            <input id="email" type="email" class="field-control" autocomplete="email" />
           </div>
-          <div>
+          <div class="field">
             <label for="phone">Phone</label>
-            <input id="phone" type="text" />
+            <input id="phone" type="tel" class="field-control" autocomplete="tel" />
           </div>
-          <div>
-            <label for="location">Location (resume line)</label>
-            <input id="location" type="text" placeholder="e.g. Warsaw, Poland (Remote)" />
+          <div class="field">
+            <label for="location">Location on resume</label>
+            <input id="location" type="text" class="field-control" placeholder="Warsaw, Poland (Remote)" />
           </div>
-          <div>
+          <div class="field field-span-2">
             <label for="linkedin">LinkedIn</label>
-            <input id="linkedin" type="text" />
+            <input id="linkedin" type="url" class="field-control" placeholder="https://linkedin.com/in/…" />
           </div>
-          <div>
+          <div class="field field-span-2">
             <label for="website">Website</label>
-            <input id="website" type="text" />
+            <input id="website" type="url" class="field-control" placeholder="https://…" />
           </div>
         </div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Address (application forms)</h2>
-        <p class="card-desc">Separate fields for ATS forms. State/region is usually better in Q&amp;A when forms have conditional rules.</p>
-        <div class="contact-grid">
-          <div>
-            <label for="streetAddress">Street address</label>
-            <input id="streetAddress" type="text" placeholder="e.g. ul. Śląska 27" />
+      <div class="profile-section">
+        <h2 class="profile-section-title">Address for application forms</h2>
+        <p class="profile-section-desc">Used when ATS asks for street, city, and postal code separately.</p>
+        <div class="form-grid">
+          <div class="field field-span-2">
+            <label for="streetAddress">Street</label>
+            <input id="streetAddress" type="text" class="field-control" autocomplete="street-address" />
           </div>
-          <div>
+          <div class="field">
             <label for="city">City</label>
-            <input id="city" type="text" placeholder="e.g. Warsaw" />
+            <input id="city" type="text" class="field-control" autocomplete="address-level2" />
           </div>
-          <div>
+          <div class="field">
             <label for="postalCode">Postal code</label>
-            <input id="postalCode" type="text" />
+            <input id="postalCode" type="text" class="field-control" autocomplete="postal-code" />
           </div>
-          <div>
-            <label for="state">State / region (optional)</label>
-            <input id="state" type="text" placeholder="e.g. Masovian" />
+          <div class="field">
+            <label for="state">State / region</label>
+            <input id="state" type="text" class="field-control" autocomplete="address-level1" placeholder="Optional" />
           </div>
-          <div>
+          <div class="field">
             <label for="country">Country</label>
-            <input id="country" type="text" placeholder="e.g. Poland" />
+            <input id="country" type="text" class="field-control" autocomplete="country-name" />
           </div>
         </div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Availability</h2>
-        <p class="card-desc">Notice period and start date for “Date available” and similar fields (1 or 2 weeks; optional Monday snap).</p>
-        <div class="contact-grid">
-          <div>
+      <div class="profile-section profile-section-compact">
+        <h2 class="profile-section-title">Availability</h2>
+        <div class="form-grid form-grid-availability">
+          <div class="field">
             <label for="noticeWeeks">Notice period</label>
-            <select id="noticeWeeks">
+            <select id="noticeWeeks" class="field-control">
               <option value="1">1 week</option>
               <option value="2">2 weeks</option>
             </select>
           </div>
-          <div class="checkbox-row">
-            <label class="checkbox-label">
+          <div class="field field-check">
+            <label class="check-card">
               <input id="availabilitySnapMonday" type="checkbox" checked />
-              Start on a Monday (1w → first Monday after a full week; 2w → the following Monday)
+              <span>Snap start date to Monday</span>
             </label>
+            <p class="field-hint">1 week → first Monday after 7 days; 2 weeks → the Monday after that.</p>
           </div>
         </div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Summary &amp; skills</h2>
-        <label for="summary">Summary</label>
-        <textarea id="summary" rows="3"></textarea>
-        <label for="skills">Skills (comma-separated)</label>
-        <input id="skills" type="text" />
+      <div class="profile-section">
+        <h2 class="profile-section-title">Summary &amp; skills</h2>
+        <div class="field">
+          <label for="summary">Professional summary</label>
+          <textarea id="summary" class="field-control" rows="4" placeholder="Optional — used on tailored resumes"></textarea>
+        </div>
+        <div class="field">
+          <label for="skills">Skills</label>
+          <input id="skills" type="text" class="field-control" placeholder="Comma-separated, e.g. Python, AWS, PostgreSQL" />
+        </div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Experience</h2>
-        <p class="card-desc">Most recent first. Bullet lines are the source material for tailored resumes.</p>
-        <div id="experienceList"></div>
-        <button id="addExperience" type="button" class="link">+ Add experience</button>
+      <div class="profile-section">
+        <div class="profile-section-head-row">
+          <h2 class="profile-section-title">Experience</h2>
+          <button id="addExperience" type="button" class="btn-secondary-soft btn-sm">+ Add role</button>
+        </div>
+        <p class="profile-section-desc">Most recent first. One bullet per line — this feeds resume tailoring.</p>
+        <div id="experienceList" class="profile-entries"></div>
       </div>
 
-      <div class="card settings-block">
-        <h2 class="card-title">Education</h2>
-        <div id="educationList"></div>
-        <button id="addEducation" type="button" class="link">+ Add education</button>
+      <div class="profile-section">
+        <div class="profile-section-head-row">
+          <h2 class="profile-section-title">Education</h2>
+          <button id="addEducation" type="button" class="btn-secondary-soft btn-sm">+ Add school</button>
+        </div>
+        <div id="educationList" class="profile-entries"></div>
       </div>
 
       <footer class="panel-footer">
@@ -254,7 +261,6 @@
         </div>
         <div class="table-footer">
           <button id="addQaBtn" type="button" class="btn-secondary-soft">+ Add answer</button>
-          <button id="addDefaultQaBtn" type="button" class="btn-secondary-soft">+ Common defaults</button>
         </div>
       </div>
 

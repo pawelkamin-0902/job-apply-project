@@ -176,28 +176,38 @@ function experienceRow(entry = {}, { expanded = false } = {}) {
   body.className = "entry-row entry-body";
   const endIsPresent = isPresent(entry.end_date);
   body.innerHTML = `
-    <label>Job title</label>
-    <input class="exp-title" placeholder="e.g. Senior Software Engineer" value="${entry.title || ""}">
-    <label>Company</label>
-    <input class="exp-company" placeholder="e.g. Acme Corp" value="${entry.company || ""}">
-    <label>Location (optional)</label>
-    <input class="exp-location" placeholder="e.g. Warsaw, Poland (Remote)" value="${entry.location || ""}">
-    <label>Start date</label>
-    <input type="month" class="exp-start" value="${parseDisplayDateToMonthValue(entry.start_date)}" data-original="${entry.start_date || ""}">
-    <label>End date</label>
-    <label class="checkbox-label">
-      <input type="checkbox" class="exp-end-current" ${endIsPresent ? "checked" : ""}>
-      Currently working here
-    </label>
-    <input type="month" class="exp-end" value="${endIsPresent ? "" : parseDisplayDateToMonthValue(entry.end_date)}" data-original="${endIsPresent ? "" : entry.end_date || ""}">
-    <label>Key accomplishments (one per line)</label>
-    <p class="hint">
-      What you actually did, concretely - the tools/tech you used and the outcome if you know it.
-      e.g. "Built a payments API in Python and FastAPI handling ~10k requests/day". This is the real
-      source material the AI tailors from, so detail and honesty here directly shape what gets generated.
-    </p>
-    <textarea class="exp-bullets" placeholder="One accomplishment per line" rows="4">${(entry.bullets || []).join("\n")}</textarea>
-    <button type="button" class="remove-row btn-danger">Remove</button>
+    <div class="form-grid profile-entry-grid">
+      <div class="field">
+        <label>Job title</label>
+        <input class="field-control exp-title" placeholder="Senior Software Engineer" value="${entry.title || ""}">
+      </div>
+      <div class="field">
+        <label>Company</label>
+        <input class="field-control exp-company" placeholder="Acme Corp" value="${entry.company || ""}">
+      </div>
+      <div class="field field-span-2">
+        <label>Location</label>
+        <input class="field-control exp-location" placeholder="Remote (Warsaw, Poland)" value="${entry.location || ""}">
+      </div>
+      <div class="field">
+        <label>Start</label>
+        <input type="month" class="field-control exp-start" value="${parseDisplayDateToMonthValue(entry.start_date)}" data-original="${entry.start_date || ""}">
+      </div>
+      <div class="field">
+        <label>End</label>
+        <label class="check-inline">
+          <input type="checkbox" class="exp-end-current" ${endIsPresent ? "checked" : ""}>
+          <span>Current role</span>
+        </label>
+        <input type="month" class="field-control exp-end" value="${endIsPresent ? "" : parseDisplayDateToMonthValue(entry.end_date)}" data-original="${endIsPresent ? "" : entry.end_date || ""}">
+      </div>
+      <div class="field field-span-2">
+        <label>Accomplishments</label>
+        <textarea class="field-control exp-bullets" placeholder="One line per bullet — tools, scope, outcome" rows="4">${(entry.bullets || []).join("\n")}</textarea>
+        <p class="field-hint">Honest detail here drives tailored resume bullets.</p>
+      </div>
+    </div>
+    <button type="button" class="remove-row btn-danger-ghost btn-sm profile-entry-remove">Remove role</button>
   `;
   wireEndDateToggle(body, ".exp-end", ".exp-end-current");
 
@@ -225,21 +235,33 @@ function educationRow(entry = {}, { expanded = false } = {}) {
   body.className = "entry-row entry-body";
   const endIsPresent = isPresent(entry.end_date);
   body.innerHTML = `
-    <label>School</label>
-    <input class="edu-school" placeholder="e.g. University of Oulu" value="${entry.school || ""}">
-    <label>Degree</label>
-    <input class="edu-degree" placeholder="e.g. Bachelor's in Computer Science" value="${entry.degree || ""}">
-    <label>Location (optional)</label>
-    <input class="edu-location" placeholder="e.g. Oulu, Finland" value="${entry.location || ""}">
-    <label>Start date</label>
-    <input type="month" class="edu-start" value="${parseDisplayDateToMonthValue(entry.start_date)}" data-original="${entry.start_date || ""}">
-    <label>End date</label>
-    <label class="checkbox-label">
-      <input type="checkbox" class="edu-end-current" ${endIsPresent ? "checked" : ""}>
-      Currently studying here
-    </label>
-    <input type="month" class="edu-end" value="${endIsPresent ? "" : parseDisplayDateToMonthValue(entry.end_date)}" data-original="${endIsPresent ? "" : entry.end_date || ""}">
-    <button type="button" class="remove-row btn-danger">Remove</button>
+    <div class="form-grid profile-entry-grid">
+      <div class="field field-span-2">
+        <label>School</label>
+        <input class="field-control edu-school" placeholder="University of Oulu" value="${entry.school || ""}">
+      </div>
+      <div class="field field-span-2">
+        <label>Degree</label>
+        <input class="field-control edu-degree" placeholder="B.Sc. Computer Science" value="${entry.degree || ""}">
+      </div>
+      <div class="field field-span-2">
+        <label>Location</label>
+        <input class="field-control edu-location" placeholder="Oulu, Finland" value="${entry.location || ""}">
+      </div>
+      <div class="field">
+        <label>Start</label>
+        <input type="month" class="field-control edu-start" value="${parseDisplayDateToMonthValue(entry.start_date)}" data-original="${entry.start_date || ""}">
+      </div>
+      <div class="field">
+        <label>End</label>
+        <label class="check-inline">
+          <input type="checkbox" class="edu-end-current" ${endIsPresent ? "checked" : ""}>
+          <span>In progress</span>
+        </label>
+        <input type="month" class="field-control edu-end" value="${endIsPresent ? "" : parseDisplayDateToMonthValue(entry.end_date)}" data-original="${endIsPresent ? "" : entry.end_date || ""}">
+      </div>
+    </div>
+    <button type="button" class="remove-row btn-danger-ghost btn-sm profile-entry-remove">Remove</button>
   `;
   wireEndDateToggle(body, ".edu-end", ".edu-end-current");
 
@@ -792,24 +814,6 @@ el("uploadResumeBtn").addEventListener("click", async () => {
 // questions for you to answer by hand each time. Appended to the editable list below, not
 // saved automatically — you review (and can freely edit or remove any of them) before
 // clicking Save.
-const DEFAULT_QA = [
-  { question: "Have you ever worked at this company before?", answer: "No" },
-  { question: "Are you currently working at this company?", answer: "No" },
-  { question: "Do you have any relatives employed by this company?", answer: "No" },
-  { question: "Have you ever lived in the US for more than 6 months?", answer: "No" },
-  { question: "Have you ever lived in Canada for more than 6 months?", answer: "No" },
-  { question: "Are you eligible to work in this country?", answer: "Yes" },
-  { question: "Will you now or in the future require sponsorship for this role?", answer: "No" },
-  // Salary / notice intentionally omitted — form-specific (currency, monthly vs yearly, days
-  // vs date); Auto Fill asks GPT per field and Learn never saves those answers.
-  { question: "What is your nationality?", answer: "Polish" },
-  { question: "What is your race or ethnicity?", answer: "White" },
-  { question: "What is your sexual orientation?", answer: "Straight / heterosexual" },
-  { question: "Do you identify as transgender?", answer: "No" },
-  { question: "Do you have a disability?", answer: "No disability" },
-  { question: "Are you a veteran?", answer: "Not a veteran" },
-];
-
 // `qaEntries` (not the DOM) is the source of truth once loaded — with search + pagination,
 // only a slice of it is ever actually rendered at once, so scraping visible rows at Save
 // time (the old approach) would silently drop anything off the current page or filtered out
@@ -895,7 +899,7 @@ function renderQaList() {
     list.innerHTML = `<div class="qa-empty">${
       qaEntries.length
         ? "No answers match your search."
-        : "No saved answers yet. Use Add answer or Common defaults below."
+        : "No saved answers yet. Use Add answer below."
     }</div>`;
   } else {
     pageItems.forEach(({ entry, originalIndex }) => list.appendChild(qaRow(entry, originalIndex)));
@@ -936,12 +940,6 @@ el("addQaBtn").addEventListener("click", () => {
   qaSearchTerm = "";
   el("qaSearch").value = "";
   qaPage = Math.max(0, Math.ceil(qaEntries.length / QA_PAGE_SIZE) - 1); // jump to the page the new entry lands on
-  renderQaList();
-});
-
-el("addDefaultQaBtn").addEventListener("click", () => {
-  qaEntries.push(...DEFAULT_QA.map((e) => ({ ...e })));
-  qaDirty.markDirty();
   renderQaList();
 });
 
