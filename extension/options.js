@@ -42,14 +42,40 @@ function isPresent(text) {
 }
 
 // ---- section nav ----
+const SECTION_TITLES = {
+  profile: "Profile",
+  resumes: "Resumes",
+  templates: "Templates",
+  qa: "Q&A",
+  connection: "Connection",
+  generation: "Generation",
+  portal: "Portal",
+};
+
+function activateSettingsSection(sectionId) {
+  const panel = el(`section-${sectionId}`);
+  if (!panel) return;
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.section === sectionId);
+  });
+  document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
+  panel.classList.add("active");
+  const title = SECTION_TITLES[sectionId] || "Settings";
+  document.title = `${title} — Job Apply`;
+}
+
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    el(`section-${btn.dataset.section}`).classList.add("active");
+    const section = btn.dataset.section;
+    activateSettingsSection(section);
+    history.replaceState(null, "", `#${section}`);
   });
 });
+
+const hashSection = location.hash.replace(/^#/, "");
+if (hashSection && el(`section-${hashSection}`)) {
+  activateSettingsSection(hashSection);
+}
 
 // ---- save-state badges: a section starts "Saved", flips to "Unsaved changes" (and enables
 // its Save button) the moment anything inside it changes, so it's never ambiguous whether a
