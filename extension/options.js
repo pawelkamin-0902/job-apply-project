@@ -482,6 +482,28 @@ async function loadPromptInstructions() {
 // rather than a multi-field form.
 let templateCatalogLoaded = false;
 
+const TEMPLATE_PAGE_WIDTH_PX = 816; /* 8.5in @ 96dpi */
+const TEMPLATE_PAGE_HEIGHT_PX = 1056; /* 11in @ 96dpi */
+
+function wrapPreviewHtml(html) {
+  const fix = "<style>html,body{margin:0;padding:0;overflow:hidden!important;background:#fff}</style>";
+  if (/<head[\s>]/i.test(html)) {
+    return html.replace(/<head([^>]*)>/i, `<head$1>${fix}`);
+  }
+  return `${fix}${html}`;
+}
+
+function fitTemplatePreview(iframe) {
+  const wrap = iframe.closest(".template-preview-wrap");
+  if (!wrap) return;
+  const scale = wrap.clientWidth / TEMPLATE_PAGE_WIDTH_PX;
+  iframe.style.width = `${TEMPLATE_PAGE_WIDTH_PX}px`;
+  iframe.style.height = `${TEMPLATE_PAGE_HEIGHT_PX}px`;
+  iframe.style.transform = `scale(${scale})`;
+  iframe.style.transformOrigin = "top left";
+  wrap.style.height = `${Math.max(180, Math.round(TEMPLATE_PAGE_HEIGHT_PX * scale))}px`;
+}
+
 async function loadTemplateCatalog() {
   if (templateCatalogLoaded) return;
   try {
@@ -494,16 +516,21 @@ async function loadTemplateCatalog() {
       card.innerHTML = `
         <input type="radio" name="resumeTemplate" value="${t.key}">
         <div class="template-preview-wrap">
-          <iframe class="template-preview" title="${t.name} preview" loading="lazy" tabindex="-1"></iframe>
+          <div class="template-preview-scaler">
+            <iframe class="template-preview" title="${t.name} preview" loading="lazy" tabindex="-1" scrolling="no"></iframe>
+          </div>
         </div>
         <div class="template-name">${t.name}</div>
         <div class="template-desc">${t.description}</div>
         <button type="button" class="link template-zoom-btn">View full size</button>
       `;
       const iframe = card.querySelector("iframe");
+      iframe.setAttribute("scrolling", "no");
+      iframe.addEventListener("load", () => fitTemplatePreview(iframe));
       apiFetchText(`/resume-templates/${encodeURIComponent(t.key)}/preview`)
         .then((html) => {
-          iframe.srcdoc = html;
+          iframe.srcdoc = wrapPreviewHtml(html);
+          requestAnimationFrame(() => fitTemplatePreview(iframe));
         })
         .catch((err) => {
           iframe.replaceWith(Object.assign(document.createElement("div"), {
@@ -539,6 +566,12 @@ async function loadTemplateCatalog() {
       grid.appendChild(card);
     });
     templateCatalogLoaded = true;
+    if (!window.__templatePreviewResize) {
+      window.__templatePreviewResize = true;
+      window.addEventListener("resize", () => {
+        document.querySelectorAll(".template-preview").forEach((frame) => fitTemplatePreview(frame));
+      });
+    }
   } catch (err) {
     el("templateStatus").textContent = `Could not load templates: ${err.message}`;
   }
@@ -905,12 +938,24 @@ function renderQaList() {
     pageItems.forEach(({ entry, originalIndex }) => list.appendChild(qaRow(entry, originalIndex)));
   }
 
+  const rangeEl = el("qaRangeInfo");
+  const pageCurrentEl = el("qaPageCurrent");
+  const pageTotalEl = el("qaPageTotal");
   if (filtered.length) {
-    const matchNote =
-      qaSearchTerm && filtered.length !== qaEntries.length ? ` · ${qaEntries.length} total` : "";
-    el("qaPageInfo").textContent = `${qaPage + 1} / ${totalPages} · ${filtered.length} row${filtered.length === 1 ? "" : "s"}${matchNote}`;
+    const end = Math.min(start + QA_PAGE_SIZE, filtered.length);
+    if (rangeEl) {
+      const pool =
+        qaSearchTerm && filtered.length !== qaEntries.length
+          ? ` (filtered from ${qaEntries.length})`
+          : "";
+      rangeEl.textContent = `Showing ${start + 1}–${end} of ${filtered.length}${pool}`;
+    }
+    if (pageCurrentEl) pageCurrentEl.textContent = String(qaPage + 1);
+    if (pageTotalEl) pageTotalEl.textContent = String(totalPages);
   } else {
-    el("qaPageInfo").textContent = "—";
+    if (rangeEl) rangeEl.textContent = "No rows";
+    if (pageCurrentEl) pageCurrentEl.textContent = "—";
+    if (pageTotalEl) pageTotalEl.textContent = "—";
   }
   el("qaPrevBtn").disabled = qaPage <= 0;
   el("qaNextBtn").disabled = qaPage >= totalPages - 1;

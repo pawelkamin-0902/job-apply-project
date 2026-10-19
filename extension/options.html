@@ -243,11 +243,25 @@
               autocomplete="off"
             />
           </label>
-          <nav class="pager" aria-label="Q&amp;A pagination">
-            <button id="qaPrevBtn" type="button" class="btn-icon" aria-label="Previous page">‹</button>
-            <span id="qaPageInfo" class="pager-meta"></span>
-            <button id="qaNextBtn" type="button" class="btn-icon" aria-label="Next page">›</button>
-          </nav>
+          <div class="qa-toolbar-end">
+            <span id="qaRangeInfo" class="qa-range-meta"></span>
+            <nav class="pager pager-pro" aria-label="Q&amp;A pagination">
+              <button id="qaPrevBtn" type="button" class="pager-btn" aria-label="Previous page">
+                <span class="pager-btn-icon" aria-hidden="true">←</span>
+                <span>Prev</span>
+              </button>
+              <div class="pager-status">
+                <span class="pager-label">Page</span>
+                <span id="qaPageCurrent" class="pager-page-num">1</span>
+                <span class="pager-label">of</span>
+                <span id="qaPageTotal" class="pager-page-total">1</span>
+              </div>
+              <button id="qaNextBtn" type="button" class="pager-btn" aria-label="Next page">
+                <span>Next</span>
+                <span class="pager-btn-icon" aria-hidden="true">→</span>
+              </button>
+            </nav>
+          </div>
         </div>
         <div class="table-scroll">
           <div class="qa-sheet">

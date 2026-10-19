@@ -1544,6 +1544,86 @@ body.options label:not(.checkbox-label):not(.search-field):not(.file-picker-trig
   padding: 0 8px;
 }
 
+.qa-toolbar-end {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.qa-range-meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pager-pro {
+  border-radius: 10px;
+  padding: 3px;
+  gap: 0;
+  background: #fff;
+}
+
+.pager-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pager-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--accent-hover);
+}
+
+.pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pager-btn-icon {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+.pager-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  min-height: 32px;
+}
+
+.pager-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pager-page-num,
+.pager-page-total {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text);
+  min-width: 1.25em;
+  text-align: center;
+}
+
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -1917,40 +1997,62 @@ body.options .settings-block:not(.table-card) textarea:focus {
   border-top: 1px solid var(--border);
 }
 
+body.options:has(#section-templates.active) .app-content {
+  max-width: min(1100px, calc(100vw - 260px));
+}
+
 .template-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 14px;
-  margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 4px;
 }
 
 .template-card {
   display: block;
-  border: 2px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 12px;
+  padding: 14px;
   cursor: pointer;
   position: relative;
   background: var(--surface);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s;
 }
 
 .template-card:hover {
   box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .template-card:has(input:checked) {
   border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(13, 148, 136, 0.12);
+  background: linear-gradient(180deg, #f0fdfa 0%, #fff 120px);
+}
+
+.template-card:has(input:checked)::after {
+  content: "Selected";
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-hover);
   background: var(--accent-soft);
+  border: 1px solid var(--accent-muted);
+  border-radius: 999px;
+  padding: 3px 8px;
 }
 
 .template-card input[type="radio"] {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: auto;
-  margin: 0;
-  accent-color: var(--accent);
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
 }
 
 .template-card img {
@@ -1965,23 +2067,35 @@ body.options .settings-block:not(.table-card) textarea:focus {
 .template-preview-wrap {
   position: relative;
   width: 100%;
-  height: 220px;
-  margin-bottom: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  min-height: 180px;
+  margin-bottom: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   overflow: hidden;
-  background: #e2e8f0;
+  background: #fff;
   cursor: zoom-in;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.8);
+}
+
+.template-preview-scaler {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  line-height: 0;
 }
 
 .template-preview {
+  display: block;
   border: 0;
-  width: 8.5in;
-  height: 11in;
-  transform: scale(0.28);
+  margin: 0;
+  padding: 0;
+  width: 816px;
+  height: 1056px;
   transform-origin: top left;
   pointer-events: none;
   background: #fff;
+  overflow: hidden;
+  color-scheme: light;
 }
 
 .template-preview-error {
