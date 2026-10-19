@@ -231,49 +231,49 @@
         <span id="qaBadge" class="badge saved">Saved</span>
       </header>
 
-      <div class="card settings-block table-card">
-        <div class="table-toolbar">
+      <div class="qa-panel">
+        <div class="qa-search-bar">
           <label class="search-field" for="qaSearch">
             <span class="search-field-icon" aria-hidden="true"></span>
             <input
               id="qaSearch"
               type="search"
-              class="form-control"
+              class="field-control search-input"
               placeholder="Search questions or answers…"
               autocomplete="off"
             />
           </label>
-          <div class="qa-toolbar-end">
-            <span id="qaRangeInfo" class="qa-range-meta"></span>
-            <nav class="pager pager-pro" aria-label="Q&amp;A pagination">
-              <button id="qaPrevBtn" type="button" class="pager-btn" aria-label="Previous page">
-                <span class="pager-btn-icon" aria-hidden="true">←</span>
-                <span>Prev</span>
-              </button>
-              <div class="pager-status">
+        </div>
+        <div class="qa-sheet-wrap">
+          <div class="qa-list-head" aria-hidden="true">
+            <span>Question</span>
+            <span>Answer</span>
+            <span class="qa-head-actions"></span>
+          </div>
+          <div id="qaList" class="qa-list" role="list"></div>
+        </div>
+        <div class="qa-pagination-bar">
+          <span id="qaRangeInfo" class="qa-range-meta"></span>
+          <nav class="pager pager-pro" aria-label="Q&amp;A pagination">
+            <button id="qaPrevBtn" type="button" class="pager-btn" aria-label="Previous page">
+              <span class="pager-btn-icon" aria-hidden="true">←</span>
+              <span>Prev</span>
+            </button>
+            <div class="pager-status">
+              <label class="pager-jump" for="qaPageJump">
                 <span class="pager-label">Page</span>
-                <span id="qaPageCurrent" class="pager-page-num">1</span>
+                <input id="qaPageJump" type="number" class="pager-page-input" min="1" value="1" aria-label="Page number" />
                 <span class="pager-label">of</span>
                 <span id="qaPageTotal" class="pager-page-total">1</span>
-              </div>
-              <button id="qaNextBtn" type="button" class="pager-btn" aria-label="Next page">
-                <span>Next</span>
-                <span class="pager-btn-icon" aria-hidden="true">→</span>
-              </button>
-            </nav>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <div class="qa-sheet">
-            <div class="qa-list-head" aria-hidden="true">
-              <span>Question</span>
-              <span>Answer</span>
-              <span class="qa-head-actions"></span>
+              </label>
             </div>
-            <div id="qaList" class="qa-list" role="list"></div>
-          </div>
+            <button id="qaNextBtn" type="button" class="pager-btn" aria-label="Next page">
+              <span>Next</span>
+              <span class="pager-btn-icon" aria-hidden="true">→</span>
+            </button>
+          </nav>
         </div>
-        <div class="table-footer">
+        <div class="qa-panel-footer">
           <button id="addQaBtn" type="button" class="btn-secondary-soft">+ Add answer</button>
         </div>
       </div>

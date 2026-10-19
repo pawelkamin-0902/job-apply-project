@@ -62,6 +62,11 @@ function activateSettingsSection(sectionId) {
   panel.classList.add("active");
   const title = SECTION_TITLES[sectionId] || "Settings";
   document.title = `${title} — Job Apply`;
+  if (sectionId === "templates") {
+    requestAnimationFrame(() => {
+      document.querySelectorAll(".template-preview").forEach((frame) => observeTemplatePreview(frame));
+    });
+  }
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -496,12 +501,26 @@ function wrapPreviewHtml(html) {
 function fitTemplatePreview(iframe) {
   const wrap = iframe.closest(".template-preview-wrap");
   if (!wrap) return;
-  const scale = wrap.clientWidth / TEMPLATE_PAGE_WIDTH_PX;
+  const width = wrap.clientWidth || wrap.getBoundingClientRect().width;
+  if (!width) return;
+  const scale = width / TEMPLATE_PAGE_WIDTH_PX;
   iframe.style.width = `${TEMPLATE_PAGE_WIDTH_PX}px`;
   iframe.style.height = `${TEMPLATE_PAGE_HEIGHT_PX}px`;
   iframe.style.transform = `scale(${scale})`;
   iframe.style.transformOrigin = "top left";
-  wrap.style.height = `${Math.max(180, Math.round(TEMPLATE_PAGE_HEIGHT_PX * scale))}px`;
+}
+
+function observeTemplatePreview(iframe) {
+  const wrap = iframe.closest(".template-preview-wrap");
+  if (!wrap || wrap.dataset.previewObserved) return;
+  wrap.dataset.previewObserved = "1";
+  const run = () => fitTemplatePreview(iframe);
+  run();
+  requestAnimationFrame(run);
+  setTimeout(run, 50);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(run).observe(wrap);
+  }
 }
 
 async function loadTemplateCatalog() {
@@ -517,7 +536,7 @@ async function loadTemplateCatalog() {
         <input type="radio" name="resumeTemplate" value="${t.key}">
         <div class="template-preview-wrap">
           <div class="template-preview-scaler">
-            <iframe class="template-preview" title="${t.name} preview" loading="lazy" tabindex="-1" scrolling="no"></iframe>
+            <iframe class="template-preview" title="${t.name} preview" tabindex="-1" scrolling="no"></iframe>
           </div>
         </div>
         <div class="template-name">${t.name}</div>
@@ -526,11 +545,11 @@ async function loadTemplateCatalog() {
       `;
       const iframe = card.querySelector("iframe");
       iframe.setAttribute("scrolling", "no");
-      iframe.addEventListener("load", () => fitTemplatePreview(iframe));
+      iframe.addEventListener("load", () => observeTemplatePreview(iframe));
+      observeTemplatePreview(iframe);
       apiFetchText(`/resume-templates/${encodeURIComponent(t.key)}/preview`)
         .then((html) => {
           iframe.srcdoc = wrapPreviewHtml(html);
-          requestAnimationFrame(() => fitTemplatePreview(iframe));
         })
         .catch((err) => {
           iframe.replaceWith(Object.assign(document.createElement("div"), {
@@ -939,7 +958,7 @@ function renderQaList() {
   }
 
   const rangeEl = el("qaRangeInfo");
-  const pageCurrentEl = el("qaPageCurrent");
+  const pageJumpEl = el("qaPageJump");
   const pageTotalEl = el("qaPageTotal");
   if (filtered.length) {
     const end = Math.min(start + QA_PAGE_SIZE, filtered.length);
@@ -950,11 +969,14 @@ function renderQaList() {
           : "";
       rangeEl.textContent = `Showing ${start + 1}–${end} of ${filtered.length}${pool}`;
     }
-    if (pageCurrentEl) pageCurrentEl.textContent = String(qaPage + 1);
+    if (pageJumpEl) {
+      pageJumpEl.max = String(totalPages);
+      pageJumpEl.value = String(qaPage + 1);
+    }
     if (pageTotalEl) pageTotalEl.textContent = String(totalPages);
   } else {
     if (rangeEl) rangeEl.textContent = "No rows";
-    if (pageCurrentEl) pageCurrentEl.textContent = "—";
+    if (pageJumpEl) pageJumpEl.value = "1";
     if (pageTotalEl) pageTotalEl.textContent = "—";
   }
   el("qaPrevBtn").disabled = qaPage <= 0;
@@ -978,6 +1000,30 @@ el("qaNextBtn").addEventListener("click", () => {
   qaPage += 1;
   renderQaList();
 });
+
+function jumpQaPageFromInput() {
+  const pageJumpEl = el("qaPageJump");
+  if (!pageJumpEl) return;
+  const filtered = qaFilteredWithIndex();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / QA_PAGE_SIZE));
+  const n = parseInt(pageJumpEl.value, 10);
+  if (!Number.isFinite(n)) {
+    pageJumpEl.value = String(qaPage + 1);
+    return;
+  }
+  qaPage = Math.min(totalPages - 1, Math.max(0, n - 1));
+  renderQaList();
+}
+
+const qaPageJumpEl = el("qaPageJump");
+qaPageJumpEl.addEventListener("change", jumpQaPageFromInput);
+qaPageJumpEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    jumpQaPageFromInput();
+  }
+});
+qaPageJumpEl.addEventListener("input", (e) => e.stopPropagation());
 
 el("addQaBtn").addEventListener("click", () => {
   qaEntries.push({ question: "", answer: "" });
