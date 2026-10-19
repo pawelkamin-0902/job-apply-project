@@ -498,35 +498,117 @@ input[type="text"],
 input[type="password"],
 input[type="number"],
 input[type="month"],
+input[type="search"],
 input[type="file"],
 select,
-textarea {
+textarea,
+.form-control {
   width: 100%;
   font-family: inherit;
   font-size: 13px;
+  line-height: 1.35;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 8px 10px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-soft);
+  opacity: 1;
 }
 
 input:focus,
 select:focus,
-textarea:focus {
+textarea:focus,
+.form-control:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-textarea {
+textarea,
+textarea.form-control {
   resize: vertical;
   min-height: 72px;
 }
 
 select {
   cursor: pointer;
+}
+
+body.options input[type="text"],
+body.options input[type="password"],
+body.options input[type="number"],
+body.options input[type="month"],
+body.options input[type="search"],
+body.options select,
+body.options textarea,
+body.options .form-control {
+  font-size: 14px;
+  padding: 10px 12px;
+  min-height: 42px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+body.options input:hover:not(:disabled):not(:focus),
+body.options select:hover:not(:disabled):not(:focus),
+body.options textarea:hover:not(:disabled):not(:focus),
+body.options .form-control:hover:not(:disabled):not(:focus) {
+  border-color: #94a3b8;
+}
+
+body.options input:focus,
+body.options select:focus,
+body.options textarea:focus,
+body.options .form-control:focus {
+  box-shadow: 0 0 0 3px var(--accent-soft), inset 0 1px 2px rgba(15, 23, 42, 0.04);
+  background: #fff;
+}
+
+body.options input:disabled,
+body.options select:disabled,
+body.options textarea:disabled,
+body.options .form-control:disabled {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+body.options textarea,
+body.options textarea.form-control {
+  min-height: 88px;
+}
+
+body.options select,
+body.options select.form-control {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 16 16'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+}
+
+body.options input[type="search"]::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 code {
@@ -614,6 +696,44 @@ button.btn-danger {
 
 button.btn-danger:hover:not(:disabled) {
   background: var(--danger-soft);
+}
+
+button.btn-icon {
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+button.btn-icon:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--accent-muted);
+  color: var(--accent-hover);
+}
+
+button.btn-secondary-soft {
+  background: var(--surface-2);
+  border-color: var(--border);
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+button.btn-secondary-soft:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-muted);
+  color: var(--accent-hover);
+}
+
+button.btn-row-action {
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .button-row {
@@ -987,6 +1107,219 @@ body.options {
 
 .panel > .hint:first-of-type {
   margin-bottom: 16px;
+}
+
+/* Settings — file picker, tables, search */
+body.options {
+  font-size: 14px;
+}
+
+body.options label:not(.checkbox-label):not(.search-field):not(.file-picker-trigger) {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.file-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.file-picker-trigger {
+  margin: 0;
+  cursor: pointer;
+}
+
+.file-picker-trigger input[type="file"] {
+  position: absolute;
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  overflow: hidden;
+  z-index: -1;
+}
+
+.file-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.file-picker-trigger:hover .file-picker-btn {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.file-picker-name {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.table-card .table-toolbar,
+.table-card .table-footer {
+  padding: 14px 16px;
+}
+
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1;
+  min-width: 200px;
+  max-width: 420px;
+  margin: 0;
+  position: relative;
+}
+
+.search-field-icon {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  opacity: 0.55;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' viewBox='0 0 16 16'%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-width='1.5' d='M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10Z'/%3E%3Cpath stroke='%2364748b' stroke-linecap='round' stroke-width='1.5' d='m11 11 3 3'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.search-field input {
+  padding-left: 38px;
+  margin: 0;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pager-meta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 8em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table thead {
+  background: var(--surface-2);
+}
+
+.data-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.data-table td {
+  vertical-align: top;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.data-table tbody tr:hover td {
+  background: #fafbfc;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table .col-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.data-table .form-control {
+  font-size: 13px;
+  min-height: 38px;
+  padding: 8px 10px;
+  margin: 0;
+}
+
+.data-table textarea.form-control {
+  min-height: 64px;
+}
+
+.data-table .cell-stack {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.data-table .cell-muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.data-table-empty td {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: var(--surface) !important;
+}
+
+.table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .badge {

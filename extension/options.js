@@ -708,13 +708,15 @@ el("deletePersonBtn").addEventListener("click", async () => {
 });
 
 function resumeRow(entry) {
-  const div = document.createElement("div");
-  div.className = "entry-row";
-  div.innerHTML = `
-    <strong>${entry.stack}</strong> - ${entry.filename}
-    <button type="button" class="remove-row btn-danger">Delete</button>
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><span class="cell-stack">${escapeHtml(entry.stack)}</span></td>
+    <td><span class="cell-muted">${escapeHtml(entry.filename)}</span></td>
+    <td class="col-actions">
+      <button type="button" class="btn-row-action btn-danger remove-row">Delete</button>
+    </td>
   `;
-  div.querySelector(".remove-row").addEventListener("click", async () => {
+  tr.querySelector(".remove-row").addEventListener("click", async () => {
     try {
       await apiFetch(`/resumes/${entry.id}`, { method: "DELETE" });
       loadResumes();
@@ -722,20 +724,34 @@ function resumeRow(entry) {
       el("resumeStatus").textContent = `Delete failed: ${err.message}`;
     }
   });
-  return div;
+  return tr;
 }
 
 async function loadResumes() {
   try {
     const resumes = await apiFetch("/resumes");
-    el("resumeList").innerHTML = "";
+    const tbody = el("resumeList");
+    tbody.innerHTML = "";
     if (!resumes.length) {
-      el("resumeList").innerHTML = '<p class="hint">No resumes uploaded yet.</p>';
+      const tr = document.createElement("tr");
+      tr.className = "data-table-empty";
+      tr.innerHTML = `<td colspan="3">No resumes uploaded yet. Use the form below to add one.</td>`;
+      tbody.appendChild(tr);
+      return;
     }
-    resumes.forEach((entry) => el("resumeList").appendChild(resumeRow(entry)));
+    resumes.forEach((entry) => tbody.appendChild(resumeRow(entry)));
   } catch (err) {
     el("resumeStatus").textContent = `Could not load resumes: ${err.message}`;
   }
+}
+
+const resumeFileInput = el("resumeFile");
+const resumeFileNameEl = el("resumeFileName");
+if (resumeFileInput && resumeFileNameEl) {
+  resumeFileInput.addEventListener("change", () => {
+    const file = resumeFileInput.files[0];
+    resumeFileNameEl.textContent = file ? file.name : "No file selected";
+  });
 }
 
 el("uploadResumeBtn").addEventListener("click", async () => {
@@ -810,39 +826,47 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function qaSummaryText(entry) {
-  const q = (entry.question || "").trim() || "(no question yet)";
-  const a = (entry.answer || "").trim();
-  const shortA = a.length > 50 ? `${a.slice(0, 50)}…` : a;
-  return a ? `${q} — ${shortA}` : q;
-}
-
 function qaRow(entry, index) {
-  const body = document.createElement("div");
-  body.className = "entry-row entry-body";
-  body.innerHTML = `
-    <label>Question (matched by wording against each form's field)</label>
-    <input class="qa-question" placeholder="e.g. Do you require visa sponsorship?" value="${escapeHtml(entry.question)}">
-    <label>Answer</label>
-    <textarea class="qa-answer" rows="2" placeholder="e.g. No">${escapeHtml(entry.answer)}</textarea>
-    <button type="button" class="remove-row btn-danger">Remove</button>
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td>
+      <input
+        class="form-control qa-question"
+        type="text"
+        placeholder="e.g. Do you require visa sponsorship?"
+        value="${escapeHtml(entry.question)}"
+        aria-label="Question"
+      />
+    </td>
+    <td>
+      <textarea
+        class="form-control qa-answer"
+        rows="2"
+        placeholder="e.g. No"
+        aria-label="Answer"
+      >${escapeHtml(entry.answer)}</textarea>
+    </td>
+    <td class="col-actions">
+      <button type="button" class="btn-icon btn-danger remove-row" title="Remove" aria-label="Remove">×</button>
+    </td>
   `;
-  const questionInput = body.querySelector(".qa-question");
-  const answerInput = body.querySelector(".qa-answer");
-  const card = makeEntryCard(body, () => qaSummaryText(qaEntries[index] || entry), { expanded: false });
+  const questionInput = tr.querySelector(".qa-question");
+  const answerInput = tr.querySelector(".qa-answer");
 
   questionInput.addEventListener("input", () => {
     qaEntries[index].question = questionInput.value;
+    qaDirty.markDirty();
   });
   answerInput.addEventListener("input", () => {
     qaEntries[index].answer = answerInput.value;
+    qaDirty.markDirty();
   });
-  body.querySelector(".remove-row").addEventListener("click", () => {
+  tr.querySelector(".remove-row").addEventListener("click", () => {
     qaEntries.splice(index, 1);
     qaDirty.markDirty();
     renderQaList();
   });
-  return card;
+  return tr;
 }
 
 // Search filters against the full set before pagination slices it, and carries each match's
@@ -865,22 +889,28 @@ function renderQaList() {
   const start = qaPage * QA_PAGE_SIZE;
   const pageItems = filtered.slice(start, start + QA_PAGE_SIZE);
 
-  el("qaList").innerHTML = "";
+  const tbody = el("qaList");
+  tbody.innerHTML = "";
   if (!pageItems.length) {
-    el("qaList").innerHTML = `<p class="hint">${
+    const tr = document.createElement("tr");
+    tr.className = "data-table-empty";
+    tr.innerHTML = `<td colspan="3">${
       qaEntries.length
         ? "No answers match your search."
-        : 'No saved answers yet — click "+ Add answer" or "+ Add common defaults" below.'
-    }</p>`;
+        : 'No saved answers yet. Use “Add answer” or “Common defaults” below.'
+    }</td>`;
+    tbody.appendChild(tr);
   } else {
-    pageItems.forEach(({ entry, originalIndex }) => el("qaList").appendChild(qaRow(entry, originalIndex)));
+    pageItems.forEach(({ entry, originalIndex }) => tbody.appendChild(qaRow(entry, originalIndex)));
   }
 
-  el("qaPageInfo").textContent = filtered.length
-    ? `Page ${qaPage + 1} of ${totalPages} — ${filtered.length} answer${filtered.length === 1 ? "" : "s"}${
-        qaSearchTerm && filtered.length !== qaEntries.length ? ` matched (of ${qaEntries.length} total)` : ""
-      }`
-    : "";
+  if (filtered.length) {
+    const matchNote =
+      qaSearchTerm && filtered.length !== qaEntries.length ? ` · ${qaEntries.length} total` : "";
+    el("qaPageInfo").textContent = `${qaPage + 1} / ${totalPages} · ${filtered.length} row${filtered.length === 1 ? "" : "s"}${matchNote}`;
+  } else {
+    el("qaPageInfo").textContent = "—";
+  }
   el("qaPrevBtn").disabled = qaPage <= 0;
   el("qaNextBtn").disabled = qaPage >= totalPages - 1;
 }

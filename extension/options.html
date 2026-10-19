@@ -170,16 +170,33 @@
         </div>
       </header>
 
-      <div class="card settings-block">
-        <div id="resumeList"></div>
+      <div class="card settings-block table-card">
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Stack</th>
+                <th>File</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="resumeList"></tbody>
+          </table>
+        </div>
       </div>
 
       <div class="card settings-block">
         <h2 class="card-title">Upload</h2>
         <label for="resumeStack">Stack label</label>
-        <input id="resumeStack" type="text" placeholder="e.g. Java" />
+        <input id="resumeStack" type="text" class="form-control" placeholder="e.g. Java" />
         <label for="resumeFile">Resume file</label>
-        <input id="resumeFile" type="file" accept=".pdf,.doc,.docx" />
+        <div class="file-picker">
+          <label class="file-picker-trigger">
+            <input id="resumeFile" type="file" accept=".pdf,.doc,.docx" />
+            <span class="file-picker-btn">Choose file</span>
+          </label>
+          <span id="resumeFileName" class="file-picker-name">No file selected</span>
+        </div>
         <div class="button-row">
           <button id="uploadResumeBtn" type="button" class="btn-primary">Upload resume</button>
         </div>
@@ -207,18 +224,39 @@
         <span id="qaBadge" class="badge saved">Saved</span>
       </header>
 
-      <div class="card settings-block">
-        <label for="qaSearch">Search</label>
-        <input id="qaSearch" type="text" placeholder="Search questions or answers..." />
-        <div id="qaList"></div>
-        <div class="button-row button-row-spread">
-          <button id="qaPrevBtn" type="button">&larr; Previous</button>
-          <span id="qaPageInfo" class="hint hint-inline"></span>
-          <button id="qaNextBtn" type="button">Next &rarr;</button>
+      <div class="card settings-block table-card">
+        <div class="table-toolbar">
+          <label class="search-field" for="qaSearch">
+            <span class="search-field-icon" aria-hidden="true"></span>
+            <input
+              id="qaSearch"
+              type="search"
+              class="form-control"
+              placeholder="Search questions or answers…"
+              autocomplete="off"
+            />
+          </label>
+          <nav class="pager" aria-label="Q&amp;A pagination">
+            <button id="qaPrevBtn" type="button" class="btn-icon" aria-label="Previous page">‹</button>
+            <span id="qaPageInfo" class="pager-meta"></span>
+            <button id="qaNextBtn" type="button" class="btn-icon" aria-label="Next page">›</button>
+          </nav>
         </div>
-        <div class="button-row">
-          <button id="addQaBtn" type="button" class="link">+ Add answer</button>
-          <button id="addDefaultQaBtn" type="button" class="link">+ Add common defaults</button>
+        <div class="table-scroll">
+          <table class="data-table data-table-qa">
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Answer</th>
+                <th class="col-actions"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="qaList"></tbody>
+          </table>
+        </div>
+        <div class="table-footer">
+          <button id="addQaBtn" type="button" class="btn-secondary-soft">+ Add answer</button>
+          <button id="addDefaultQaBtn" type="button" class="btn-secondary-soft">+ Common defaults</button>
         </div>
       </div>
 
