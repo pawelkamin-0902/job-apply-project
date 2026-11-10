@@ -4051,6 +4051,24 @@ unverified outside a live browser).
     after a full calendar week; 2w = the **next** Monday after that (still ≥ 2 weeks out).
     Without Monday: exact today+N×7. Date format from placeholder or EU/US country.
 
+49. **ChatGPT UI + empty-bullets resume reject (`chatgpt-com-20261110T112915Z`). Author: Cursor**
+    - **Symptom:** GPT tab opened late / stayed open; conversation titled "Generate ATS Resume
+      JSON" still on screen after a successful-looking reply. Bamboo Auto Fill
+      (`linkfire-bamboohr-com-20261110T113015Z`) finished `filled=16 unmatched=0` — that GPT
+      tab was **Generate JSON**, not Auto Fill Q&A.
+    - **UI change:** empty composer primary control is `aria-label="Start Voice"` / Dictate;
+      no `aria-label="Send"` / `type="submit"` while empty. Assistant markup still has
+      `data-markdown-text-style="assistant-message"` plus `data-chatgpt-agent-turn-start`
+      ("Worked for 7s"). `data-message-author-role` absent in this capture.
+    - **Root cause of stuck tab:** GPT returned a real resume (`name: Antoni Kowalski`, long
+      summary, real companies) but every `experience[].bullets` was `[]`.
+      `isSchemaOrPlaceholderResume` treated "no bullets" as the profile schema dump → poll
+      never accepted → up to ~180s wait → tab looked unclosed. Delete/close only run after
+      poll gives up or succeeds.
+    - **Fix:** accept empty-bullets resumes when name + long summary + real job titles/companies
+      are present; broaden Send detection for composer primary button that is not Voice/Dictate.
+      Reload the extension after pull.
+
 47. **BambooHR Country double-fill + Europe Yes (assertive `20261018T040942Z`).** Prefill could
     set Poland, then `runAutofillInPage` cleared the console buffer and ran Country again
     (`fabric menu failed` / second `fabric pick FAILED`), and the generic residence

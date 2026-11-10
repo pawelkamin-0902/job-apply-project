@@ -2980,6 +2980,33 @@ function sendChatGptPromptInPage(prompt) {
       const el = document.querySelector(sel);
       if (el) return el;
     }
+    // 2026-11 UI (chatgpt-com-20261110T112915Z): empty composer shows "Start Voice" /
+    // "Dictate" in the primary circle; after text is typed that slot becomes Send, often
+    // WITHOUT aria-label="Send" / type=submit. Prefer the composer primary button that is
+    // not voice/dictate.
+    const composer =
+      document.querySelector("form[data-chatgpt-composer]") ||
+      document.querySelector('[data-chatgpt-composer]') ||
+      document.querySelector("form");
+    if (composer) {
+      const primary = [
+        ...composer.querySelectorAll("button.bg-composer-primary, button[class*='composer-primary']"),
+      ];
+      for (const el of primary) {
+        const label = ((el.getAttribute("aria-label") || "") + " " + (el.textContent || "")).toLowerCase();
+        if (/voice|dictat|mic|speech|photo|attach|upload/.test(label)) continue;
+        if (!isSendDisabled(el)) return el;
+      }
+      // Last resort: any non-voice composer button that became enabled after typing.
+      for (const el of composer.querySelectorAll("button")) {
+        const label = ((el.getAttribute("aria-label") || "") + " " + (el.textContent || "")).toLowerCase();
+        if (/voice|dictat|mic|speech|photo|attach|upload|plus|menu/.test(label)) continue;
+        if (/send|submit/.test(label) && !isSendDisabled(el)) return el;
+        if (el.classList.contains("bg-composer-primary") && !isSendDisabled(el) && !/voice|dictat/.test(label)) {
+          return el;
+        }
+      }
+    }
     return null;
   }
 
@@ -3243,11 +3270,30 @@ function pollChatGptResponseInPage() {
       const first = obj.experience[0];
       if (!first || first.title === "string" || first.company === "string") return true;
       if (typeof obj.summary === "string" && (/^string\s*:/i.test(obj.summary) || obj.summary.length < 40)) return true;
-      // Profile JSON in the user prompt has empty bullets []; a real tailored resume has content.
+      // Prefer resumes with real bullets, but do NOT reject a filled reply that only has empty
+      // bullets[] (confirmed live chatgpt-com-20261110T112915Z: GPT returned Antoni Kowalski +
+      // real companies/summary but every experience.bullets was []). The old rule treated that
+      // as the profile schema dump and never accepted the reply → poll spun ~180s → tab looked
+      // "stuck open". Schema/profile dumps are already caught above via name/contact_line/
+      // title/company === "string".
       const hasBullet = obj.experience.some(
         (e) => Array.isArray(e && e.bullets) && e.bullets.some((b) => typeof b === "string" && b.trim().length > 20)
       );
-      if (!hasBullet) return true;
+      if (!hasBullet) {
+        const realName = typeof obj.name === "string" && obj.name !== "string" && obj.name.trim().length > 2;
+        const realSummary = typeof obj.summary === "string" && obj.summary.trim().length >= 80;
+        const realJobs = obj.experience.filter(
+          (e) =>
+            e &&
+            typeof e.company === "string" &&
+            e.company !== "string" &&
+            e.company.trim().length > 1 &&
+            typeof e.title === "string" &&
+            e.title !== "string" &&
+            e.title.trim().length > 1
+        ).length;
+        if (!(realName && realSummary && realJobs >= 1)) return true;
+      }
     } catch {
       return true;
     }
@@ -3289,7 +3335,16 @@ function pollChatGptResponseInPage() {
   }
 
   function isRealResumeJson(text) {
-    return looksLikeResumeJson(text) && looksLikeCompleteJson(text) && !isSchemaOrPlaceholderResume(text);
+    // Whole string may include trailing ChatGPT chrome after the JSON (live
+    // chatgpt-com-20261110T113934Z: "...}\nThis might also interest you.MakeMyCV...") —
+    // JSON.parse on the full blob then fails with "Extra data". Accept if ANY balanced
+    // object inside looks like a real resume.
+    if (looksLikeResumeJson(text) && looksLikeCompleteJson(text) && !isSchemaOrPlaceholderResume(text)) {
+      return true;
+    }
+    return extractBalancedJsonObjects(text).some(
+      (s) => looksLikeResumeJson(s) && looksLikeCompleteJson(s) && !isSchemaOrPlaceholderResume(s)
+    );
   }
 
   function isRealAnswersJson(text) {
@@ -3950,8 +4005,9 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
     isTop = true;
   }
   if (isTop && typeof window.clearAutoFillConsoleLog === "function") window.clearAutoFillConsoleLog();
+  const domainMode = typeof detectDomainMode === "function" ? detectDomainMode() : "generic";
   console.info(
-    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} build=bamboo-split-v4 noticeWeeks=${autofillNoticeWeeks} monday=${autofillSnapMonday} prefilled=${bambooCountryPrefilled}${bambooPrefillSummary ? ` pre-inject=${bambooPrefillSummary}` : ""}`
+    `[Auto Fill][run] start ${location.href}${onlyPhoneCountry ? " (phone-country-only)" : ""} mode=${domainMode} build=bamboo-split-v4 noticeWeeks=${autofillNoticeWeeks} monday=${autofillSnapMonday} prefilled=${bambooCountryPrefilled}${bambooPrefillSummary ? ` pre-inject=${bambooPrefillSummary}` : ""}`
   );
   console.info(
     `[Auto Fill][profile] country=${JSON.stringify((profile && profile.contact && profile.contact.country) || null)} city=${JSON.stringify((profile && profile.contact && profile.contact.city) || null)} phone=${JSON.stringify((profile && profile.contact && profile.contact.phone) || null)}`
@@ -4621,6 +4677,30 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
         return { isStructuredCategory: true, value: value || null };
       }
     }
+    // Bee Bid–style canonical key fallback for labels STRUCTURED_PATTERNS missed
+    // (e.g. "street name", "what country do you currently reside").
+    if (typeof canonicalFieldKey === "function" && typeof profileValueForCanonicalKey === "function") {
+      const key = canonicalFieldKey(label);
+      if (key && !(key === "country" && isPhoneDialCodePicker(element))) {
+        let value = profileValueForCanonicalKey(profile, key);
+        if (key === "phone" && value && element) {
+          // Reuse phone stripping rules from the dedicated phone STRUCTURED pattern when possible.
+          const phonePat = STRUCTURED_PATTERNS.find((p) => /phone\|telephone/.test(String(p.re)));
+          if (phonePat) value = phonePat.get(profile, element, label) || value;
+        }
+        if (hearAbout && value && (/^https?:\/\//i.test(String(value)) || /linkedin\.com\/in\//i.test(String(value)))) {
+          value = null;
+        }
+        if (value) return { isStructuredCategory: true, value };
+        if (key === "github") {
+          /* no handle — leave for GPT / unmatched */
+        } else if (key !== "phone") {
+          // Known personal-info category with empty profile: still mark structured so we
+          // don't burn GPT on "City" when the profile simply has no city yet.
+          return { isStructuredCategory: true, value: null };
+        }
+      }
+    }
     // PeopleForce pf-phone-number: visible tel id uses brackets (`career_application_form[phone_numbers][]`)
     // so label[for=id] never links — resolveOwnLabel usually recovers "Phone numbers", but when it
     // doesn't (Vue mount timing), still treat any input inside the widget as the profile phone.
@@ -4923,6 +5003,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 
   // ---- FILL ----
   function nativeSet(element, value) {
+    // Prefer shared field-detector commit (Bee Bid–style React-safe write) for plain text.
+    if (typeof commitControlValue === "function" && typeof classifyControlType === "function") {
+      const ct = classifyControlType(element);
+      if (ct === "input" || ct === "textarea" || ct === "quill") {
+        commitControlValue(element, value);
+        return;
+      }
+    }
     // React (and similar) tracks input values through its own property setter; a plain
     // `element.value = x` write is invisible to it and gets silently reverted on the next
     // render. Calling the native setter directly, then dispatching input/change, is the
@@ -11186,6 +11274,14 @@ async function runAutofillInPage(profile, qaBank, options = {}) {
 }
 async function fillGeneratedAnswersInPage(answers) {
   function nativeSet(element, value) {
+    // Shared detector commit so GPT answers use the same React-safe write as profile fill.
+    if (typeof commitControlValue === "function" && typeof classifyControlType === "function") {
+      const ct = classifyControlType(element);
+      if (ct === "input" || ct === "textarea" || ct === "quill") {
+        commitControlValue(element, value);
+        return;
+      }
+    }
     const proto = element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
     const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
     const str = value == null ? "" : String(value);
@@ -15598,8 +15694,12 @@ el("renderBtn").addEventListener("click", async () => {
     lastSavedDir = data.saved_dir;
     lastSavedDirCompany = company;
     let html = `Saved to:<br><code>${data.saved_dir}</code>`;
-    if (data.cover_letter_pdf_path) {
-      html += `<br>Cover letter: <code>${data.cover_letter_pdf_path.split(/[\\/]/).pop()}</code>`;
+    if (data.cover_letter_docx_path || data.cover_letter_pdf_path) {
+      const names = [data.cover_letter_docx_path, data.cover_letter_pdf_path]
+        .filter(Boolean)
+        .map((p) => p.split(/[\\/]/).pop())
+        .join(", ");
+      html += `<br>Cover letter: <code>${names}</code>`;
     }
     resultEl.innerHTML = html;
     if (data.pdf_base64) {
@@ -16145,6 +16245,137 @@ el("autofillBtn").addEventListener("click", async () => {
       });
     }
 
+    // Bee Bid–style remaining-fields pass: after GPT fills (and SPA may have revealed new
+    // questions), re-detect once, profile-fill again, then one extra GPT batch for leftovers.
+    // Keeps our approach (GPT answers) — only adds another detect→answer→fill cycle.
+    let remainingGenerated = 0;
+    if (settings.answer_provider === "gpt-auto" || settings.answer_provider === "gpt-auto-headless") {
+      try {
+        resultEl.textContent = "Checking for remaining fields...";
+        await injectPageScripts(tab.id, { applicationOnly: true });
+        await new Promise((r) => setTimeout(r, 400));
+        const remainingInjections = await executeInTab(
+          tab.id,
+          {
+            func: runAutofillInPage,
+            args: [
+              profile,
+              qaBank,
+              {
+                autofillTabId: tab.id,
+                noticeWeeks: settings && settings.notice_weeks != null ? settings.notice_weeks : 1,
+                availabilitySnapMonday:
+                  settings && settings.availability_snap_monday != null ? settings.availability_snap_monday : true,
+              },
+            ],
+          },
+          { applicationOnly: true }
+        );
+        const remainingValid = (remainingInjections || []).filter((i) => i.result);
+        filledCount += remainingValid.reduce((sum, i) => sum + (i.result.filled || []).length, 0);
+        const remainingUnmatched = remainingValid.flatMap((i) =>
+          (i.result.unmatched || []).map((u) => ({ ...u, frameId: i.frameId }))
+        );
+        const remainingIdx = remainingUnmatched.filter((u) => u.idx !== undefined);
+        let remGen = remainingIdx.filter((u) => u.canGenerate || u.gptBatchEligible);
+        let remSelect = remainingIdx
+          .filter((u) => Array.isArray(u.options))
+          .map((u) => ({ ...u, options: realSelectOptions(u.options) }))
+          .filter((u) => u.options.length > 1);
+        {
+          const selectKeys = new Set(remSelect.map((u) => `${u.frameId}:${u.idx}`));
+          remGen = remGen.filter((u) => !selectKeys.has(`${u.frameId}:${u.idx}`));
+        }
+        // Drop anything we already filled in the first GPT pass (same label+frame).
+        const alreadyLabels = new Set(finalFills.map((f) => `${f.frameId}:${(f.label || "").toLowerCase()}`));
+        remGen = remGen.filter((u) => !alreadyLabels.has(`${u.frameId}:${(u.label || "").toLowerCase()}`));
+        remSelect = remSelect.filter((u) => !alreadyLabels.has(`${u.frameId}:${(u.label || "").toLowerCase()}`));
+        const remCandidates = [
+          ...remGen.map((c) => ({ ...c, kind: "text" })),
+          ...remSelect.map((c) => ({
+            ...c,
+            kind: "select",
+            multi: Boolean(c.multi) && !isHearAboutQuestion(c.label),
+          })),
+        ];
+        if (remCandidates.length) {
+          resultEl.textContent = `Answering ${remCandidates.length} remaining question(s) via GPT...`;
+          const isHeadless = settings.answer_provider === "gpt-auto-headless";
+          const jobDescription = el("jobDescription").value.trim();
+          const company = el("company").value.trim();
+          const promptData = await apiFetch("/prompt-preview-answers", {
+            method: "POST",
+            body: JSON.stringify({
+              questions: remCandidates.map((c) => c.label),
+              job_description: jobDescription,
+              company,
+              options_per_question: remCandidates.map((c) => (c.kind === "select" ? c.options : null)),
+              multi_per_question: remCandidates.map((c) => (c.kind === "select" ? Boolean(c.multi) : false)),
+              resume: tailoredResume,
+            }),
+          });
+          const { delete_gpt_conversations: deleteConversation = true } = await apiFetch("/settings");
+          const combined = `${promptData.system_prompt}\n\n${promptData.user_message}`;
+          const rawResponse = isHeadless
+            ? await runChatGptPromptHeadless(combined, deleteConversation)
+            : await runChatGptPrompt(combined, deleteConversation, undefined, "answers");
+          let parsed;
+          try {
+            const cleaned = sanitizeJsonControlChars(stripJsonFences(rawResponse));
+            try {
+              parsed = JSON.parse(cleaned);
+            } catch (firstErr) {
+              const extracted = extractFirstJsonValue(cleaned);
+              if (extracted === cleaned) throw firstErr;
+              parsed = JSON.parse(extracted);
+            }
+          } catch (err) {
+            throw new Error(`Remaining-fields GPT reply wasn't valid JSON (${err.message})`);
+          }
+          const answers = Array.isArray(parsed && parsed.answers) ? parsed.answers : [];
+          const byQuestionNumber = new Map();
+          answers.forEach((ans, i) => {
+            const n = Number(ans && ans.question_number);
+            const key = Number.isInteger(n) && n >= 1 && n <= remCandidates.length ? n : i + 1;
+            if (!byQuestionNumber.has(key)) byQuestionNumber.set(key, ans);
+          });
+          const remFills = [];
+          remCandidates.forEach((item, i) => {
+            const ans = byQuestionNumber.get(i + 1);
+            if (!ans || ans.answerable === false || !ans.answer) return;
+            let value = stripFormAnswerMarkdown(String(ans.answer));
+            if (item.kind === "select") {
+              const picked = coerceSelectAnswersForField(item.label, value, item.options, Boolean(item.multi));
+              if (!picked.length) return;
+              value = picked.join(", ");
+            }
+            remFills.push({ frameId: item.frameId, idx: item.idx, value, kind: "generated", label: item.label });
+          });
+          if (remFills.length) {
+            await injectPageScripts(tab.id, { applicationOnly: true });
+            const remByFrame = new Map();
+            for (const f of remFills) {
+              if (!remByFrame.has(f.frameId)) remByFrame.set(f.frameId, []);
+              remByFrame.get(f.frameId).push({ idx: f.idx, value: f.value, label: f.label || "" });
+            }
+            for (const [frameId, answersList] of remByFrame) {
+              const fillResults = await chrome.scripting.executeScript({
+                target: { tabId: tab.id, frameIds: [frameId] },
+                func: fillGeneratedAnswersInPage,
+                args: [answersList],
+              });
+              filledCount += fillResults.reduce((sum, r) => sum + (r.result ? r.result.count : 0), 0);
+            }
+            remainingGenerated = remFills.length;
+            generatedCount += remFills.length;
+            for (const f of remFills) finalFills.push(f);
+          }
+        }
+      } catch (err) {
+        generationErrors.push(`Remaining fields: ${err && err.message ? err.message : err}`);
+      }
+    }
+
     // Final defensive re-check (see checkPhoneCountryPickerInPage's own comment for the full
     // trace) - Greenhouse's own app has been confirmed, live, to independently reset its phone
     // dial-code picker at some point DURING a run via its own deferred React scheduler, unrelated
@@ -16214,7 +16445,9 @@ el("autofillBtn").addEventListener("click", async () => {
         : ""
     }${matchErrors.length ? ` Saved-answer check failed: ${matchErrors.join("; ")}.` : ""}${
       generationErrors.length ? ` ${generationErrors.length} generation failure(s): ${generationErrors.join("; ")}.` : ""
-    }${phoneCountryRefixed ? " Corrected the phone country code, which the site's own app reset mid-run." : ""}${gptManualNote}`;
+    }${remainingGenerated ? ` (+${remainingGenerated} remaining-field answer(s))` : ""}${
+      phoneCountryRefixed ? " Corrected the phone country code, which the site's own app reset mid-run." : ""
+    }${gptManualNote}`;
   } catch (err) {
     resultEl.textContent = `Auto Fill failed: ${err.message}`;
   } finally {

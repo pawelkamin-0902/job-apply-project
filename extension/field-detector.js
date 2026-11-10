@@ -2391,3 +2391,253 @@ function looksLikeLanguageProficiencyLabel(label) {
     /\b(conversation|proficiency|fluency|language)\s*level\b/i.test(t)
   );
 }
+
+// ---- Bee Bid–inspired detect/fill helpers (keep GPT answers elsewhere; these only classify + commit) ----
+// Portal mode + canonical label keys + React-safe value commit. Used by Auto Fill / Learn so
+// detection and "write this answer into the control" stay shared and portal-aware.
+
+function detectDomainMode() {
+  const host = String(location.hostname || "").toLowerCase();
+  const href = String(location.href || "").toLowerCase();
+  if (/(^|\.)myworkdayjobs\.com$|(^|\.)myworkday\.com$|(^|\.)workdayjobs\.com$/.test(host) || /workday/i.test(href)) {
+    return "workday";
+  }
+  if (/(^|\.)greenhouse\.io$|(^|\.)boards\.greenhouse\.io$/.test(host) || /greenhouse/i.test(href)) return "greenhouse";
+  if (/(^|\.)lever\.co$/.test(host) || /lever\.co/i.test(href)) return "lever";
+  if (/(^|\.)ashbyhq\.com$/.test(host)) return "ashby";
+  if (/(^|\.)bamboohr\.com$/.test(host)) return "bamboohr";
+  if (/(^|\.)smartrecruiters\.com$/.test(host)) return "smartrecruiters";
+  if (/(^|\.)icims\.com$/.test(host)) return "icims";
+  if (/(^|\.)workable\.com$/.test(host)) return "workable";
+  if (/(^|\.)jobvite\.com$/.test(host)) return "jobvite";
+  if (/(^|\.)successfactors\.com$/.test(host)) return "successfactors";
+  if (/oraclecloud\.com$/i.test(host) || /hcmui\/candidateexperience/i.test(href)) return "oracle";
+  if (/(^|\.)zohorecruit\./.test(host) || /(^|\.)zoho\.com$/.test(host)) return "zoho";
+  if (/(^|\.)teamtailor\.com$/.test(host)) return "teamtailor";
+  if (/(^|\.)personio\./.test(host)) return "personio";
+  if (/(^|\.)comeet\./.test(host)) return "comeet";
+  return "generic";
+}
+
+// Map messy ATS labels → stable keys (Bee Bid labelKeyMappings idea). Profile fill + GPT prompts
+// can use the key; GPT still supplies free-text for questions that don't map.
+function canonicalFieldKey(label) {
+  const t = normalizeLabel(label || "").toLowerCase();
+  if (!t) return null;
+  if (/^(retype\s+)?e-?mail(\s*address)?$/.test(t) || /^email address$/.test(t)) return "email";
+  if (/^(first(\s*\/\s*given)?\s*name|given\s*name)$/.test(t)) return "first_name";
+  if (/^(last(\s*\/\s*family)?\s*name|family\s*name|surname)$/.test(t)) return "last_name";
+  if (/^(full\s*name|legal\s*name|name)$/.test(t) || /^last and first name$/.test(t)) return "full_name";
+  if (/^(street(\s*name|\s*address)?|address(\s*line)?\s*1?|address line1)$/.test(t) || /^address$/.test(t)) {
+    return "street_address";
+  }
+  if (/address\s*line\s*2|apartment|suite|unit\b/.test(t)) return "address_line2";
+  if (/^(city|town)$/.test(t) || /\bcity\s*$/.test(t) || /^current location$/.test(t) || /enter your current location city/i.test(t)) {
+    return "city";
+  }
+  if (/^(state|province)$/.test(t)) return "state";
+  if (/postal\s*code|zip\s*code|\bzip\b|\bpostcode\b|\bpost\s*code\b/.test(t)) return "postal_code";
+  if (/^country$/.test(t) || /what country do you currently reside|country.*(reside|live|based)/i.test(t)) {
+    if (/\b(phone|code|dial|calling)\b/.test(t)) return null;
+    return "country";
+  }
+  if (/linkedin/.test(t) && /(profile|url|link|address)|^linkedin$/.test(t)) return "linkedin";
+  if (/github/.test(t)) return "github";
+  if (/^(personal\s+)?website(\s*(url|link))?$|portfolio/.test(t)) return "website";
+  if (/^(?!.*\b(code|type|extension|device)\b).*\b(phone|telephone|mobile\s*(phone|number)|cell\s*phone)\b/.test(t)) {
+    return "phone";
+  }
+  if (/cover\s*letter/.test(t)) return "cover_letter";
+  if (/^available from$|earliest (start|availability)|notice period|how much notice/.test(t)) return "availability";
+  return null;
+}
+
+function classifyControlType(element) {
+  if (!element) return "unknown";
+  const tag = element.tagName;
+  const type = String(element.type || "").toLowerCase();
+  if (tag === "SELECT") {
+    if (element.classList.contains("select2-hidden-accessible") || (element.closest && element.closest(".select2-container"))) {
+      return "select2";
+    }
+    return "native_select";
+  }
+  if (type === "checkbox") return "checkbox";
+  if (type === "radio") return "radio";
+  if (type === "file") return "file";
+  if (element.closest && element.closest(".ql-container, .ql-editor, [class*='quill']")) return "quill";
+  if (element.classList && (element.classList.contains("selectize-input") || element.closest(".selectize-control"))) {
+    return "selectize";
+  }
+  if (typeof looksLikeComboboxPick === "function" && looksLikeComboboxPick(element)) return "combobox";
+  if (tag === "TEXTAREA") return "textarea";
+  if (tag === "INPUT") return "input";
+  if (tag === "BUTTON") return "button";
+  return "other";
+}
+
+// React-safe write of a text value. Portal-aware insertText for Workday/Ashby (same rules as
+// runAutofillInPage.nativeSet). Does not open combobox menus — callers still use click-pick
+// for those. Prefer this over scattered `element.value =` so GPT answers stick.
+function commitControlValue(element, value, opts) {
+  if (!element) return false;
+  const options = opts || {};
+  const str = value == null ? "" : String(value);
+  const controlType = classifyControlType(element);
+  if (controlType === "combobox" || controlType === "button" || controlType === "file") {
+    return false;
+  }
+  if (controlType === "native_select" || controlType === "select2") {
+    const select = element.tagName === "SELECT" ? element : null;
+    if (!select) return false;
+    const target = str.trim().toLowerCase();
+    const optionsList = [...select.options];
+    let matches = optionsList.filter((o) => (o.textContent || "").trim().toLowerCase() === target);
+    if (!matches.length) {
+      matches = optionsList.filter((o) => {
+        const t = (o.textContent || "").trim().toLowerCase();
+        return t && (t.includes(target) || target.includes(t));
+      });
+    }
+    if (!matches.length) return false;
+    if (select.multiple) optionsList.forEach((o) => { o.selected = matches.includes(o); });
+    else select.value = matches[0].value;
+    select.dispatchEvent(new Event("input", { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  const proto = element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value") && Object.getOwnPropertyDescriptor(proto, "value").set;
+  const mode = detectDomainMode();
+  const zohoAutocomplete = element.closest && element.closest("lyte-autocomplete");
+  if (!zohoAutocomplete && !options.skipFocus) {
+    try {
+      element.focus();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const needsInsertTextCommit =
+    (mode === "workday" || mode === "ashby") &&
+    (element.tagName === "TEXTAREA" ||
+      (element.tagName === "INPUT" &&
+        /^(text|email|tel|search|url|password|)$/i.test(String(element.type || "text"))));
+
+  if (needsInsertTextCommit) {
+    const tracker = element._valueTracker;
+    if (tracker) {
+      try {
+        tracker.setValue(element.value);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (setter) setter.call(element, "");
+    else element.value = "";
+    if (typeof InputEvent === "function") {
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    }
+    let committed = false;
+    try {
+      if (typeof document.execCommand === "function") {
+        document.execCommand("selectAll", false, null);
+        committed = document.execCommand("insertText", false, str);
+      }
+    } catch {
+      committed = false;
+    }
+    if (!committed || String(element.value || "") !== str) {
+      if (tracker) {
+        try {
+          tracker.setValue(element.value);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (setter) setter.call(element, str);
+      else element.value = str;
+      if (typeof InputEvent === "function") {
+        try {
+          element.dispatchEvent(
+            new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+          );
+        } catch {
+          /* ignore */
+        }
+        element.dispatchEvent(
+          new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: str })
+        );
+      } else {
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    }
+  } else {
+    const prev = element.value;
+    const tracker = element._valueTracker;
+    if (tracker) {
+      try {
+        tracker.setValue(prev);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (setter) setter.call(element, str);
+    else element.value = str;
+    if (typeof InputEvent === "function") {
+      element.dispatchEvent(
+        new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: str })
+      );
+    } else {
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    element.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true }));
+  }
+
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  if (zohoAutocomplete) {
+    const esc = { key: "Escape", code: "Escape", bubbles: true, cancelable: true };
+    element.dispatchEvent(new KeyboardEvent("keydown", esc));
+    element.dispatchEvent(new KeyboardEvent("keyup", esc));
+  }
+  if (!options.keepFocus) {
+    try {
+      element.blur();
+    } catch {
+      /* ignore */
+    }
+  }
+  return true;
+}
+
+function profileValueForCanonicalKey(profile, key) {
+  if (!profile || !key) return null;
+  const c = profile.contact || {};
+  const name = profile.name || {};
+  if (key === "email") return c.email || null;
+  if (key === "first_name") return name.first || name.first_name || null;
+  if (key === "last_name") return name.last || name.last_name || null;
+  if (key === "full_name") {
+    if (name.full) return name.full;
+    const parts = [name.first || name.first_name, name.last || name.last_name].filter(Boolean);
+    return parts.length ? parts.join(" ") : null;
+  }
+  if (key === "street_address") return c.street_address || c.address || null;
+  if (key === "address_line2") return c.address_line2 || c.street_address_2 || null;
+  if (key === "city") return c.city || null;
+  if (key === "state") return c.state || null;
+  if (key === "postal_code") return c.postal_code || c.zip || null;
+  if (key === "country") return c.country || null;
+  if (key === "linkedin") return c.linkedin || null;
+  if (key === "website") {
+    const w = String(c.website || "").trim();
+    if (w && !/linkedin\.com/i.test(w)) return w;
+    return typeof githubValueFromProfile === "function" ? githubValueFromProfile(profile, "url") : null;
+  }
+  if (key === "github") {
+    return typeof githubValueFromProfile === "function" ? githubValueFromProfile(profile, "url") : c.github || null;
+  }
+  if (key === "phone") return c.phone || null;
+  return null;
+}
