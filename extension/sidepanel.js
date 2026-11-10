@@ -3023,15 +3023,37 @@ function sendChatGptPromptInPage(prompt) {
     el.dispatchEvent(new KeyboardEvent("keyup", init));
   }
 
-  function setComposerText(el, text) {
-    el.focus();
-    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-      nativeSet(el, text);
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
-      return;
+  function composerPlainText(el) {
+    if (!el) return "";
+    return String(el.innerText || el.textContent || "")
+      .replace(/\u200b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function promptLooksCompleteInComposer(el, text) {
+    // Live: same prompt manual-paste → full Data Engineer resume; auto insertText → empty
+    // bullets/skills shell. Huge single insertText often truncates in ProseMirror — verify
+    // length + JD/profile markers before Send.
+    const got = composerPlainText(el);
+    const want = String(text || "");
+    const wantNorm = want.replace(/\s+/g, " ").trim();
+    if (!got || got.length < Math.min(800, Math.floor(wantNorm.length * 0.55))) return false;
+    // Soft length check (composer may normalize whitespace / drop some newlines).
+    if (got.length < wantNorm.length * 0.82) return false;
+    const markers = ["Respond with ONLY", "CANDIDATE PROFILE", "JOB DESCRIPTION", "CRITICAL OUTPUT"];
+    for (const m of markers) {
+      if (want.includes(m) && !got.includes(m) && !got.toLowerCase().includes(m.toLowerCase())) return false;
     }
-    // Contenteditable / ProseMirror — execCommand insertText updates React state more reliably
-    // than assigning textContent alone (reported live: prompt visible but Send stayed inert).
+    // JD-specific: if the prompt names Linkfire / Snowflake, they must survive the paste.
+    if (/Linkfire/i.test(want) && !/Linkfire/i.test(got)) return false;
+    if (/Snowflake/i.test(want) && !/Snowflake/i.test(got)) return false;
+    if (/Antoni Kowalski/i.test(want) && !/Antoni Kowalski/i.test(got)) return false;
+    return true;
+  }
+
+  function clearComposer(el) {
+    el.focus();
     try {
       const sel = window.getSelection();
       if (sel) {
@@ -3040,20 +3062,96 @@ function sendChatGptPromptInPage(prompt) {
         range.selectNodeContents(el);
         sel.addRange(range);
       }
-      if (document.execCommand("insertText", false, text)) {
-        el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
-        return;
-      }
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+    } catch {
+      /* ignore */
+    }
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+      nativeSet(el, "");
+    } else {
+      el.textContent = "";
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" }));
+    }
+  }
+
+  function pasteLikeHuman(el, text) {
+    // Closest to the user's manual Ctrl+V path (confirmed better quality than insertText dump).
+    el.focus();
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", text);
+      const pasteEv = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt,
+      });
+      const cancelled = !el.dispatchEvent(pasteEv);
+      if (!cancelled && composerPlainText(el).length > 200) return true;
     } catch {
       /* fall through */
     }
-    el.textContent = "";
+    return false;
+  }
+
+  function insertTextChunked(el, text) {
+    el.focus();
+    try {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.addRange(range);
+      }
+    } catch {
+      /* ignore */
+    }
+    // One giant insertText is what failed vs manual paste — chunk it.
+    const chunkSize = 4000;
+    for (let i = 0; i < text.length; i += chunkSize) {
+      const chunk = text.slice(i, i + chunkSize);
+      let ok = false;
+      try {
+        ok = document.execCommand("insertText", false, chunk);
+      } catch {
+        ok = false;
+      }
+      if (!ok) {
+        // Append as text nodes if execCommand refuses mid-way.
+        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+          nativeSet(el, (el.value || "") + chunk);
+        } else {
+          el.appendChild(document.createTextNode(chunk));
+        }
+        el.dispatchEvent(
+          new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: chunk })
+        );
+      }
+    }
+  }
+
+  function setComposerText(el, text) {
+    el.focus();
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+      nativeSet(el, text);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+      return;
+    }
+    clearComposer(el);
+    if (pasteLikeHuman(el, text) && promptLooksCompleteInComposer(el, text)) return;
+    clearComposer(el);
+    insertTextChunked(el, text);
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: text }));
+    if (promptLooksCompleteInComposer(el, text)) return;
+    // Last resort: paragraph rebuild (can still truncate on some UIs — caller verifies).
+    clearComposer(el);
     for (const line of text.split("\n")) {
       const p = document.createElement("p");
       p.textContent = line || "​";
       el.appendChild(p);
     }
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: text }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertFromPaste", data: text }));
   }
 
   function findComposer() {
@@ -3208,8 +3306,26 @@ function sendChatGptPromptInPage(prompt) {
     const userBubblesBefore = countUserBubbles();
     // Re-resolve right before paste in case of a last remount.
     composer = findComposer() || composer;
-    setComposerText(composer, prompt);
-    await sleep(400);
+    let pasteOk = false;
+    let composerLen = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      composer = findComposer() || composer;
+      setComposerText(composer, prompt);
+      await sleep(500 + attempt * 250);
+      composer = findComposer() || composer;
+      composerLen = composerPlainText(composer).length;
+      pasteOk = promptLooksCompleteInComposer(composer, prompt);
+      if (pasteOk) break;
+    }
+    if (!pasteOk) {
+      return {
+        ok: false,
+        error: `Prompt paste incomplete in ChatGPT composer (composerChars=${composerLen}, promptChars=${String(prompt || "").length}). Refusing to Send a truncated prompt — retry.`,
+        href: location.href,
+        promptChars: String(prompt || "").length,
+        composerChars: composerLen,
+      };
+    }
 
     let sendBtn = null;
     for (let attempt = 0; attempt < 40 && !sendBtn; attempt++) {
@@ -3271,6 +3387,9 @@ function sendChatGptPromptInPage(prompt) {
       userBubblesBefore,
       sendX: center.x,
       sendY: center.y,
+      promptChars: String(prompt || "").length,
+      composerChars: composerPlainText(findComposer() || composer).length,
+      pasteVerified: true,
     };
   })();
 }
