@@ -349,7 +349,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     } catch {
       /* ignore */
     }
-    notify("waiting for tab to finish loading...");
+    notify("waiting for tab document to finish loading...");
     await new Promise((resolve) => {
       let settled = false;
       function finish() {
@@ -371,10 +371,48 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         .catch(() => finish());
       const timer = setTimeout(finish, 20000);
     });
-    notify("tab finished loading");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    notify("document complete — waiting for ChatGPT UI to be ready (not typing yet)...");
 
-    notify("phase1: typing prompt...");
+    // document.complete is NOT "ChatGPT ready". The SPA can still be mounting; typing into a
+    // half-loaded ProseMirror remounts/conflicts (user report 2026-11-10). Wait until the
+    // composer is visible + stable before announcing "typing prompt".
+    {
+      const readyDeadline = Date.now() + 60000;
+      let lastProbe = null;
+      let ready = false;
+      while (Date.now() < readyDeadline) {
+        try {
+          const [inj] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: probeChatGptReadyInPage,
+          });
+          lastProbe = inj && inj.result;
+          if (lastProbe && lastProbe.ready) {
+            ready = true;
+            break;
+          }
+          notify(
+            `waiting for ChatGPT ready... ${JSON.stringify({
+              composer: Boolean(lastProbe && lastProbe.composer),
+              stable: Boolean(lastProbe && lastProbe.stable),
+              login: Boolean(lastProbe && lastProbe.looksLikeLogin),
+              reason: (lastProbe && lastProbe.reason) || "?",
+            })}`
+          );
+        } catch (err) {
+          notify(`ready probe threw: ${err && err.message ? err.message : err}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (!ready) {
+        throw new Error(
+          `ChatGPT UI did not become ready in time (${JSON.stringify(lastProbe || null)}). Try again when chatgpt.com is fully loaded / logged in.`
+        );
+      }
+      notify(`ChatGPT UI ready: ${JSON.stringify(lastProbe)}`);
+    }
+
+    notify("phase1: typing prompt (ChatGPT already ready)...");
     let sendResult = null;
     try {
       const [sendInj] = await chrome.scripting.executeScript({
@@ -2889,6 +2927,72 @@ function extractPageInfo() {
   };
 }
 
+// Injected probe: is ChatGPT's composer actually usable yet? document.complete is not enough —
+// confirmed live: status said "typing prompt" while the SPA was still loading.
+function probeChatGptReadyInPage() {
+  function findComposer() {
+    return (
+      document.querySelector('form[data-chatgpt-composer] div.ProseMirror[contenteditable="true"]') ||
+      document.querySelector('div.ProseMirror[role="textbox"][contenteditable="true"]') ||
+      document.querySelector("#prompt-textarea") ||
+      document.querySelector('div#prompt-textarea[contenteditable="true"]') ||
+      document.querySelector('form[data-chatgpt-composer] [contenteditable="true"]') ||
+      document.querySelector('[contenteditable="true"][data-placeholder], [contenteditable="true"][aria-label*="Ask" i]')
+    );
+  }
+
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 20 || r.height < 12) return false;
+    const st = window.getComputedStyle(el);
+    if (st.visibility === "hidden" || st.display === "none" || Number(st.opacity) === 0) return false;
+    return true;
+  }
+
+  const bodyText = ((document.body && document.body.innerText) || "").slice(0, 2000);
+  const looksLikeLogin =
+    /log in to chatgpt|create an account|sign up to continue|welcome back/i.test(bodyText) &&
+    !findComposer();
+  const composer = findComposer();
+  const composerOk =
+    Boolean(composer) &&
+    isVisible(composer) &&
+    (composer.getAttribute("contenteditable") === "true" ||
+      composer.tagName === "TEXTAREA" ||
+      composer.tagName === "INPUT");
+  const form = document.querySelector("form[data-chatgpt-composer], form");
+  const hasComposerChrome = Boolean(
+    document.querySelector("form[data-chatgpt-composer]") ||
+      document.querySelector('[aria-label="Ask ChatGPT"], [data-placeholder*="Ask" i], #prompt-textarea')
+  );
+  // Prefer a composer that has been the same node for consecutive probes (set on window).
+  const prev = window.__afGptReadyComposer || null;
+  const sameAsPrev = Boolean(prev && composer && prev === composer && composer.isConnected);
+  window.__afGptReadyComposer = composer || null;
+  const stableCount = sameAsPrev ? (window.__afGptReadyStableCount || 0) + 1 : composerOk ? 1 : 0;
+  window.__afGptReadyStableCount = stableCount;
+  const stable = stableCount >= 3; // ~3 probes from the side panel loop
+
+  let reason = "ok";
+  if (looksLikeLogin) reason = "login";
+  else if (!composerOk) reason = "no-composer";
+  else if (!hasComposerChrome && !form) reason = "no-composer-chrome";
+  else if (!stable) reason = `composer-unstable(${stableCount}/3)`;
+
+  return {
+    ready: composerOk && !looksLikeLogin && stable,
+    composer: composerOk,
+    stable,
+    stableCount,
+    looksLikeLogin,
+    hasComposerChrome: Boolean(hasComposerChrome),
+    href: location.href,
+    readyState: document.readyState,
+    reason,
+  };
+}
+
 // Injected into a chatgpt.com tab — must be fully self-contained. Phase 1 of gpt-auto:
 // type the prompt and click Send, then return quickly so SPA navigation to /c/<uuid> cannot
 // kill a long-lived wait/extract script (see runChatGptPrompt).
@@ -3052,10 +3156,38 @@ function sendChatGptPromptInPage(prompt) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   return (async () => {
+    // Wait until the same composer node stays connected for several ticks — pasting into a
+    // node that ChatGPT remounts mid-load drops/conflicts the prompt (user report 2026-11-10).
     let composer = null;
-    for (let attempt = 0; attempt < 50 && !composer; attempt++) {
+    let stableTicks = 0;
+    let lastComposer = null;
+    for (let attempt = 0; attempt < 80; attempt++) {
       composer = findComposer();
-      if (!composer) await sleep(200);
+      if (
+        composer &&
+        composer.isConnected &&
+        (composer.getAttribute("contenteditable") === "true" ||
+          composer.tagName === "TEXTAREA" ||
+          composer.tagName === "INPUT")
+      ) {
+        const r = composer.getBoundingClientRect();
+        if (r.width >= 20 && r.height >= 12) {
+          if (composer === lastComposer) stableTicks += 1;
+          else {
+            lastComposer = composer;
+            stableTicks = 1;
+          }
+          if (stableTicks >= 4) break;
+        } else {
+          stableTicks = 0;
+          lastComposer = null;
+        }
+      } else {
+        stableTicks = 0;
+        lastComposer = null;
+        composer = null;
+      }
+      await sleep(250);
     }
     if (!composer) {
       return {
@@ -3064,9 +3196,18 @@ function sendChatGptPromptInPage(prompt) {
         href: location.href,
       };
     }
+    if (stableTicks < 4) {
+      return {
+        ok: false,
+        error: "ChatGPT composer appeared but never stayed stable (page still loading). Retry once it finishes loading.",
+        href: location.href,
+      };
+    }
 
     const hrefBefore = location.href;
     const userBubblesBefore = countUserBubbles();
+    // Re-resolve right before paste in case of a last remount.
+    composer = findComposer() || composer;
     setComposerText(composer, prompt);
     await sleep(400);
 
