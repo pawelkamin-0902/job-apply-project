@@ -646,10 +646,6 @@ async def generate(body: GenerateRequest, active_person: str = Depends(get_activ
                 detail=f"Generation failed: malformed resume JSON ({exc}). Raw response: {result_text[:1000]!r}",
             ) from exc
 
-    # Generation keeps experience.bullets as [] — filled bullet text bloated ChatGPT paste
-    # and the Resume JSON textarea. Strip any strings the model still returned.
-    resume.experience = [e.model_copy(update={"bullets": []}) for e in resume.experience]
-
     save_dir = compute_save_dir(settings.apply_root_dir, active_person, body.company)
     save_dir.mkdir(parents=True, exist_ok=True)
 

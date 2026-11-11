@@ -15766,6 +15766,15 @@ function updateRenderButtonState() {
   el("renderBtn").disabled = el("resumeJson").value.trim().length === 0;
 }
 
+function resumeHasRealExperienceBullets(resume) {
+  if (!resume || !Array.isArray(resume.experience)) return false;
+  return resume.experience.some(
+    (e) =>
+      Array.isArray(e && e.bullets) &&
+      e.bullets.some((b) => typeof b === "string" && b.trim().length > 20)
+  );
+}
+
 function validateResumeShape(resume) {
   // Only a basic sanity check here — the backend accepts several resume JSON
   // shapes (see app/resume_normalize.py) and reports real shape problems itself.
@@ -15782,17 +15791,12 @@ function validateResumeShape(resume) {
   if (!first || first.title === "string" || first.company === "string") {
     return ["real experience titles/companies (got schema placeholder)"];
   }
-  return [];
-}
-
-// Resume generation keeps experience.bullets as [] on purpose — filled bullet text bloated
-// the ChatGPT composer paste and the Resume JSON textarea. Strip any strings GPT still returns.
-function clearResumeExperienceBullets(resume) {
-  if (!resume || typeof resume !== "object" || !Array.isArray(resume.experience)) return resume;
-  for (const entry of resume.experience) {
-    if (entry && typeof entry === "object") entry.bullets = [];
+  // Empty bullets: [] means a weak/truncated GPT reply — never paste that into Resume JSON
+  // (it breaks PDF/render). Leave the text field unchanged and ask the user to regenerate.
+  if (!resumeHasRealExperienceBullets(resume)) {
+    return ["experience bullets (got empty [] — regenerate; reply was incomplete)"];
   }
-  return resume;
+  return [];
 }
 
 el("scrapeBtn").addEventListener("click", scrapeCurrentTab);
@@ -15962,9 +15966,9 @@ el("generateBtn").addEventListener("click", async () => {
       }
       const missing = validateResumeShape(parsed);
       if (missing.length) {
+        // Do not write incomplete JSON (especially empty bullets: []) into Resume JSON.
         throw new Error(`ChatGPT's reply doesn't match the expected resume shape. Missing/wrong: ${missing.join(", ")}`);
       }
-      clearResumeExperienceBullets(parsed);
 
       el("resumeJson").value = JSON.stringify(parsed, null, 2);
       updateRenderButtonState();
@@ -15972,7 +15976,10 @@ el("generateBtn").addEventListener("click", async () => {
     } else {
       genResultEl.textContent = "Generating (calls Claude, takes a few seconds)...";
       const data = await apiFetch("/generate", { method: "POST", body: JSON.stringify(body) });
-      clearResumeExperienceBullets(data.resume);
+      const missingClaude = validateResumeShape(data.resume);
+      if (missingClaude.length) {
+        throw new Error(`Generated resume is incomplete. Missing/wrong: ${missingClaude.join(", ")}`);
+      }
       el("resumeJson").value = JSON.stringify(data.resume, null, 2);
       lastSavedDir = data.saved_dir;
       lastSavedDirCompany = body.company;
