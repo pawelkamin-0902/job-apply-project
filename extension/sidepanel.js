@@ -15775,6 +15775,21 @@ function resumeHasRealExperienceBullets(resume) {
   );
 }
 
+function resumeHasRealSkills(resume) {
+  // skills is usually { "Languages": ["Python", ...], ... }. Empty category lists []
+  // still render bare "Languages:" headers in the PDF — treat that as incomplete.
+  const skills = resume && resume.skills;
+  if (!skills || typeof skills !== "object" || Array.isArray(skills)) return false;
+  let skillCount = 0;
+  for (const items of Object.values(skills)) {
+    if (!Array.isArray(items)) continue;
+    for (const s of items) {
+      if (typeof s === "string" && s.trim().length > 0) skillCount += 1;
+    }
+  }
+  return skillCount >= 3;
+}
+
 function validateResumeShape(resume) {
   // Only a basic sanity check here — the backend accepts several resume JSON
   // shapes (see app/resume_normalize.py) and reports real shape problems itself.
@@ -15791,10 +15806,13 @@ function validateResumeShape(resume) {
   if (!first || first.title === "string" || first.company === "string") {
     return ["real experience titles/companies (got schema placeholder)"];
   }
-  // Empty bullets: [] means a weak/truncated GPT reply — never paste that into Resume JSON
-  // (it breaks PDF/render). Leave the text field unchanged and ask the user to regenerate.
+  // Empty experience.bullets [] or skills category lists [] = weak/truncated GPT reply.
+  // Never copy that into the Resume JSON textarea (and Generate PDF also refuses it).
   if (!resumeHasRealExperienceBullets(resume)) {
     return ["experience bullets (got empty [] — regenerate; reply was incomplete)"];
+  }
+  if (!resumeHasRealSkills(resume)) {
+    return ["skills (got empty [] categories — regenerate; reply was incomplete)"];
   }
   return [];
 }

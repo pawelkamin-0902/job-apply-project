@@ -81,6 +81,8 @@ _SCHEMA_CONTRACT = """CRITICAL OUTPUT — MACHINE PARSE ONLY:
 "Create a one-page version", or any bullet list of optional improvements.
 - Do NOT ask clarifying questions. Do NOT invite another turn. Output ends at the closing brace.
 - Every experience entry MUST include real non-empty bullet strings. Never return `"bullets": []`.
+- Every skills category MUST include real non-empty skill strings. Never return empty lists like \
+`"Languages": []` or `"Tools": []`.
 
 The JSON object must match exactly this shape:
 
@@ -113,8 +115,9 @@ def build_user_message(profile: dict, job_description: str) -> str:
         "JOB DESCRIPTION:\n"
         f"{job_description}\n\n"
         "Generate the tailored resume JSON now.\n"
-        "Reminder: write real experience bullets (never empty []). Reply with the JSON object only — "
-        "first char `{`, last char `}`, no follow-up suggestions or other text after the closing brace."
+        "Reminder: write real experience bullets and filled skills lists (never empty []). "
+        "Reply with the JSON object only — first char `{`, last char `}`, no follow-up "
+        "suggestions or other text after the closing brace."
     )
 
 

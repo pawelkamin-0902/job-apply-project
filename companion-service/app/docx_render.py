@@ -71,10 +71,13 @@ def build_docx(resume: ResumeData, out_path: Path) -> None:
 
     _add_section_heading(doc, "Skills")
     for category, items in resume.skills.items():
+        filled = [item for item in items if str(item).strip()]
+        if not filled:
+            continue
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(2)
         p.add_run(f"{category}: ").bold = True
-        p.add_run(", ".join(items))
+        p.add_run(", ".join(filled))
 
     _add_section_heading(doc, "Experience")
     for job in resume.experience:

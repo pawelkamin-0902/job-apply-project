@@ -161,7 +161,10 @@ def build_pdf(resume: ResumeData, out_path: Path) -> None:
     story.append(Paragraph("Technical Skills", HEADING_STYLE))
     story.append(_gold_rule())
     for category, items in resume.skills.items():
-        items_text = ", ".join(saxutils.escape(item) for item in items)
+        filled = [item for item in items if str(item).strip()]
+        if not filled:
+            continue
+        items_text = ", ".join(saxutils.escape(item) for item in filled)
         story.append(Paragraph(f"<b>{saxutils.escape(category)}:</b> {items_text}", SKILL_LABEL_STYLE))
 
     story.append(Paragraph("Experience", HEADING_STYLE))
