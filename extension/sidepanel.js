@@ -623,16 +623,32 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     return text;
   } finally {
     // Always close the automation tab (resume / answers / cover), even if delete menu failed.
+    // Only jump back to the caller tab if ChatGPT was the focused tab — otherwise leave
+    // whatever window/tab the user is looking at alone (multi-window: don't snap to "first").
+    let gptWasActive = false;
+    try {
+      const gpt = await chrome.tabs.get(tab.id);
+      gptWasActive = Boolean(gpt && gpt.active);
+    } catch {
+      /* ignore */
+    }
     try {
       await chrome.tabs.remove(tab.id);
       notify(`closed ChatGPT tab ${tab.id}`);
     } catch {
       /* Tab may already be closed */
     }
-    if (previousTabId != null) {
+    if (gptWasActive && previousTabId != null) {
       try {
         await chrome.tabs.update(previousTabId, { active: true });
-        notify(`restored previous tab ${previousTabId}`);
+        if (previousWindowId != null) {
+          try {
+            await chrome.windows.update(previousWindowId, { focused: true });
+          } catch {
+            /* ignore */
+          }
+        }
+        notify(`left ChatGPT → restored caller tab ${previousTabId}`);
       } catch {
         /* Job tab may already be gone */
       }
