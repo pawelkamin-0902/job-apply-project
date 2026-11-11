@@ -15724,6 +15724,16 @@ function validateResumeShape(resume) {
   return [];
 }
 
+// Resume generation keeps experience.bullets as [] on purpose — filled bullet text bloated
+// the ChatGPT composer paste and the Resume JSON textarea. Strip any strings GPT still returns.
+function clearResumeExperienceBullets(resume) {
+  if (!resume || typeof resume !== "object" || !Array.isArray(resume.experience)) return resume;
+  for (const entry of resume.experience) {
+    if (entry && typeof entry === "object") entry.bullets = [];
+  }
+  return resume;
+}
+
 el("scrapeBtn").addEventListener("click", scrapeCurrentTab);
 
 el("settingsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
@@ -15889,6 +15899,7 @@ el("generateBtn").addEventListener("click", async () => {
       if (missing.length) {
         throw new Error(`ChatGPT's reply doesn't match the expected resume shape. Missing/wrong: ${missing.join(", ")}`);
       }
+      clearResumeExperienceBullets(parsed);
 
       el("resumeJson").value = JSON.stringify(parsed, null, 2);
       updateRenderButtonState();
@@ -15896,6 +15907,7 @@ el("generateBtn").addEventListener("click", async () => {
     } else {
       genResultEl.textContent = "Generating (calls Claude, takes a few seconds)...";
       const data = await apiFetch("/generate", { method: "POST", body: JSON.stringify(body) });
+      clearResumeExperienceBullets(data.resume);
       el("resumeJson").value = JSON.stringify(data.resume, null, 2);
       lastSavedDir = data.saved_dir;
       lastSavedDirCompany = body.company;

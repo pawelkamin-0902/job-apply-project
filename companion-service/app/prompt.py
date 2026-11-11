@@ -14,62 +14,29 @@ the candidate's source data for that role.
 - Copy each job's `location` from the profile (e.g. Warsaw (Remote), Luxembourg (Onsite)). Do not leave it \
 empty or fold it into the company name.
 - Do not invent technologies the candidate clearly never used. Prefer the candidate's real stack; when the \
-profile is thin, you may align wording to the JD's tech/domain only under the company-type rules below \
-(consulting vs product), not by inventing unrelated stacks.
+profile is thin, you may align wording to the JD's tech/domain only where honest.
+- Experience bullets MUST always be an empty array `[]`. Do NOT write bullet strings. Do NOT copy profile \
+bullet text into the reply. Leaving bullets empty keeps the ChatGPT composer prompt small and avoids \
+truncated/paste failures.
 
 ATS optimization techniques:
-- Reword bullets and skill names using the job description's exact terminology when the underlying work \
-fits (e.g. profile says "built REST APIs" and the JD says "developed RESTful services" → use the JD phrasing).
 - Reorder and regroup skills into categories that mirror the JD's emphasis; include JD-priority skills the \
-candidate can honestly claim under the company-type rules.
+candidate can honestly claim. Use the JD's exact skill terminology when the underlying work fits.
 - Select and prioritize experience most relevant to this job; de-emphasize less relevant items rather than \
 deleting real roles.
-- Use strong action verbs (Architected, Built, Led, Implemented, Optimized, Automated, Designed, Delivered) \
-instead of passive phrasing ("Responsible for", "Duties included", "Worked on").
-- Keep each bullet focused on one concrete accomplishment. Avoid filler written only to hit a word count.
 - Write a summary that matches the depth of the candidate's own summary — if theirs is long and detailed, \
 use roughly 4-6 sentences; if brief, stay brief. Open with the candidate's real title/experience level and \
 the most JD-relevant skills they can claim. Put the entire summary in ONE paragraph with spaces between \
 sentences — do not insert newline characters between sentences.
 
-Company type and industry wording (required for every experience bullet):
-- Classify each employer before writing bullets:
-  • IT consulting / services (e.g. Endava, Accenture, Deloitte, Capgemini): the candidate delivered for \
-    multiple clients. Frame work as client platforms/products in the JD's industry/domain (e.g. fintech \
-    payments, open banking) — consulting multi-client delivery justifies aligning industry language to the \
-    target JD.
-  • Product / domain company (e.g. Wise = fintech/payments, Ericsson = telecom): frame bullets as work on \
-    that company's own industry platform/product. For Wise-like fintech employers, use fintech/payments \
-    wording. Do not rebrand a telecom/internal product role as unrelated industry work.
-  • Unknown: use the industry implied by the company name + profile; if still unclear, use the JD company's \
-    industry only for consulting-style roles, otherwise stay generic ("enterprise platform", "SaaS platform").
-- Every experience bullet should include industry/platform context — not bare tech with no domain.
-- Preferred opening shape for important bullets (especially bullet 1 of each role):
-  [Action verb] + [what you built] + on/for a [industry] platform/product + for [clients / merchants / \
-  internal users / the company's product] + using [JD-relevant technologies], with the key tech/domain \
-  phrase wrapped in **bold**.
-  Example: "Architected **real-time payment services on a fintech open-banking platform** for merchant \
-  clients using **Python, FastAPI, and GCP**, improving settlement reliability across production traffic."
-
-Most recent company — first 3 bullets (highest ATS priority):
-- These three bullets are the most important content on the resume. Pack the JD's must-have skills and \
-exact tech/domain phrases here (Python, FastAPI, Terraform, GCP services, Open Banking, PSD2, distributed \
-systems, etc. — whatever THIS job description emphasizes), using the consulting vs product framing above.
-- Bold the most important parts: core JD technology combinations, the industry/platform phrase, and \
-high-value domain terms. Prefer one strong **…** phrase per bullet (or at most two short ones) — not \
-bolding every word and not bolding every later bullet the same way.
-- Later bullets of the most recent role, and older roles, still include industry context and some JD \
-keywords, but with lighter keyword density and lighter bolding than the first three.
-
 Bold formatting:
-- Use Markdown **text** only inside summary and experience bullet strings — never inside skills arrays.
+- Use Markdown **text** only inside the summary string — never inside skills arrays, and never in bullets \
+(bullets stay empty).
 - Bold meaningful phrases (systems, platforms, JD tech combinations, domain impact), not isolated generic \
 words like **built** or **data**.
-- Do not bold entire bullets. Across one company, keep bolding concentrated on the highest-value bullets \
-(especially the first three of the most recent role).
 
-If the JD emphasizes a skill the candidate cannot honestly claim even with consulting/product framing, \
-omit it and surface the closest genuinely-held skills instead."""
+If the JD emphasizes a skill the candidate cannot honestly claim, omit it and surface the closest \
+genuinely-held skills instead."""
 
 _SCHEMA_CONTRACT = """CRITICAL OUTPUT — MACHINE PARSE ONLY:
 - Your entire reply MUST be exactly one JSON object. Nothing else.
@@ -80,6 +47,8 @@ _SCHEMA_CONTRACT = """CRITICAL OUTPUT — MACHINE PARSE ONLY:
 "Refine the tailored resume", "Refine the X application", "Add quantified impact", "Create a cover letter", \
 "Create a one-page version", or any bullet list of optional improvements.
 - Do NOT ask clarifying questions. Do NOT invite another turn. Output ends at the closing brace.
+- Every experience entry MUST have `"bullets": []` (empty array). Do not write bullet text strings. \
+Filled bullets bloat the reply and break automated paste into ChatGPT's text field.
 
 The JSON object must match exactly this shape:
 
@@ -93,7 +62,7 @@ text must be the actual URL or handle itself (e.g. linkedin.com/in/janedoe), nev
   "summary": "string: one paragraph, sentences separated by spaces only (no newline characters)",
   "skills": {"category name": ["skill", "..."]},
   "experience": [
-    {"title": "string", "company": "string", "location": "string: copy the profile job workplace line (e.g. Warsaw (Remote)); never empty if the profile has it", "dates": "string", "bullets": ["string", "..."]}
+    {"title": "string", "company": "string", "location": "string: copy the profile job workplace line (e.g. Warsaw (Remote)); never empty if the profile has it", "dates": "string", "bullets": []}
   ],
   "education": [
     {"school": "string", "degree": "string", "location": "string or null", "dates": "string or null"}
@@ -105,14 +74,37 @@ def build_system_prompt(instructions: str) -> str:
     return f"{instructions}\n\n{_SCHEMA_CONTRACT}"
 
 
+def _profile_for_resume_prompt(profile: dict) -> dict:
+    """Drop experience bullet text from the prompt payload.
+
+    Pasting long bullet lists into ChatGPT's composer text field truncates the prompt and
+    yields empty/weak resumes. Titles/companies/dates/location stay; bullets stay [].
+    """
+    out = dict(profile or {})
+    exp_in = out.get("experience")
+    if not isinstance(exp_in, list):
+        return out
+    cleaned = []
+    for entry in exp_in:
+        if not isinstance(entry, dict):
+            cleaned.append(entry)
+            continue
+        row = dict(entry)
+        row["bullets"] = []
+        cleaned.append(row)
+    out["experience"] = cleaned
+    return out
+
+
 def build_user_message(profile: dict, job_description: str) -> str:
     return (
         "CANDIDATE PROFILE (JSON):\n"
-        f"{json.dumps(profile, indent=2)}\n\n"
+        f"{json.dumps(_profile_for_resume_prompt(profile), indent=2)}\n\n"
         "JOB DESCRIPTION:\n"
         f"{job_description}\n\n"
         "Generate the tailored resume JSON now.\n"
-        "Reminder: reply with the JSON object only — first char `{`, last char `}`, no follow-up "
+        "Reminder: every experience entry must use \"bullets\": [] — do not write bullet strings. "
+        "Reply with the JSON object only — first char `{`, last char `}`, no follow-up "
         "suggestions or other text after the closing brace."
     )
 
