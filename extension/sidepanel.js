@@ -355,17 +355,28 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
   } catch {
     /* ignore */
   }
+  async function focusCallerTab() {
+    // Alt+G / Auto Fill: keep the job tab focused — never leave the user stuck on ChatGPT.
+    if (previousTabId == null) return;
+    try {
+      await chrome.tabs.update(previousTabId, { active: true });
+    } catch {
+      /* caller tab may be gone */
+    }
+  }
+
   notify(`creating tab (expect=${expectKind})...`);
-  // Must be active: Chrome throttles background tabs and chatgpt.com often stays blank/white
-  // while status already says "typing" (confirmed live Auto Fill gpt-auto on Greenhouse).
-  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
-  notify(`tab ${tab.id} created (active so SPA can load)`);
+  // Open ChatGPT in the background so the current tab keeps focus (Generate JSON Alt+G).
+  // If the SPA stays blank from Chrome throttling, briefly pulse-activate then restore focus.
+  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
+  notify(`tab ${tab.id} created (background — keeping current tab focused)`);
   try {
     try {
-      await chrome.tabs.update(tab.id, { autoDiscardable: false, active: true });
+      await chrome.tabs.update(tab.id, { autoDiscardable: false });
     } catch {
       /* ignore */
     }
+    await focusCallerTab();
     notify("waiting for tab document to finish loading...");
     await new Promise((resolve) => {
       let settled = false;
@@ -388,12 +399,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         .catch(() => finish());
       const timer = setTimeout(finish, 20000);
     });
-    // Keep the ChatGPT tab focused through ready+send — backgrounding mid-load blanks the SPA.
-    try {
-      await chrome.tabs.update(tab.id, { active: true });
-    } catch {
-      /* ignore */
-    }
+    await focusCallerTab();
     notify("document complete — waiting for ChatGPT UI to be ready (not typing yet)...");
 
     // document.complete is NOT "ChatGPT ready". The SPA can still be mounting; typing into a
@@ -402,13 +408,10 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
       const readyDeadline = Date.now() + 90000;
       let lastProbe = null;
       let ready = false;
+      let blankStreak = 0;
+      let wokeOnce = false;
       while (Date.now() < readyDeadline) {
         try {
-          try {
-            await chrome.tabs.update(tab.id, { active: true });
-          } catch {
-            /* ignore */
-          }
           const [inj] = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: probeChatGptReadyInPage,
@@ -417,6 +420,22 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
           if (lastProbe && lastProbe.ready) {
             ready = true;
             break;
+          }
+          if (lastProbe && lastProbe.blankPage) blankStreak += 1;
+          else blankStreak = 0;
+          // Background chatgpt.com sometimes never hydrates — one short focus pulse, then
+          // immediately return focus to the caller's tab (Alt+G must not stay on GPT).
+          if (!wokeOnce && blankStreak >= 4) {
+            wokeOnce = true;
+            notify("ChatGPT still blank in background — brief wake, then restore your tab...");
+            try {
+              await chrome.tabs.update(tab.id, { active: true });
+            } catch {
+              /* ignore */
+            }
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            await focusCallerTab();
+            blankStreak = 0;
           }
           notify(
             `waiting for ChatGPT ready... ${JSON.stringify({
@@ -431,6 +450,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         } catch (err) {
           notify(`ready probe threw: ${err && err.message ? err.message : err}`);
         }
+        await focusCallerTab();
         await new Promise((resolve) => setTimeout(resolve, 500));
       }
       if (!ready) {
@@ -438,17 +458,14 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
           `ChatGPT UI did not become ready in time (${JSON.stringify(lastProbe || null)}). Try again when chatgpt.com is fully loaded / logged in.`
         );
       }
+      await focusCallerTab();
       notify(`ChatGPT UI ready: ${JSON.stringify(lastProbe)}`);
     }
 
     notify("phase1: typing prompt (ChatGPT already ready)...");
     let sendResult = null;
     try {
-      try {
-        await chrome.tabs.update(tab.id, { active: true });
-      } catch {
-        /* ignore */
-      }
+      await focusCallerTab();
       const sendInj = await withTimeout(
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
@@ -462,6 +479,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     } catch (err) {
       notify(`phase1 executeScript threw: ${err && err.message ? err.message : err}`);
     }
+    await focusCallerTab();
     notify(`phase1 prepare: ${JSON.stringify(sendResult || null)}`);
     if (!sendResult || !sendResult.ok) {
       throw new Error(
@@ -472,9 +490,16 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     let submitted = Boolean(sendResult.submitted);
     if (!submitted && sendResult.sendX != null && sendResult.sendY != null) {
       notify("phase1: trusted Send click...");
+      // CDP click needs the GPT tab briefly visible; restore caller focus right after.
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+      } catch {
+        /* ignore */
+      }
       const clicked = await trustedClickTab(tab.id, sendResult.sendX, sendResult.sendY);
       notify(`phase1: trusted Send click -> ${clicked ? "ok" : "failed"}`);
       await new Promise((resolve) => setTimeout(resolve, 450));
+      await focusCallerTab();
       try {
         const [verifyInj] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
@@ -488,6 +513,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         notify(`phase1 verify threw: ${err && err.message ? err.message : err}`);
       }
     }
+    await focusCallerTab();
     if (!submitted) {
       throw new Error(
         "Typed the prompt but ChatGPT did not start generating — Send may need a manual click (reload the extension after updating)."
