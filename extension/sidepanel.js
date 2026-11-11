@@ -490,15 +490,20 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
       const matched = wantAnswers
         ? pollResult.kind === "answers" && pollResult.isRealAnswers
         : wantCover
-          ? pollResult.text &&
-            !pollResult.generating &&
-            !pollResult.isRealResume &&
-            !pollResult.isRealAnswers &&
-            pollResult.text.length > 80
+          ? Boolean(
+              pollResult.text &&
+                pollResult.text.length > 80 &&
+                !pollResult.generating &&
+                !pollResult.isRealResume &&
+                !pollResult.isRealAnswers &&
+                (pollResult.isPlainCover || pollResult.kind === "cover" || pollResult.kind == null)
+            )
           : pollResult.kind === "resume" && pollResult.isRealResume;
       if (matched && pollResult.text) {
         if (!seenGenerating && pollIndex < 8) continue;
         if (pollResult.generating) continue;
+        // Cover letters: require the plain text to stay stable briefly (avoids mid-stream capture).
+        if (wantCover && !pollResult.stableComplete && pollIndex < 12) continue;
         text = pollResult.text;
         notify(`phase2: ${expectKind} captured (${text.length} chars, via=${pollResult.via})`);
         break;
@@ -523,7 +528,7 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     }
 
     if (deleteConversation) {
-      notify("phase3: deleting conversation...");
+      notify("phase3: deleting conversation (try all known ChatGPT menu styles)...");
       let deleteResult = null;
       try {
         const [delInj] = await chrome.scripting.executeScript({
@@ -535,14 +540,20 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         notify(`phase3 delete threw: ${err && err.message ? err.message : err}`);
       }
       notify(`phase3 delete result: ${JSON.stringify(deleteResult || null)}`);
+      // Delete is best-effort across UI styles; tab close below always runs.
+      if (!(deleteResult && deleteResult.deleted)) {
+        notify("phase3: delete UI miss — still closing the ChatGPT tab");
+      }
     } else {
       notify("phase3: delete skipped (setting off)");
     }
 
     return text;
   } finally {
+    // Always close the automation tab (resume / answers / cover), even if delete menu failed.
     try {
       await chrome.tabs.remove(tab.id);
+      notify(`closed ChatGPT tab ${tab.id}`);
     } catch {
       /* Tab may already be closed */
     }
@@ -3167,11 +3178,17 @@ function sendChatGptPromptInPage(prompt) {
   }
 
   function findSendButton() {
+    // Multi-style Send (captures):
+    // - 20261016: aria-label="Send" / type=submit
+    // - 20261110: empty composer = Start Voice / Dictate; after text, primary circle becomes Send
+    //   often WITHOUT aria-label="Send"
     const selectors = [
       'form[data-chatgpt-composer] button[type="submit"][aria-label="Send"]',
       'button[data-testid="send-button"]',
       'button[data-testid="composer-submit-button"]',
+      'button[data-testid*="send" i]',
       'button[type="submit"][aria-label="Send"]',
+      'button[aria-label="Send"]',
       'button[aria-label*="Send prompt" i]',
       'button[aria-label*="Send message" i]',
       'button[aria-label*="Send" i]',
@@ -3180,15 +3197,11 @@ function sendChatGptPromptInPage(prompt) {
     ];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
-      if (el) return el;
+      if (el && !isSendDisabled(el)) return el;
     }
-    // 2026-11 UI (chatgpt-com-20261110T112915Z): empty composer shows "Start Voice" /
-    // "Dictate" in the primary circle; after text is typed that slot becomes Send, often
-    // WITHOUT aria-label="Send" / type=submit. Prefer the composer primary button that is
-    // not voice/dictate.
     const composer =
       document.querySelector("form[data-chatgpt-composer]") ||
-      document.querySelector('[data-chatgpt-composer]') ||
+      document.querySelector("[data-chatgpt-composer]") ||
       document.querySelector("form");
     if (composer) {
       const primary = [
@@ -3199,10 +3212,9 @@ function sendChatGptPromptInPage(prompt) {
         if (/voice|dictat|mic|speech|photo|attach|upload/.test(label)) continue;
         if (!isSendDisabled(el)) return el;
       }
-      // Last resort: any non-voice composer button that became enabled after typing.
       for (const el of composer.querySelectorAll("button")) {
         const label = ((el.getAttribute("aria-label") || "") + " " + (el.textContent || "")).toLowerCase();
-        if (/voice|dictat|mic|speech|photo|attach|upload|plus|menu/.test(label)) continue;
+        if (/voice|dictat|mic|speech|photo|attach|upload|plus|menu|share/.test(label)) continue;
         if (/send|submit/.test(label) && !isSendDisabled(el)) return el;
         if (el.classList.contains("bg-composer-primary") && !isSendDisabled(el) && !/voice|dictat/.test(label)) {
           return el;
@@ -3761,20 +3773,35 @@ function pollChatGptResponseInPage() {
 
   const isRealResume = isRealResumeJson(text);
   const isRealAnswers = !isRealResume && isRealAnswersJson(text);
-  const kind = isRealResume ? "resume" : isRealAnswers ? "answers" : null;
-  const completeJson = Boolean(kind);
+  // Plain assistant prose for cover letters (and any non-JSON expectKind). Previously we only
+  // returned text when completeJson was true, so cover-letter polls always saw text="" and the
+  // tab hung until the 180s timeout (user report: Create cover letter never closes ChatGPT).
+  let plainText = "";
+  if (!isRealResume && !isRealAnswers && assistants.length) {
+    const last = assistants[assistants.length - 1];
+    plainText = reconstructMarkdown(last).trim() || (last.innerText || last.textContent || "").replace(/\u200b/g, "").trim();
+    // Drop obvious prompt chrome if the node somehow included it.
+    if (/CRITICAL OUTPUT|Respond with ONLY|CANDIDATE PROFILE|MACHINE PARSE ONLY/i.test(plainText) && plainText.length < 400) {
+      plainText = "";
+    }
+    if (via === "none" || via === "assistant-node") via = plainText ? "assistant-plain" : via;
+  }
+  const kind = isRealResume ? "resume" : isRealAnswers ? "answers" : plainText.length > 80 ? "cover" : null;
+  const completeJson = kind === "resume" || kind === "answers";
+  const outText = completeJson ? text : plainText;
   const prev = window.__afGptPollPrev || { text: "", same: 0 };
-  const same = prev.text === text && text ? prev.same + 1 : text ? 1 : 0;
-  window.__afGptPollPrev = { text, same };
+  const same = prev.text === outText && outText ? prev.same + 1 : outText ? 1 : 0;
+  window.__afGptPollPrev = { text: outText, same };
   return {
     generating,
     assistantCount: assistants.length,
-    text: completeJson ? text : "",
+    text: outText,
     completeJson,
     isRealResume,
     isRealAnswers,
+    isPlainCover: Boolean(kind === "cover"),
     kind,
-    stableComplete: !generating && same >= 2 && completeJson,
+    stableComplete: !generating && same >= 2 && Boolean(outText),
     href: location.href,
     via,
     probe,
@@ -3807,29 +3834,36 @@ function deleteChatGptConversationInPage() {
   }
 
   function findOptionsButtons() {
-    // Order matters: prefer the open conversation's own header menu, then legacy, then sidebar.
+    // Multi-style ChatGPT UIs (captures 20260922 / 20261016 / 20261110): try each known
+    // options entry point until a Delete menuitem appears. Order = most specific first.
     const candidates = [];
     const push = (el, via) => {
       if (el && !candidates.some((c) => c.el === el)) candidates.push({ el, via });
     };
+    const pushAll = (nodes, via) => {
+      for (const el of nodes || []) push(el, via);
+    };
 
-    // NEW UI (2026 Free capture): "Chat actions" = ••• on the current chat header.
+    // Style A (2026 Free+): header ••• "Chat actions"
     push(document.querySelector('button[aria-label="Chat actions"]'), "chat-actions");
     push(document.querySelector('button[aria-label*="Chat actions" i]'), "chat-actions-i");
+    pushAll(document.querySelectorAll('button[aria-label*="Chat action" i]'), "chat-action-plural");
 
-    // OLD UI
+    // Style B: "More actions" near the thread header (seen alongside Chat actions in Nov 2026)
+    push(document.querySelector('button[aria-label="More actions"]'), "more-actions");
+    push(document.querySelector('button[aria-label*="More actions" i]'), "more-actions-i");
+    push(document.querySelector('button[aria-label="More"][aria-haspopup="menu"]'), "more-haspopup");
+
+    // Style C (older): conversation-options testids / aria
     push(document.querySelector('button[data-testid="conversation-options-button"]'), "conversation-options-testid");
     push(document.querySelector('button[data-testid*="conversation-options" i]'), "conversation-options-testid-i");
     push(document.querySelector('button[aria-label*="Open conversation options" i]'), "open-conversation-options");
     push(document.querySelector('button[aria-label*="conversation options" i]'), "conversation-options-label");
     push(document.querySelector('[data-testid="history-item-0-options"]'), "history-item-0");
     push(document.querySelector('nav [data-testid$="-options"]'), "nav-options-testid");
+    pushAll(document.querySelectorAll('[data-testid*="conversation-options" i]'), "conversation-options-any");
 
-    // Fallbacks that may open a useful menu on either UI.
-    push(document.querySelector('button[aria-label="More actions"]'), "more-actions");
-    push(document.querySelector('button[aria-label="More"][aria-haspopup="menu"]'), "more-haspopup");
-
-    // Active sidebar row for this /c/<uuid> conversation, if its ••• is in the DOM.
+    // Style D: active sidebar row ••• for this /c/<uuid>
     const m = (location.pathname || "").match(/\/c\/([a-z0-9-]+)/i);
     if (m) {
       const id = m[1];
@@ -3842,7 +3876,6 @@ function deleteChatGptConversationInPage() {
       if (row) {
         const scope = row.closest("div, li, a, button") || row.parentElement;
         if (scope) {
-          // Hover-reveal options on some layouts.
           try {
             scope.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
             scope.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
@@ -3851,7 +3884,7 @@ function deleteChatGptConversationInPage() {
           }
           push(
             scope.querySelector(
-              'button[aria-haspopup="menu"], button[data-testid*="options" i], button[aria-label*="options" i], button[aria-label*="More" i]'
+              'button[aria-haspopup="menu"], button[data-testid*="options" i], button[aria-label*="options" i], button[aria-label*="More" i], button[aria-label*="Chat actions" i]'
             ),
             "sidebar-row-options"
           );
@@ -3861,6 +3894,7 @@ function deleteChatGptConversationInPage() {
 
     push(document.querySelector('nav button[aria-label*="options" i]'), "nav-options-label");
     push(document.querySelector('nav button[aria-label*="more" i]'), "nav-more");
+    push(document.querySelector('button[aria-label="Chat sidebar options"]'), "chat-sidebar-options");
     return candidates;
   }
 
