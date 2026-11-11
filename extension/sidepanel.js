@@ -15965,17 +15965,12 @@ el("renderBtn").addEventListener("click", async () => {
   el("renderBtn").disabled = true;
   const reuseDir = company === lastSavedDirCompany ? lastSavedDir : null;
   try {
-    let coverText = el("coverLetter").value.trim();
-    if (!coverText) {
-      resultEl.textContent = "No cover letter yet — generating from job + resume...";
-      try {
-        coverText = await generateCoverLetterText({ statusEl: resultEl, quiet: true });
-      } catch (err) {
-        resultEl.textContent = `Cover letter: ${err.message}`;
-        return;
-      }
-    }
-    resultEl.textContent = "Rendering resume PDF and cover letter (Word + PDF)...";
+    // Empty cover letter → resume PDF only. Do NOT auto-open GPT here; use the separate
+    // "Generate cover letter" button when a letter is wanted.
+    const coverText = el("coverLetter").value.trim();
+    resultEl.textContent = coverText
+      ? "Rendering resume PDF and cover letter (Word + PDF)..."
+      : "Rendering resume PDF (no cover letter in the field)...";
     const data = await apiFetch("/render", {
       method: "POST",
       body: JSON.stringify({
