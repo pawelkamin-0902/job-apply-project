@@ -160,7 +160,18 @@ def build_answer_system_prompt() -> str:
 def _resume_block(resume: dict | None) -> str:
     if not resume:
         return ""
-    return "TAILORED RESUME (JSON) — prefer this over the raw profile when they differ:\n" f"{json.dumps(resume, indent=2)}\n\n"
+    # Keep experience.bullets as [] in prompts — filled bullets bloat ChatGPT paste (same
+    # rule as resume generation). Titles/companies/summary/skills still go through.
+    slim = dict(resume)
+    exp = slim.get("experience")
+    if isinstance(exp, list):
+        slim["experience"] = [
+            {**entry, "bullets": []} if isinstance(entry, dict) else entry for entry in exp
+        ]
+    return (
+        "TAILORED RESUME (JSON) — prefer this over the raw profile when they differ:\n"
+        f"{json.dumps(slim, indent=2)}\n\n"
+    )
 
 
 def _profile_contact_block(profile: dict | None) -> str:

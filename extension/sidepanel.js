@@ -304,9 +304,9 @@ function extractFirstJsonValue(text) {
   return s.slice(start); // unbalanced - hand back what we have and let JSON.parse report why
 }
 
-// The shared mechanism both resume-generation-via-GPT and Auto-Fill-via-GPT are built on: opens
-// a real chatgpt.com tab, submits the prompt, waits for and extracts the response, then closes
-// the tab regardless of success or failure.
+// ONE shared GPT-tab flow for resume Generate JSON, Auto Fill answers, remaining-fields
+// GPT, and cover letter. Same open→ready→send→poll→delete→close path; only expectKind
+// changes which reply shape is accepted. Fix ready/Send/paste here once — all callers benefit.
 //
 // Send / poll / delete are separate short injects: ChatGPT's SPA often navigates `/` → `/c/<uuid>`
 // right after Send, which kills a single long-lived executeScript (empty result, no delete).
@@ -325,8 +325,19 @@ function trustedClickTab(tabId, x, y) {
   });
 }
 
-// expectKind: "resume" (Generate JSON) or "answers" (Auto Fill Q/A). Same open→send→poll→delete→close
-// lifecycle either way; only the accepted JSON shape differs so Q/A isn't stuck waiting for a resume.
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label || "operation"} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+}
+
+// expectKind: "resume" | "answers" | "cover". Shared lifecycle for every gpt-auto caller.
 async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, expectKind = "resume") {
   const notify = (msg) => {
     try {
@@ -337,15 +348,21 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
   };
   const wantAnswers = expectKind === "answers";
   const wantCover = expectKind === "cover";
-  notify(`creating tab (expect=${expectKind})...`);
-  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: false });
-  notify(`tab ${tab.id} created`);
+  let previousTabId = null;
   try {
-    // Background tab only — no chrome.debugger (avoids "Chrome is being controlled" banner).
-    // autoDiscardable:false reduces tab discard under memory pressure; if generation stalls
-    // while another app is foreground, keep Chrome visible or use gpt-auto-headless / manual GPT.
+    const [prev] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (prev && prev.id != null) previousTabId = prev.id;
+  } catch {
+    /* ignore */
+  }
+  notify(`creating tab (expect=${expectKind})...`);
+  // Must be active: Chrome throttles background tabs and chatgpt.com often stays blank/white
+  // while status already says "typing" (confirmed live Auto Fill gpt-auto on Greenhouse).
+  const tab = await chrome.tabs.create({ url: "https://chatgpt.com/", active: true });
+  notify(`tab ${tab.id} created (active so SPA can load)`);
+  try {
     try {
-      await chrome.tabs.update(tab.id, { autoDiscardable: false });
+      await chrome.tabs.update(tab.id, { autoDiscardable: false, active: true });
     } catch {
       /* ignore */
     }
@@ -371,17 +388,27 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
         .catch(() => finish());
       const timer = setTimeout(finish, 20000);
     });
+    // Keep the ChatGPT tab focused through ready+send — backgrounding mid-load blanks the SPA.
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+    } catch {
+      /* ignore */
+    }
     notify("document complete — waiting for ChatGPT UI to be ready (not typing yet)...");
 
     // document.complete is NOT "ChatGPT ready". The SPA can still be mounting; typing into a
-    // half-loaded ProseMirror remounts/conflicts (user report 2026-11-10). Wait until the
-    // composer is visible + stable before announcing "typing prompt".
+    // half-loaded / blank page hangs on "typing prompt". Wait until composer is real + stable.
     {
-      const readyDeadline = Date.now() + 60000;
+      const readyDeadline = Date.now() + 90000;
       let lastProbe = null;
       let ready = false;
       while (Date.now() < readyDeadline) {
         try {
+          try {
+            await chrome.tabs.update(tab.id, { active: true });
+          } catch {
+            /* ignore */
+          }
           const [inj] = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: probeChatGptReadyInPage,
@@ -396,7 +423,9 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
               composer: Boolean(lastProbe && lastProbe.composer),
               stable: Boolean(lastProbe && lastProbe.stable),
               login: Boolean(lastProbe && lastProbe.looksLikeLogin),
+              blank: Boolean(lastProbe && lastProbe.blankPage),
               reason: (lastProbe && lastProbe.reason) || "?",
+              bodyLen: lastProbe && lastProbe.bodyLen,
             })}`
           );
         } catch (err) {
@@ -415,12 +444,21 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
     notify("phase1: typing prompt (ChatGPT already ready)...");
     let sendResult = null;
     try {
-      const [sendInj] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: sendChatGptPromptInPage,
-        args: [prompt],
-      });
-      sendResult = sendInj && sendInj.result;
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+      } catch {
+        /* ignore */
+      }
+      const sendInj = await withTimeout(
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: sendChatGptPromptInPage,
+          args: [prompt],
+        }),
+        120000,
+        "ChatGPT prompt paste/send"
+      );
+      sendResult = sendInj && sendInj[0] && sendInj[0].result;
     } catch (err) {
       notify(`phase1 executeScript threw: ${err && err.message ? err.message : err}`);
     }
@@ -556,6 +594,14 @@ async function runChatGptPrompt(prompt, deleteConversation = true, onProgress, e
       notify(`closed ChatGPT tab ${tab.id}`);
     } catch {
       /* Tab may already be closed */
+    }
+    if (previousTabId != null) {
+      try {
+        await chrome.tabs.update(previousTabId, { active: true });
+        notify(`restored previous tab ${previousTabId}`);
+      } catch {
+        /* Job tab may already be gone */
+      }
     }
   }
 }
@@ -2939,7 +2985,7 @@ function extractPageInfo() {
 }
 
 // Injected probe: is ChatGPT's composer actually usable yet? document.complete is not enough —
-// confirmed live: status said "typing prompt" while the SPA was still loading.
+// confirmed live: status said "typing prompt" while the SPA was still blank/white.
 function probeChatGptReadyInPage() {
   function findComposer() {
     return (
@@ -2962,6 +3008,9 @@ function probeChatGptReadyInPage() {
   }
 
   const bodyText = ((document.body && document.body.innerText) || "").slice(0, 2000);
+  const bodyLen = ((document.body && document.body.innerText) || "").trim().length;
+  // Blank white chatgpt.com shell — never treat as ready (Auto Fill "typing" while empty).
+  const blankPage = bodyLen < 60 && !findComposer();
   const looksLikeLogin =
     /log in to chatgpt|create an account|sign up to continue|welcome back/i.test(bodyText) &&
     !findComposer();
@@ -2986,17 +3035,20 @@ function probeChatGptReadyInPage() {
   const stable = stableCount >= 3; // ~3 probes from the side panel loop
 
   let reason = "ok";
-  if (looksLikeLogin) reason = "login";
+  if (blankPage) reason = "blank-page";
+  else if (looksLikeLogin) reason = "login";
   else if (!composerOk) reason = "no-composer";
   else if (!hasComposerChrome && !form) reason = "no-composer-chrome";
   else if (!stable) reason = `composer-unstable(${stableCount}/3)`;
 
   return {
-    ready: composerOk && !looksLikeLogin && stable,
+    ready: composerOk && !looksLikeLogin && !blankPage && stable && (hasComposerChrome || Boolean(form)),
     composer: composerOk,
     stable,
     stableCount,
     looksLikeLogin,
+    blankPage,
+    bodyLen,
     hasComposerChrome: Boolean(hasComposerChrome),
     href: location.href,
     readyState: document.readyState,
@@ -3043,20 +3095,27 @@ function sendChatGptPromptInPage(prompt) {
   }
 
   function promptLooksCompleteInComposer(el, text) {
-    // Live: same prompt manual-paste → full Data Engineer resume; auto insertText → empty
-    // bullets/skills shell. Huge single insertText often truncates in ProseMirror — verify
-    // length + JD/profile markers before Send.
+    // Shared for resume + Auto Fill answers + cover: verify paste length + markers that
+    // actually appear in THIS prompt before Send (truncated paste → empty bullets / weak answers).
     const got = composerPlainText(el);
     const want = String(text || "");
     const wantNorm = want.replace(/\s+/g, " ").trim();
-    if (!got || got.length < Math.min(800, Math.floor(wantNorm.length * 0.55))) return false;
+    const minFloor = Math.min(400, Math.floor(wantNorm.length * 0.45));
+    if (!got || got.length < minFloor) return false;
     // Soft length check (composer may normalize whitespace / drop some newlines).
-    if (got.length < wantNorm.length * 0.82) return false;
-    const markers = ["Respond with ONLY", "CANDIDATE PROFILE", "JOB DESCRIPTION", "CRITICAL OUTPUT"];
+    if (wantNorm.length > 600 && got.length < wantNorm.length * 0.82) return false;
+    const markers = [
+      "Respond with ONLY",
+      "CANDIDATE PROFILE",
+      "JOB DESCRIPTION",
+      "CRITICAL OUTPUT",
+      "APPLICATION QUESTIONS",
+      "SAVED Q&A BANK",
+      "cover letter",
+    ];
     for (const m of markers) {
       if (want.includes(m) && !got.includes(m) && !got.toLowerCase().includes(m.toLowerCase())) return false;
     }
-    // JD-specific: if the prompt names Linkfire / Snowflake, they must survive the paste.
     if (/Linkfire/i.test(want) && !/Linkfire/i.test(got)) return false;
     if (/Snowflake/i.test(want) && !/Snowflake/i.test(got)) return false;
     if (/Antoni Kowalski/i.test(want) && !/Antoni Kowalski/i.test(got)) return false;
@@ -3166,19 +3225,21 @@ function sendChatGptPromptInPage(prompt) {
   }
 
   function findComposer() {
+    // Same selectors as probeChatGptReadyInPage — do NOT fall back to bare
+    // [contenteditable="true"] (matches unrelated nodes on a half-loaded shell).
     return (
       document.querySelector('form[data-chatgpt-composer] div.ProseMirror[contenteditable="true"]') ||
       document.querySelector('div.ProseMirror[role="textbox"][contenteditable="true"]') ||
       document.querySelector("#prompt-textarea") ||
       document.querySelector('div#prompt-textarea[contenteditable="true"]') ||
-      document.querySelector('form [contenteditable="true"]') ||
-      document.querySelector('[contenteditable="true"]') ||
-      document.querySelector("form textarea")
+      document.querySelector('form[data-chatgpt-composer] [contenteditable="true"]') ||
+      document.querySelector('[contenteditable="true"][data-placeholder], [contenteditable="true"][aria-label*="Ask" i]') ||
+      document.querySelector("form[data-chatgpt-composer] textarea")
     );
   }
 
   function findSendButton() {
-    // Multi-style Send (captures):
+    // Multi-style Send (captures) — shared by resume + Auto Fill gpt-auto:
     // - 20261016: aria-label="Send" / type=submit
     // - 20261110: empty composer = Start Voice / Dictate; after text, primary circle becomes Send
     //   often WITHOUT aria-label="Send"
@@ -15809,9 +15870,13 @@ async function generateCoverLetterText({ statusEl = el("generateResult"), quiet 
     lastSavedDirCompany = company;
     const combined = `${promptData.system_prompt}\n\n${promptData.user_message}`;
     const { delete_gpt_conversations: deleteConversation = true } = await apiFetch("/settings");
+    const coverBaseStatus = statusEl.textContent || "Generating cover letter via ChatGPT tab...";
+    // Same shared runChatGptPrompt as resume Generate JSON / Auto Fill answers.
     const rawResponse = isHeadless
       ? await runChatGptPromptHeadless(combined, deleteConversation)
-      : await runChatGptPrompt(combined, deleteConversation, undefined, "cover");
+      : await runChatGptPrompt(combined, deleteConversation, (step) => {
+          if (!quiet) statusEl.textContent = `${coverBaseStatus}\n[${new Date().toLocaleTimeString()}] ${step}`;
+        }, "cover");
     const text = stripCoverLetterMarkdown(rawResponse);
     if (text.length < 40) {
       throw new Error("ChatGPT cover letter reply was too short.");
@@ -16617,9 +16682,13 @@ el("autofillBtn").addEventListener("click", async () => {
           });
           const { delete_gpt_conversations: deleteConversation = true } = await apiFetch("/settings");
           const combined = `${promptData.system_prompt}\n\n${promptData.user_message}`;
+          const remBaseStatus = resultEl.textContent;
+          // Same shared runChatGptPrompt as Generate JSON / first Auto Fill GPT pass.
           const rawResponse = isHeadless
             ? await runChatGptPromptHeadless(combined, deleteConversation)
-            : await runChatGptPrompt(combined, deleteConversation, undefined, "answers");
+            : await runChatGptPrompt(combined, deleteConversation, (step) => {
+                resultEl.textContent = `${remBaseStatus}\n[${new Date().toLocaleTimeString()}] ${step}`;
+              }, "answers");
           let parsed;
           try {
             const cleaned = sanitizeJsonControlChars(stripJsonFences(rawResponse));
