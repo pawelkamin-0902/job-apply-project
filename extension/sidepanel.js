@@ -693,6 +693,12 @@ async function applyTailorMode() {
     const tailorMode = tailorModeChoice.tailor_mode !== false;
     el("tailorSection").style.display = tailorMode ? "" : "none";
     el("nonTailorSection").style.display = tailorMode ? "none" : "";
+    const modeSelect = el("resumeModeSelect");
+    const jobPicker = el("jobResumePicker");
+    if (modeSelect && document.activeElement !== modeSelect) {
+      modeSelect.value = tailorMode ? "true" : "false";
+    }
+    if (jobPicker) jobPicker.style.display = tailorMode ? "none" : "";
     if (!tailorMode) loadResumesForPicker();
 
     // "gpt" (fully manual copy/paste) is the only provider needing the separate
@@ -16168,6 +16174,30 @@ function getTailoredResumeIfAny() {
   }
 }
 
+function isUploadedResumeMode() {
+  const modeSelect = el("resumeModeSelect");
+  if (modeSelect) return modeSelect.value === "false";
+  return el("nonTailorSection") && el("nonTailorSection").style.display !== "none";
+}
+
+async function getResumeContextForAutofill() {
+  // Tailor → Resume JSON from step 2. Uploaded → extract plain text from the selected file
+  // so GPT can answer "what did you build / which tools…" from the real CV, not just the JD.
+  if (!isUploadedResumeMode()) {
+    return { resume: getTailoredResumeIfAny(), resume_text: null };
+  }
+  const resumeId = el("resumeSelect") && el("resumeSelect").value;
+  if (!resumeId) return { resume: null, resume_text: null };
+  try {
+    const data = await apiFetch(`/resumes/${encodeURIComponent(resumeId)}/text`);
+    const text = data && typeof data.text === "string" ? data.text.trim() : "";
+    return { resume: null, resume_text: text || null };
+  } catch (err) {
+    console.warn("[Auto Fill] could not extract uploaded resume text:", err && err.message ? err.message : err);
+    return { resume: null, resume_text: null };
+  }
+}
+
 function coerceDemographicSelectAnswer(answer, options) {
   // Maps short QA-bank phrases ("No disability", "Not a veteran") onto the long OFCCP /
   // Greenhouse option labels. Confirmed live Aura: "No disability" matched none of
@@ -16394,7 +16424,7 @@ el("autofillBtn").addEventListener("click", async () => {
         (u) => !selectKeys.has(`${u.frameId}:${u.idx}`)
       );
     }
-    const tailoredResume = getTailoredResumeIfAny();
+    const { resume: tailoredResume, resume_text: uploadedResumeText } = await getResumeContextForAutofill();
 
     // gpt-auto skips server /match-answers — run the same local category/word-overlap matcher
     // again on stamped fields (catches combobox timing failures and wording variants the first
@@ -16522,6 +16552,7 @@ el("autofillBtn").addEventListener("click", async () => {
             options_per_question: aiCandidates.map((c) => (c.kind === "select" ? c.options : null)),
             multi_per_question: aiCandidates.map((c) => (c.kind === "select" ? Boolean(c.multi) : false)),
             resume: tailoredResume,
+            resume_text: uploadedResumeText,
           }),
         });
         resultEl.textContent = isHeadless
@@ -16622,6 +16653,7 @@ el("autofillBtn").addEventListener("click", async () => {
               company,
               options: item.kind === "select" ? item.options : null,
               resume: tailoredResume,
+              resume_text: uploadedResumeText,
             }),
           });
           if (data.answerable !== false && data.answer) {
@@ -16753,6 +16785,7 @@ el("autofillBtn").addEventListener("click", async () => {
               options_per_question: remCandidates.map((c) => (c.kind === "select" ? c.options : null)),
               multi_per_question: remCandidates.map((c) => (c.kind === "select" ? Boolean(c.multi) : false)),
               resume: tailoredResume,
+              resume_text: uploadedResumeText,
             }),
           });
           const { delete_gpt_conversations: deleteConversation = true } = await apiFetch("/settings");
@@ -17093,10 +17126,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 // off Generate JSON/Auto Fill, since not every generation is a real application you want
 // tracked (tailoring experiments, re-runs, etc.).
 function buildPortalLogEntryFromPanel() {
-  // Read directly off the DOM rather than re-fetching /tailor-mode - applyTailorMode() already
-  // keeps tailorSection/nonTailorSection's visibility in sync with the real per-person value,
-  // so whichever one is actually showing IS the current tailor mode.
-  const tailor = el("tailorSection").style.display !== "none";
+  // Prefer the Job-step mode control; fall back to which Resume section is visible.
+  const tailor = !isUploadedResumeMode();
   let resumeStack;
   let description;
   if (tailor) {
@@ -17168,6 +17199,18 @@ el("portalLogBtn").addEventListener("click", async () => {
 
 if (el("company")) el("company").addEventListener("input", updateJobContextPreview);
 if (el("jobTitle")) el("jobTitle").addEventListener("input", updateJobContextPreview);
+if (el("resumeModeSelect")) {
+  el("resumeModeSelect").addEventListener("change", async () => {
+    const tailorMode = el("resumeModeSelect").value === "true";
+    try {
+      await apiFetch("/tailor-mode", { method: "PUT", body: JSON.stringify({ tailor_mode: tailorMode }) });
+      await applyTailorMode();
+    } catch (err) {
+      const preview = el("jobContextPreview");
+      if (preview) preview.textContent = `Could not save resume mode: ${err.message}`;
+    }
+  });
+}
 refreshStatus();
 updateJobContextPreview();
 applyTailorMode();

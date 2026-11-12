@@ -34,6 +34,7 @@ from app import resume_templates
 from app.chatgpt_automation import submit_chatgpt_prompt
 from app.portal_automation import sync_portal_entry
 from app.resume_normalize import normalize_resume
+from app.resume_text import extract_resume_file_text
 from app.schemas import (
     AnswerRequest,
     AnswerResponse,
@@ -65,6 +66,7 @@ from app.schemas import (
     RenderResponse,
     ResumeData,
     ResumeEntry,
+    ResumeTextResponse,
     ResumeTemplateChoice,
     ResumeTemplateOption,
     SaveSampleRequest,
@@ -251,6 +253,25 @@ async def get_resume_file(resume_id: str, active_person: str = Depends(get_activ
     return FileResponse(path, filename=entry.filename)
 
 
+@app.get("/resumes/{resume_id}/text", response_model=ResumeTextResponse, dependencies=[Depends(verify_token)])
+async def get_resume_text(resume_id: str, active_person: str = Depends(get_active_person)) -> ResumeTextResponse:
+    """Extract plain text from an uploaded resume for Auto Fill GPT grounding (non-tailor mode)."""
+    entries = store.get_resumes(active_person)
+    entry = next((e for e in entries if e.id == resume_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No resume with that id")
+    path = store.resume_file_path(entry.id, entry.filename, active_person)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Resume file missing on disk")
+    try:
+        text = extract_resume_file_text(path)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not extract resume text: {exc}") from exc
+    if not (text or "").strip():
+        raise HTTPException(status_code=422, detail="Resume file produced no extractable text")
+    return ResumeTextResponse(id=entry.id, filename=entry.filename, text=text, char_count=len(text))
+
+
 @app.delete("/resumes/{resume_id}", dependencies=[Depends(verify_token)])
 async def delete_resume(resume_id: str, active_person: str = Depends(get_active_person)) -> dict:
     entries = store.get_resumes(active_person)
@@ -303,12 +324,18 @@ async def answer_prompt_preview(body: AnswerRequest, active_person: str = Depend
                 body.job_description,
                 body.company,
                 body.resume,
+                body.resume_text,
             ),
         )
     return PromptPreview(
         system_prompt=build_answer_system_prompt(),
         user_message=build_answer_user_message(
-            profile.model_dump(), body.question, body.job_description, body.company, body.resume
+            profile.model_dump(),
+            body.question,
+            body.job_description,
+            body.company,
+            body.resume,
+            body.resume_text,
         ),
     )
 
@@ -366,11 +393,17 @@ async def generate_answer(body: AnswerRequest, active_person: str = Depends(get_
             body.job_description,
             body.company,
             body.resume,
+            body.resume_text,
         )
     else:
         system_prompt = build_answer_system_prompt()
         user_message = build_answer_user_message(
-            profile.model_dump(), body.question, body.job_description, body.company, body.resume
+            profile.model_dump(),
+            body.question,
+            body.job_description,
+            body.company,
+            body.resume,
+            body.resume_text,
         )
 
     if settings.answer_provider == "ollama":
@@ -529,17 +562,12 @@ async def match_answers(body: MatchAnswersRequest, active_person: str = Depends(
 async def prompt_preview_answers(
     body: BatchAnswerPromptRequest, active_person: str = Depends(get_active_person)
 ) -> BatchAnswerPromptResponse:
-    """Builds the batched (all-questions-at-once) answer prompt for the "gpt-auto" Auto Fill
-    path — mirrors /prompt-preview's role for resume generation: the extension fetches the
-    prompt text here, then drives a real ChatGPT tab itself instead of this endpoint calling a
-    model automatically. Never called for claude/ollama, which use the one-question-at-a-time
-    /generate-answer instead.
+    """Builds the batched Auto Fill GPT prompt (gpt-auto path).
 
-    Deliberately does NOT include the candidate profile - only the saved Q&A bank, job
-    description, and the questions themselves. The Q&A bank is the actual source of truth for
-    Auto Fill answers (this endpoint's whole point is reusing an already-approved saved answer
-    verbatim); the full profile/work-history JSON was pure bloat for that job, on top of being
-    unnecessary personal data to hand to an external chat session for every batch."""
+    Resume context is either tailored JSON (`body.resume`) or plain text extracted from an
+    uploaded file (`body.resume_text`) so "what did you build…" questions are grounded.
+    Contact facts come from the profile; Claude/Ollama still use /generate-answer instead.
+    """
     qa_bank = store.get_qa(active_person)
     profile = store.get_profile(active_person)
     return BatchAnswerPromptResponse(
@@ -553,6 +581,7 @@ async def prompt_preview_answers(
             options_per_question=body.options_per_question,
             multi_per_question=body.multi_per_question,
             profile=profile.model_dump(),
+            resume_text=body.resume_text,
         ),
     )
 

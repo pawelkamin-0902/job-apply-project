@@ -169,10 +169,32 @@ def build_answer_system_prompt() -> str:
     )
 
 
-def _resume_block(resume: dict | None) -> str:
-    if not resume:
+def _resume_block(resume: dict | None, resume_text: str | None = None) -> str:
+    """Ground Auto Fill answers in the candidate's resume.
+
+    Tailor mode → structured JSON from Generate JSON. Uploaded-resume mode → plain text
+    extracted from the selected PDF/DOCX (needed for \"what did you build…\" questions when
+    there is no tailored JSON).
+    """
+    parts: list[str] = []
+    if resume:
+        parts.append(
+            "TAILORED RESUME (JSON) — prefer this over the raw profile when they differ:\n"
+            f"{json.dumps(resume, indent=2)}"
+        )
+    text = (resume_text or "").strip()
+    if text:
+        # Cap extreme uploads so ChatGPT paste stays reliable; keep the start (header + recent roles).
+        if len(text) > 14000:
+            text = text[:14000].rstrip() + "\n…[resume text truncated]"
+        parts.append(
+            "UPLOADED RESUME TEXT — use for experience / \"what you built\" / tools / projects "
+            "questions when the Q&A bank has no match:\n"
+            f"{text}"
+        )
+    if not parts:
         return ""
-    return "TAILORED RESUME (JSON) — prefer this over the raw profile when they differ:\n" f"{json.dumps(resume, indent=2)}\n\n"
+    return "\n\n".join(parts) + "\n\n"
 
 
 def _profile_contact_block(profile: dict | None) -> str:
@@ -196,11 +218,12 @@ def build_answer_user_message(
     job_description: str,
     company: str,
     resume: dict | None = None,
+    resume_text: str | None = None,
 ) -> str:
     return (
         "CANDIDATE PROFILE (JSON):\n"
         f"{json.dumps(profile, indent=2)}\n\n"
-        f"{_resume_block(resume)}"
+        f"{_resume_block(resume, resume_text)}"
         f"COMPANY: {company or '(not provided)'}\n\n"
         "JOB DESCRIPTION:\n"
         f"{job_description or '(not provided)'}\n\n"
@@ -241,12 +264,13 @@ def build_select_pick_user_message(
     job_description: str,
     company: str,
     resume: dict | None = None,
+    resume_text: str | None = None,
 ) -> str:
     numbered = "\n".join(f"- {opt}" for opt in options)
     return (
         "CANDIDATE PROFILE (JSON):\n"
         f"{json.dumps(profile, indent=2)}\n\n"
-        f"{_resume_block(resume)}"
+        f"{_resume_block(resume, resume_text)}"
         f"COMPANY: {company or '(not provided)'}\n\n"
         "JOB DESCRIPTION:\n"
         f"{job_description or '(not provided)'}\n\n"
@@ -320,6 +344,7 @@ def build_batch_answer_user_message(
     options_per_question: list[list[str] | None] | None = None,
     multi_per_question: list[bool] | None = None,
     profile: dict | None = None,
+    resume_text: str | None = None,
 ) -> str:
     lines = []
     for i, q in enumerate(questions):
@@ -355,7 +380,7 @@ def build_batch_answer_user_message(
     return (
         f"SAVED Q&A BANK:\n{bank_text}\n\n"
         f"{_profile_contact_block(profile)}"
-        f"{_resume_block(resume)}"
+        f"{_resume_block(resume, resume_text)}"
         f"COMPANY: {company or '(not provided)'}\n\n"
         "JOB DESCRIPTION:\n"
         f"{job_description or '(not provided)'}\n\n"

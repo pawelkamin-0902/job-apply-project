@@ -238,6 +238,9 @@ class AnswerRequest(BaseModel):
     # Optional tailored resume JSON from the side panel (tailor mode). When present, answer
     # prompts use it as extra grounded context alongside the saved profile.
     resume: dict | None = None
+    # Plain text extracted from an uploaded resume file (non-tailor mode). Used when there is
+    # no tailored JSON — GPT still needs "what you built / which tools" context from the CV.
+    resume_text: str | None = None
 
 
 class AnswerResponse(BaseModel):
@@ -266,6 +269,8 @@ class BatchAnswerPromptRequest(BaseModel):
     # screening checkboxes (technologies / design patterns).
     multi_per_question: list[bool] | None = None
     resume: dict | None = None
+    # Plain text from the selected uploaded resume (non-tailor). See AnswerRequest.resume_text.
+    resume_text: str | None = None
 
 
 class BatchAnswerPromptResponse(BaseModel):
@@ -298,6 +303,13 @@ class ResumeEntry(BaseModel):
     filename: str
     stack: str
     uploaded_at: str
+
+
+class ResumeTextResponse(BaseModel):
+    id: str
+    filename: str
+    text: str
+    char_count: int
 
 
 class CreatePersonRequest(BaseModel):

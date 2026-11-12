@@ -38,6 +38,20 @@
   <main class="app-main tab-panels">
     <!-- 1 · JOB -->
     <section class="tab-panel tab-job" aria-labelledby="tab-job">
+      <div class="field-stack" style="margin-bottom: 0.75rem">
+        <div>
+          <label for="resumeModeSelect">Resume mode</label>
+          <select id="resumeModeSelect">
+            <option value="true">Tailor a resume per job</option>
+            <option value="false">Use an uploaded resume</option>
+          </select>
+        </div>
+        <div id="jobResumePicker" style="display: none">
+          <label for="resumeSelect">Resume to use</label>
+          <select id="resumeSelect"></select>
+          <div id="resumeSuggestHint" class="hint"></div>
+        </div>
+      </div>
       <div id="jobContextPreview" class="job-preview empty" aria-live="polite">
         Company · title — use Extract or type below
       </div>
@@ -88,13 +102,7 @@
         </div>
       </div>
       <div id="nonTailorSection" style="display: none">
-        <div class="field-stack">
-          <div>
-            <label for="resumeSelect">Resume to use</label>
-            <select id="resumeSelect"></select>
-          </div>
-          <div id="resumeSuggestHint" class="hint"></div>
-        </div>
+        <p class="tab-lead">Using the uploaded resume selected in <strong>1 · Job</strong>. Auto Fill will read its text for GPT answers; attach the PDF on Apply.</p>
       </div>
       <p class="tab-lead">Next: <strong>3 · Apply</strong> — Auto Fill, then attach PDF if needed.</p>
     </section>
