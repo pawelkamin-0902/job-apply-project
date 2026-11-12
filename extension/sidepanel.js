@@ -16948,13 +16948,13 @@ el("attachResumeBtn").addEventListener("click", async () => {
       resultEl.textContent = "No job tab is attached to this panel.";
       return;
     }
-    const nonTailorVisible = el("nonTailorSection").style.display !== "none";
+    const uploadedMode = isUploadedResumeMode();
     let resumeSource = null;
-    if (nonTailorVisible) {
+    if (uploadedMode) {
       const resumeId = el("resumeSelect").value;
       if (resumeId) resumeSource = await fetchResumeFileBase64(resumeId);
       if (!resumeSource) {
-        resultEl.textContent = "Pick a resume in the dropdown above first.";
+        resultEl.textContent = "Pick a resume on 1 · Job first.";
         return;
       }
       // Prefer the filename from the /resumes list (option dataset) over Content-Disposition —
