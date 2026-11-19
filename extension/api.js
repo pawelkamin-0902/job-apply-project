@@ -50,7 +50,17 @@ export async function apiFetch(path, options = {}) {
   const res = await fetchWithTimeout(`${baseUrl}${path}`, { ...options, headers }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${body}`);
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed.detail === "string") detail = parsed.detail;
+      else if (parsed && Array.isArray(parsed.detail)) {
+        detail = parsed.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      }
+    } catch {
+      /* keep raw body */
+    }
+    throw new Error(detail ? `${res.status}: ${detail}` : `${res.status} ${res.statusText}`);
   }
   return res.status === 204 ? null : res.json();
 }

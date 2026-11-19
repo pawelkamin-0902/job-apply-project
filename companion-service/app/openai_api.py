@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-# Cheapest current OpenAI chat model for high-volume resume/answer work. Override in Settings
-# (e.g. gpt-6-luna) if JSON quality is too weak for a given job.
+# Cheap default. gpt-5-nano is cheapest but uses reasoning tokens; if replies come back empty
+# or 502, switch to gpt-4o-mini / gpt-6-luna in Settings.
 DEFAULT_OPENAI_MODEL = "gpt-5-nano"
+
+
+def resolve_openai_api_key(settings_key: str | None = None) -> str:
+    """Settings key first; else OPENAI_API_KEY env (useful when the key lives outside the UI)."""
+    key = (settings_key or "").strip()
+    if key:
+        return key
+    return (os.environ.get("OPENAI_API_KEY") or "").strip()
 
 # Approx USD per 1M tokens for the cost estimate returned to the UI (list prices; not billing).
 _MODEL_PRICES_PER_M: dict[str, tuple[float, float]] = {
@@ -34,13 +43,14 @@ def _estimate_cost_usd(model: str, input_tokens: int | None, output_tokens: int 
 
 
 async def check_openai(api_key: str, model: str, timeout_seconds: float = 15.0) -> tuple[bool, str]:
-    if not (api_key or "").strip():
-        return False, "OpenAI API key is empty — paste it in Settings → Generation."
+    api_key = resolve_openai_api_key(api_key)
+    if not api_key:
+        return False, "OpenAI API key is empty — paste it in Settings → Generation (or set OPENAI_API_KEY for the companion process)."
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.get(
                 f"{DEFAULT_OPENAI_BASE_URL}/models/{model}",
-                headers={"Authorization": f"Bearer {api_key.strip()}"},
+                headers={"Authorization": f"Bearer {api_key}"},
             )
     except httpx.ConnectError:
         return False, "Could not reach api.openai.com"
@@ -68,8 +78,12 @@ async def run_openai_chat(
     """Call OpenAI Chat Completions. Returns the same payload shape as Claude/Ollama helpers
     (result / session_id / total_cost_usd / usage) so /generate callers stay provider-agnostic.
     """
-    if not (api_key or "").strip():
-        raise OpenAiApiError("OpenAI API key is empty — set it in Settings → Generation.")
+    api_key = resolve_openai_api_key(api_key)
+    if not api_key:
+        raise OpenAiApiError(
+            "OpenAI API key is empty — paste it in Settings → Generation, Save, then retry "
+            "(or set OPENAI_API_KEY for the companion process)."
+        )
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -81,6 +95,12 @@ async def run_openai_chat(
         "model": model,
         "messages": messages,
     }
+    # Reasoning models (gpt-5-nano, etc.) can burn the whole token budget on hidden reasoning
+    # and return empty content — keep effort minimal and allow a large completion budget.
+    model_l = (model or "").lower()
+    if any(tag in model_l for tag in ("gpt-5", "o1", "o3", "o4", "gpt-6")):
+        request_body["reasoning_effort"] = "minimal"
+        request_body["max_completion_tokens"] = 16000
     if format_schema is not None:
         request_body["response_format"] = {"type": "json_object"}
         messages[0] = {
@@ -98,7 +118,7 @@ async def run_openai_chat(
             response = await client.post(
                 f"{DEFAULT_OPENAI_BASE_URL}/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json=request_body,
@@ -122,10 +142,19 @@ async def run_openai_chat(
 
     choices = data.get("choices") or []
     result_text = None
+    finish_reason = None
     if choices:
-        result_text = (choices[0].get("message") or {}).get("content")
+        choice0 = choices[0] or {}
+        finish_reason = choice0.get("finish_reason")
+        result_text = (choice0.get("message") or {}).get("content")
     if not isinstance(result_text, str) or not result_text.strip():
-        raise OpenAiApiError("OpenAI produced no output")
+        usage = data.get("usage") or {}
+        raise OpenAiApiError(
+            "OpenAI produced no output"
+            + (f" (finish_reason={finish_reason})" if finish_reason else "")
+            + (f" usage={usage}" if usage else "")
+            + ". Try model gpt-4o-mini in Settings, or raise max tokens."
+        )
 
     usage = data.get("usage") or {}
     input_tokens = usage.get("prompt_tokens")
