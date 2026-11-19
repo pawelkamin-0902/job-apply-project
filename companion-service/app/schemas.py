@@ -174,6 +174,7 @@ class GenerateResponse(BaseModel):
     session_id: str | None = None
     total_cost_usd: float | None = None
     usage: dict[str, int] | None = None
+    model: str | None = None
     saved_dir: str
 
 
@@ -190,6 +191,7 @@ class CoverLetterGenerateResponse(BaseModel):
     session_id: str | None = None
     total_cost_usd: float | None = None
     usage: dict[str, int] | None = None
+    model: str | None = None
 
 
 class RenderRequest(BaseModel):
@@ -260,6 +262,7 @@ class AnswerResponse(BaseModel):
     session_id: str | None = None
     total_cost_usd: float | None = None
     usage: dict[str, int] | None = None
+    model: str | None = None
 
 
 class BatchAnswerPromptRequest(BaseModel):
@@ -301,6 +304,9 @@ class MatchedAnswer(BaseModel):
 
 class MatchAnswersResponse(BaseModel):
     results: list[MatchedAnswer]
+    total_cost_usd: float | None = None
+    usage: dict[str, int] | None = None
+    model: str | None = None
 
 
 class ResumeEntry(BaseModel):

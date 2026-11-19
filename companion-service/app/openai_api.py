@@ -133,6 +133,7 @@ async def run_openai_chat(
     return {
         "result": result_text,
         "session_id": data.get("id"),
+        "model": model,
         "total_cost_usd": _estimate_cost_usd(model, input_tokens, output_tokens),
         "usage": {
             "input_tokens": input_tokens,

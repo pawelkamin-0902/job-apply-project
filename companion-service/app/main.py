@@ -485,6 +485,11 @@ async def generate_answer(body: AnswerRequest, active_person: str = Depends(get_
         session_id=payload.get("session_id"),
         total_cost_usd=payload.get("total_cost_usd"),
         usage=usage_from_cli_payload(payload),
+        model=payload.get("model") or (
+            settings.openai_model if settings.answer_provider == "openai"
+            else settings.ollama_model if settings.answer_provider == "ollama"
+            else settings.claude_model
+        ),
     )
 
 
@@ -582,7 +587,16 @@ async def match_answers(body: MatchAnswersRequest, active_person: str = Depends(
             )
         else:
             results.append(MatchedAnswer(question=question, matched=False))
-    return MatchAnswersResponse(results=results)
+    return MatchAnswersResponse(
+        results=results,
+        total_cost_usd=payload.get("total_cost_usd"),
+        usage=usage_from_cli_payload(payload),
+        model=payload.get("model") or (
+            settings.openai_model if settings.answer_provider == "openai"
+            else settings.ollama_model if settings.answer_provider == "ollama"
+            else settings.claude_model
+        ),
+    )
 
 
 @app.post("/prompt-preview-answers", response_model=BatchAnswerPromptResponse, dependencies=[Depends(verify_token)])
@@ -734,6 +748,11 @@ async def generate(body: GenerateRequest, active_person: str = Depends(get_activ
         session_id=payload.get("session_id"),
         total_cost_usd=payload.get("total_cost_usd"),
         usage=usage_from_cli_payload(payload),
+        model=payload.get("model") or (
+            settings.openai_model if settings.provider == "openai"
+            else settings.ollama_model if settings.provider == "ollama"
+            else settings.claude_model
+        ),
         saved_dir=str(save_dir),
     )
 
@@ -834,6 +853,11 @@ async def generate_cover_letter(
         session_id=payload.get("session_id"),
         total_cost_usd=payload.get("total_cost_usd"),
         usage=usage_from_cli_payload(payload),
+        model=payload.get("model") or (
+            settings.openai_model if settings.provider == "openai"
+            else settings.ollama_model if settings.provider == "ollama"
+            else settings.claude_model
+        ),
     )
 
 

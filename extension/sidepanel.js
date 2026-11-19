@@ -29,6 +29,50 @@ let lastSavedDirCompany = null;
 // render for a different job always replaces it before Auto Fill would ever read it.
 let lastGeneratedPdf = null; // { base64, filename }
 
+// Format API cost/usage from companion responses (OpenAI / Claude / Ollama).
+function formatApiCostLine(data) {
+  if (!data || typeof data !== "object") return "";
+  const parts = [];
+  if (typeof data.total_cost_usd === "number" && Number.isFinite(data.total_cost_usd)) {
+    parts.push(`~$${data.total_cost_usd.toFixed(4)}`);
+  }
+  const u = data.usage || {};
+  const inn = u.prompt_tokens ?? u.input_tokens;
+  const out = u.completion_tokens ?? u.output_tokens;
+  if (inn != null || out != null) {
+    parts.push(`${inn ?? "?"}/${out ?? "?"} tokens`);
+  }
+  if (data.model) parts.push(String(data.model));
+  return parts.length ? ` Cost: ${parts.join(" · ")}.` : "";
+}
+
+function emptyApiCostAcc() {
+  return { cost: 0, inTokens: 0, outTokens: 0, model: null, calls: 0 };
+}
+
+function addApiCost(acc, data) {
+  if (!acc || !data) return;
+  acc.calls += 1;
+  if (typeof data.total_cost_usd === "number" && Number.isFinite(data.total_cost_usd)) {
+    acc.cost += data.total_cost_usd;
+  }
+  const u = data.usage || {};
+  const inn = u.prompt_tokens ?? u.input_tokens;
+  const out = u.completion_tokens ?? u.output_tokens;
+  if (typeof inn === "number") acc.inTokens += inn;
+  if (typeof out === "number") acc.outTokens += out;
+  if (data.model) acc.model = data.model;
+}
+
+function formatApiCostAcc(acc) {
+  if (!acc || !acc.calls) return "";
+  return formatApiCostLine({
+    total_cost_usd: acc.cost,
+    usage: { prompt_tokens: acc.inTokens, completion_tokens: acc.outTokens },
+    model: acc.model,
+  });
+}
+
 // Workday hosts every applicant-facing posting on a `myworkdayjobs.com` (or, for some older
 // tenants, `myworkday.com`) subdomain — used to scope the auto-attach-resume behavior below to
 // Workday only, per explicit instruction: other ATSs' file-upload fields are left for the user
@@ -15969,7 +16013,9 @@ async function generateCoverLetterText({ statusEl = el("generateResult"), quiet 
   lastSavedDir = data.saved_dir;
   lastSavedDirCompany = company;
   el("coverLetter").value = data.text;
-  if (!quiet) statusEl.textContent = "Cover letter generated. Review below, then Generate PDF.";
+  if (!quiet) {
+    statusEl.textContent = `Cover letter generated.${formatApiCostLine(data)} Review below, then Generate PDF.`;
+  }
   return data.text;
 }
 
@@ -16058,7 +16104,7 @@ el("generateBtn").addEventListener("click", async () => {
       lastSavedDir = data.saved_dir;
       lastSavedDirCompany = body.company;
       updateRenderButtonState();
-      genResultEl.textContent = `Generated for ${data.resume.name} (~$${(data.total_cost_usd ?? 0).toFixed(4)}). Review/edit the JSON below, then Generate PDF.`;
+      genResultEl.textContent = `Generated for ${data.resume.name}.${formatApiCostLine(data)} Review/edit the JSON below, then Generate PDF.`;
     }
   } catch (err) {
     genResultEl.textContent = `Generation failed: ${err.message}`;
@@ -16478,6 +16524,7 @@ el("autofillBtn").addEventListener("click", async () => {
     // gpt-auto has no automatic AI-semantic QA-bank match (no server-side model call for it
     // yet) - the free, non-AI exact/category matching in runAutofillInPage already ran above
     // regardless of provider, so this just skips the EXTRA semantic-similarity layer for it.
+    const apiCostAcc = emptyApiCostAcc();
     if (
       idxEligible.length &&
       qaBank.length &&
@@ -16498,6 +16545,7 @@ el("autofillBtn").addEventListener("click", async () => {
               body: JSON.stringify({ questions: matchable.map((u) => u.label) }),
             })
           : { results: [] };
+        if (matchable.length) addApiCost(apiCostAcc, data);
         const matchedIdxSet = new Set();
         matchable.forEach((item, i) => {
           const result = data.results[i];
@@ -16656,6 +16704,7 @@ el("autofillBtn").addEventListener("click", async () => {
               resume_text: uploadedResumeText,
             }),
           });
+          addApiCost(apiCostAcc, data);
           if (data.answerable !== false && data.answer) {
             let value = stripFormAnswerMarkdown(String(data.answer));
             if (item.kind === "select") {
@@ -16925,7 +16974,7 @@ el("autofillBtn").addEventListener("click", async () => {
       generationErrors.length ? ` ${generationErrors.length} generation failure(s): ${generationErrors.join("; ")}.` : ""
     }${remainingGenerated ? ` (+${remainingGenerated} remaining-field answer(s))` : ""}${
       phoneCountryRefixed ? " Corrected the phone country code, which the site's own app reset mid-run." : ""
-    }${gptManualNote}`;
+    }${gptManualNote}${formatApiCostAcc(apiCostAcc)}`;
   } catch (err) {
     resultEl.textContent = `Auto Fill failed: ${err.message}`;
   } finally {
