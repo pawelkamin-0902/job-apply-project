@@ -384,6 +384,9 @@ function applyProviderFieldVisibility() {
   const providers = [resumeProv, answerProv];
   el("claudeFields").style.display = providers.includes("claude") ? "" : "none";
   el("ollamaFields").style.display = providers.includes("ollama") ? "" : "none";
+  if (el("openaiFields")) {
+    el("openaiFields").style.display = providers.includes("openai") ? "" : "none";
+  }
   el("gptHint").style.display = providers.includes("gpt") ? "" : "none";
   const gptAuto = el("gptAutoOptions");
   if (gptAuto) {
@@ -414,6 +417,8 @@ async function testProvider(provider, statusEl) {
     claude_model: el("claudeModel").value.trim() || null,
     ollama_model: el("ollamaModel").value.trim() || "qwen2.5:3b-instruct",
     ollama_base_url: el("ollamaBaseUrl").value.trim() || "http://localhost:11434",
+    openai_api_key: el("openaiApiKey") ? el("openaiApiKey").value.trim() : "",
+    openai_model: el("openaiModel") ? el("openaiModel").value.trim() || "gpt-5-nano" : "gpt-5-nano",
   };
   try {
     const result = await apiFetch("/provider-test", { method: "POST", body: JSON.stringify(body) });
@@ -426,10 +431,16 @@ async function testProvider(provider, statusEl) {
 }
 
 el("testProviderBtn").addEventListener("click", () =>
-  testProvider(loadedSettings?.provider || "claude", el("providerTestStatus"))
+  testProvider(
+    (el("providerSelect") && el("providerSelect").value) || loadedSettings?.provider || "claude",
+    el("providerTestStatus")
+  )
 );
 el("testAnswerProviderBtn").addEventListener("click", () =>
-  testProvider(loadedSettings?.answer_provider || "ollama", el("answerProviderTestStatus"))
+  testProvider(
+    (el("answerProviderSelect") && el("answerProviderSelect").value) || loadedSettings?.answer_provider || "ollama",
+    el("answerProviderTestStatus")
+  )
 );
 
 if (el("providerSelect")) {
@@ -628,6 +639,8 @@ async function loadSettings() {
     }
     if (el("providerSelect")) el("providerSelect").value = settings.provider || "claude";
     if (el("answerProviderSelect")) el("answerProviderSelect").value = settings.answer_provider || "ollama";
+    if (el("openaiApiKey")) el("openaiApiKey").value = settings.openai_api_key || "";
+    if (el("openaiModel")) el("openaiModel").value = settings.openai_model || "gpt-5-nano";
     if (el("deleteGptConversationsToggle")) {
       el("deleteGptConversationsToggle").checked = settings.delete_gpt_conversations !== false;
     }
@@ -663,6 +676,10 @@ function buildSettingsPayload() {
     claude_model: el("claudeModel").value.trim() || null,
     ollama_model: el("ollamaModel").value.trim() || "qwen2.5:3b-instruct",
     ollama_base_url: el("ollamaBaseUrl").value.trim() || "http://localhost:11434",
+    openai_api_key: el("openaiApiKey") ? el("openaiApiKey").value.trim() : loadedSettings?.openai_api_key || "",
+    openai_model: el("openaiModel")
+      ? el("openaiModel").value.trim() || "gpt-5-nano"
+      : loadedSettings?.openai_model || "gpt-5-nano",
     portal_base_url: el("portalBaseUrl").value.trim(),
     // Confirmed live: these two were missing here entirely - since PUT /settings replaces the
     // WHOLE settings object (not a partial patch), every save (from either tab, not just this

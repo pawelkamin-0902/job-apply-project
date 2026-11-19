@@ -16048,7 +16048,7 @@ el("generateBtn").addEventListener("click", async () => {
       updateRenderButtonState();
       genResultEl.textContent = `Generated via ChatGPT for ${parsed.name || body.company}. Review/edit the JSON below, then Generate PDF.`;
     } else {
-      genResultEl.textContent = "Generating (calls Claude, takes a few seconds)...";
+      genResultEl.textContent = "Generating via API (takes a few seconds)...";
       const data = await apiFetch("/generate", { method: "POST", body: JSON.stringify(body) });
       const missingClaude = validateResumeShape(data.resume);
       if (missingClaude.length) {

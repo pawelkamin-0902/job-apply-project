@@ -332,11 +332,12 @@
 
       <div class="card settings-block">
         <h2 class="card-title">AI providers</h2>
-        <p class="card-desc">Claude is recommended for resume JSON (truth grounding). Ollama is often enough for short Auto Fill answers.</p>
+        <p class="card-desc">Claude is strongest for resume truth grounding. <strong>OpenAI (API key)</strong> is the cheap paid option (default model gpt-5-nano). GPT-auto uses your ChatGPT tab (no API key, subscription/usage elsewhere).</p>
         <label for="providerSelect">Resume generation provider</label>
         <select id="providerSelect">
           <option value="claude">Claude (CLI)</option>
           <option value="ollama">Ollama</option>
+          <option value="openai">OpenAI (API key — cheapest)</option>
           <option value="gpt">GPT (manual)</option>
           <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
           <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
@@ -345,6 +346,7 @@
         <select id="answerProviderSelect">
           <option value="claude">Claude (CLI)</option>
           <option value="ollama">Ollama</option>
+          <option value="openai">OpenAI (API key — cheapest)</option>
           <option value="gpt">GPT (manual)</option>
           <option value="gpt-auto">GPT (auto via ChatGPT tab)</option>
           <option value="gpt-auto-headless">GPT (auto, headless — experimental)</option>
@@ -375,6 +377,15 @@
         <input id="ollamaModel" type="text" placeholder="e.g. qwen2.5:3b-instruct" />
         <label for="ollamaBaseUrl">Base URL</label>
         <input id="ollamaBaseUrl" type="text" placeholder="http://localhost:11434" />
+      </div>
+
+      <div class="card settings-block" id="openaiFields" style="display: none">
+        <h2 class="card-title">OpenAI API</h2>
+        <p class="card-desc">Used for resume JSON, cover letters, Auto Fill answers, and QA match when provider is OpenAI. Default model is the cheapest chat model.</p>
+        <label for="openaiApiKey">API key</label>
+        <input id="openaiApiKey" type="password" autocomplete="off" placeholder="sk-..." />
+        <label for="openaiModel">Model</label>
+        <input id="openaiModel" type="text" placeholder="gpt-5-nano" />
       </div>
 
       <div id="gptHint" class="callout callout-info" style="display: none">

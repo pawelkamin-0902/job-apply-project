@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.claude_cli import ClaudeCodeCliError, check_claude_cli, run_claude_code_print, usage_from_cli_payload
 from app.ollama_cli import OllamaCliError, check_ollama, run_ollama_chat
+from app.openai_api import OpenAiApiError, check_openai, run_openai_chat
 from app.cover_letter_render import build_plain_docx, build_plain_pdf, normalize_cover_letter_text
 from app.prompt import (
     build_answer_system_prompt,
@@ -406,24 +407,38 @@ async def generate_answer(body: AnswerRequest, active_person: str = Depends(get_
             body.resume_text,
         )
 
+    answer_schema = {
+        "type": "object",
+        "properties": {
+            "answerable": {"type": "boolean"},
+            "answer": {"type": ["string", "null"]},
+        },
+        "required": ["answerable", "answer"],
+    }
+
     if settings.answer_provider == "ollama":
         try:
             payload = await run_ollama_chat(
                 user_message,
                 system_prompt=system_prompt,
                 model=settings.ollama_model,
-                format_schema={
-                    "type": "object",
-                    "properties": {
-                        "answerable": {"type": "boolean"},
-                        "answer": {"type": ["string", "null"]},
-                    },
-                    "required": ["answerable", "answer"],
-                },
+                format_schema=answer_schema,
                 timeout_seconds=settings.timeout_seconds,
                 base_url=settings.ollama_base_url,
             )
         except OllamaCliError as exc:
+            raise HTTPException(status_code=502, detail=f"Answer generation failed: {exc}") from exc
+    elif settings.answer_provider == "openai":
+        try:
+            payload = await run_openai_chat(
+                user_message,
+                system_prompt=system_prompt,
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                format_schema=answer_schema,
+                timeout_seconds=settings.timeout_seconds,
+            )
+        except OpenAiApiError as exc:
             raise HTTPException(status_code=502, detail=f"Answer generation failed: {exc}") from exc
     else:
         try:
@@ -516,6 +531,18 @@ async def match_answers(body: MatchAnswersRequest, active_person: str = Depends(
             )
         except OllamaCliError as exc:
             raise HTTPException(status_code=502, detail=f"Answer matching failed: {exc}") from exc
+    elif settings.answer_provider == "openai":
+        try:
+            payload = await run_openai_chat(
+                user_message,
+                system_prompt=system_prompt,
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                format_schema=schema,
+                timeout_seconds=settings.timeout_seconds,
+            )
+        except OpenAiApiError as exc:
+            raise HTTPException(status_code=502, detail=f"Answer matching failed: {exc}") from exc
     else:
         try:
             payload = await run_claude_code_print(
@@ -594,6 +621,8 @@ async def provider_test(body: ProviderTestRequest) -> ProviderTestResult:
         ok, detail = check_claude_cli()
     elif body.provider == "ollama":
         ok, detail = await check_ollama(body.ollama_base_url, body.ollama_model)
+    elif body.provider == "openai":
+        ok, detail = await check_openai(body.openai_api_key, body.openai_model)
     elif body.provider == "gpt-auto":
         ok, detail = True, 'No connection to test here — this drives a real ChatGPT tab directly ("Generate JSON" or Auto Fill, whichever uses it) rather than calling an API, so you just need to be logged into ChatGPT in this browser.'
     else:
@@ -613,20 +642,19 @@ async def generate(body: GenerateRequest, active_person: str = Depends(get_activ
             "Use \"Copy prompt for GPT\" in the panel, paste it into ChatGPT, then paste its JSON reply "
             "into the Resume JSON box.",
         )
-    if settings.provider == "gpt-auto":
-        # This should never actually be reached — the extension drives a real ChatGPT tab
-        # itself for this provider (see sidepanel.js's generateBtn handler) and never calls
-        # /generate at all. Guarded here anyway so a stale client or a bug that DOES call this
-        # endpoint fails with a clear explanation instead of silently falling through to the
-        # Claude CLI branch below and generating with the wrong provider.
+    if settings.provider in ("gpt-auto", "gpt-auto-headless"):
+        # This should never actually be reached — the extension drives ChatGPT itself for
+        # these providers (see sidepanel.js's generateBtn handler) and never calls /generate.
+        # Guarded so a stale client fails closed instead of falling through to Claude.
         raise HTTPException(
             status_code=400,
-            detail='Provider is set to "gpt-auto" — that\'s handled entirely in the extension '
-            "(driving a real ChatGPT tab directly), not via this endpoint.",
+            detail=f'Provider is set to "{settings.provider}" — that\'s handled entirely in the extension '
+            "(driving ChatGPT directly), not via this endpoint.",
         )
 
     system_prompt = build_system_prompt(store.get_prompt_instructions(active_person))
     user_message = build_user_message(profile.model_dump(), body.job_description)
+    resume_schema = ResumeData.model_json_schema()
 
     if settings.provider == "ollama":
         try:
@@ -634,11 +662,23 @@ async def generate(body: GenerateRequest, active_person: str = Depends(get_activ
                 user_message,
                 system_prompt=system_prompt,
                 model=settings.ollama_model,
-                format_schema=ResumeData.model_json_schema(),
+                format_schema=resume_schema,
                 timeout_seconds=settings.timeout_seconds,
                 base_url=settings.ollama_base_url,
             )
         except OllamaCliError as exc:
+            raise HTTPException(status_code=502, detail=f"Generation failed: {exc}") from exc
+    elif settings.provider == "openai":
+        try:
+            payload = await run_openai_chat(
+                user_message,
+                system_prompt=system_prompt,
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                format_schema=resume_schema,
+                timeout_seconds=settings.timeout_seconds,
+            )
+        except OpenAiApiError as exc:
             raise HTTPException(status_code=502, detail=f"Generation failed: {exc}") from exc
     else:
         try:
@@ -704,10 +744,10 @@ async def _generate_cover_letter_text(settings, system_prompt: str, user_message
             status_code=400,
             detail='Provider is set to "gpt" (manual) — use "Cover letter prompt" or switch provider.',
         )
-    if settings.provider == "gpt-auto":
+    if settings.provider in ("gpt-auto", "gpt-auto-headless"):
         raise HTTPException(
             status_code=400,
-            detail='Provider is set to "gpt-auto" — cover letter generation runs in the extension.',
+            detail=f'Provider is set to "{settings.provider}" — cover letter generation runs in the extension.',
         )
     if settings.provider == "ollama":
         try:
@@ -719,6 +759,17 @@ async def _generate_cover_letter_text(settings, system_prompt: str, user_message
                 base_url=settings.ollama_base_url,
             )
         except OllamaCliError as exc:
+            raise HTTPException(status_code=502, detail=f"Cover letter generation failed: {exc}") from exc
+    if settings.provider == "openai":
+        try:
+            return await run_openai_chat(
+                user_message,
+                system_prompt=system_prompt,
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                timeout_seconds=settings.timeout_seconds,
+            )
+        except OpenAiApiError as exc:
             raise HTTPException(status_code=502, detail=f"Cover letter generation failed: {exc}") from exc
     try:
         return await run_claude_code_print(

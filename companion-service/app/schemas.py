@@ -84,18 +84,16 @@ class Settings(BaseModel):
     person: str
     claude_model: str | None = None
     timeout_seconds: float = 120.0
-    # "claude"/"ollama" call a model automatically from /generate. "gpt" is manual —
-    # there's no OpenAI API integration; the extension copies the prompt for you to
-    # paste into ChatGPT yourself, then paste its JSON reply back in. "gpt-auto" is also
-    # not a real API integration (still no API key involved) — the extension drives a real,
-    # visible chatgpt.com tab itself (types the prompt, submits it, reads the reply, closes
-    # the tab), so /generate is never actually called for it either; it's handled entirely
-    # client-side, same as "gpt".
+    # "claude"/"ollama"/"openai" call a model automatically from /generate.
+    # "openai" uses the OpenAI Chat Completions API with `openai_api_key` (cheapest default
+    # model: gpt-5-nano). "gpt" is manual copy/paste into ChatGPT. "gpt-auto" /
+    # "gpt-auto-headless" drive chatgpt.com (no API key) from the extension, so /generate
+    # is never called for those either.
     # Defaults to "claude" — resume tailoring is the highest-stakes generation task (a
     # fabricated employer/role/date is the worst-case failure), and Claude is the only
     # provider that's held up to the truth-grounding requirements in testing so far; a small
     # local Ollama model has fabricated an entire fake job history here before, twice.
-    provider: Literal["claude", "ollama", "gpt", "gpt-auto", "gpt-auto-headless"] = "claude"
+    provider: Literal["claude", "ollama", "openai", "gpt", "gpt-auto", "gpt-auto-headless"] = "claude"
     # Separate provider for per-question Auto Fill answer generation (/generate-answer) —
     # deliberately independent of `provider` above. This task is lower-stakes by design:
     # consequential fields (salary/visa/sponsorship/...), anything matching a structured
@@ -103,9 +101,14 @@ class Settings(BaseModel):
     # are already excluded from generation entirely in sidepanel.js regardless of provider,
     # so what's left is short free-text answers ("why do you want to work here") where a
     # fast, free, local model is a reasonable default and Claude is overkill.
-    answer_provider: Literal["claude", "ollama", "gpt", "gpt-auto", "gpt-auto-headless"] = "ollama"
+    answer_provider: Literal["claude", "ollama", "openai", "gpt", "gpt-auto", "gpt-auto-headless"] = "ollama"
     ollama_model: str = "qwen2.5:3b-instruct"
     ollama_base_url: str = "http://localhost:11434"
+    # OpenAI API key (Settings → Generation). Stored in local settings.json like portal creds.
+    openai_api_key: str = ""
+    # Default: cheapest OpenAI chat model. Override if resume JSON quality needs a stronger one
+    # (e.g. gpt-6-luna / gpt-4o-mini).
+    openai_model: str = "gpt-5-nano"
     # "gpt-auto" deletes the ChatGPT conversation it just created once it has the answer, so
     # automated resume/answer generation doesn't pile up in the user's real chat history (see
     # tryDeleteConversation in sidepanel.js). That's the right default, but it also means the
@@ -222,10 +225,12 @@ class ProviderTestRequest(BaseModel):
     """Tests whatever's currently in the settings form, not necessarily what's
     saved yet — lets you check a provider before committing to it."""
 
-    provider: Literal["claude", "ollama", "gpt", "gpt-auto", "gpt-auto-headless"]
+    provider: Literal["claude", "ollama", "openai", "gpt", "gpt-auto", "gpt-auto-headless"]
     claude_model: str | None = None
     ollama_model: str = "qwen2.5:3b-instruct"
     ollama_base_url: str = "http://localhost:11434"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5-nano"
 
 
 class AnswerRequest(BaseModel):
